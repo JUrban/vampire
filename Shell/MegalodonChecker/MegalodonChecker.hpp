@@ -48,6 +48,8 @@ private:
   bool equalityRewriteScript(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::vector<std::string>& lines);
   bool hypothesisApplicationProofTerm(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::string& result);
   bool instantiatedProofTerm(Kernel::Formula* goal, const std::map<unsigned, Kernel::TermList>& substitution, const std::vector<Hypothesis>& hypotheses, std::string& result, unsigned depth);
+  bool premiseProofTerm(Kernel::Formula* premise, std::map<unsigned, Kernel::TermList>& substitution, const std::vector<unsigned>& variables, const std::vector<Hypothesis>& hypotheses, std::string& result, unsigned depth);
+  void implicationChain(Kernel::Formula* formula, std::vector<Kernel::Formula*>& premises, Kernel::Formula*& conclusion) const;
   bool formulaMatchesAfterReplacement(Kernel::Formula* source, Kernel::Formula* target, Kernel::TermList needle, Kernel::TermList replacement, bool& replaced);
   bool termMatchesAfterReplacement(Kernel::TermList source, Kernel::TermList target, Kernel::TermList needle, Kernel::TermList replacement, bool& replaced);
   bool matchFormula(Kernel::Formula* pattern, Kernel::Formula* target, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution);

@@ -829,6 +829,48 @@ bool MegalodonChecker::formulaMatchesAfterReplacement(
   }
 }
 
+void MegalodonChecker::implicationChain(Kernel::Formula* formula, std::vector<Kernel::Formula*>& premises, Kernel::Formula*& conclusion) const
+{
+  while (formula->connective() == Kernel::IMP) {
+    premises.push_back(formula->left());
+    formula = formula->right();
+  }
+  conclusion = formula;
+}
+
+bool MegalodonChecker::premiseProofTerm(
+  Kernel::Formula* premise,
+  std::map<unsigned, Kernel::TermList>& substitution,
+  const std::vector<unsigned>& variables,
+  const std::vector<Hypothesis>& hypotheses,
+  std::string& result,
+  unsigned depth)
+{
+  std::string premiseText;
+  if (formulaToMegalodon(premise, substitution, premiseText)) {
+    for (const Hypothesis& hypothesis : hypotheses) {
+      if (hypothesis.proposition == premiseText) {
+        result = hypothesis.proof;
+        return true;
+      }
+    }
+  }
+
+  if (premise->connective() == Kernel::FORALL) {
+    return false;
+  }
+
+  for (const Hypothesis& hypothesis : hypotheses) {
+    std::map<unsigned, Kernel::TermList> extended = substitution;
+    if (matchFormula(premise, hypothesis.formula, std::map<unsigned, Kernel::TermList>(), variables, extended)) {
+      substitution = extended;
+      result = hypothesis.proof;
+      return true;
+    }
+  }
+  return instantiatedProofTerm(premise, substitution, hypotheses, result, depth);
+}
+
 bool MegalodonChecker::instantiatedProofTerm(
   Kernel::Formula* goal,
   const std::map<unsigned, Kernel::TermList>& substitution,
@@ -900,16 +942,59 @@ bool MegalodonChecker::instantiatedProofTerm(
       body = body->qarg();
     }
     if (variables.empty() || body->connective() != Kernel::IMP) {
+      if (variables.empty()) {
+        continue;
+      }
+      std::map<unsigned, Kernel::TermList> directSubstitution;
+      if (!matchFormula(body, goal, substitution, variables, directSubstitution)) {
+        continue;
+      }
+      std::ostringstream proof;
+      proof << hypothesis.proof;
+      bool complete = true;
+      for (unsigned variable : variables) {
+        auto found = directSubstitution.find(variable);
+        if (found == directSubstitution.end()) {
+          complete = false;
+          break;
+        }
+        std::string arg;
+        if (!termToMegalodon(found->second, arg)) {
+          complete = false;
+          break;
+        }
+        proof << ' ' << parenthesize(arg);
+      }
+      if (!complete) {
+        continue;
+      }
+      result = parenthesize(proof.str());
+      return true;
+    }
+
+    std::vector<Kernel::Formula*> premises;
+    Kernel::Formula* conclusion = nullptr;
+    implicationChain(body, premises, conclusion);
+    if (conclusion == nullptr) {
       continue;
     }
 
     std::map<unsigned, Kernel::TermList> applicationSubstitution;
-    if (!matchFormula(body->right(), goal, substitution, variables, applicationSubstitution)) {
+    if (!matchFormula(conclusion, goal, substitution, variables, applicationSubstitution)) {
       continue;
     }
 
-    std::string premiseProof;
-    if (!instantiatedProofTerm(body->left(), applicationSubstitution, hypotheses, premiseProof, depth - 1)) {
+    std::vector<std::string> premiseProofs;
+    bool premisesComplete = true;
+    for (Kernel::Formula* premise : premises) {
+      std::string premiseProof;
+      if (!premiseProofTerm(premise, applicationSubstitution, variables, hypotheses, premiseProof, depth - 1)) {
+        premisesComplete = false;
+        break;
+      }
+      premiseProofs.push_back(premiseProof);
+    }
+    if (!premisesComplete) {
       continue;
     }
 
@@ -932,7 +1017,9 @@ bool MegalodonChecker::instantiatedProofTerm(
     if (!complete) {
       continue;
     }
-    proof << ' ' << parenthesize(premiseProof);
+    for (const std::string& premiseProof : premiseProofs) {
+      proof << ' ' << parenthesize(premiseProof);
+    }
     result = parenthesize(proof.str());
     return true;
   }
@@ -1017,17 +1104,33 @@ bool MegalodonChecker::hypothesisApplicationProofTerm(Kernel::Formula* goal, con
       }
       body = body->qarg();
     }
-    if (variables.empty() || body->connective() != Kernel::IMP) {
+    if (variables.empty()) {
+      continue;
+    }
+
+    std::vector<Kernel::Formula*> premises;
+    Kernel::Formula* conclusion = nullptr;
+    implicationChain(body, premises, conclusion);
+    if (conclusion == nullptr) {
       continue;
     }
 
     std::map<unsigned, Kernel::TermList> substitution;
-    if (!matchFormula(body->right(), goal, variables, substitution)) {
+    if (!matchFormula(conclusion, goal, variables, substitution)) {
       continue;
     }
 
-    std::string premiseProof;
-    if (!instantiatedProofTerm(body->left(), substitution, hypotheses, premiseProof, 4)) {
+    std::vector<std::string> premiseProofs;
+    bool premisesComplete = true;
+    for (Kernel::Formula* premise : premises) {
+      std::string premiseProof;
+      if (!premiseProofTerm(premise, substitution, variables, hypotheses, premiseProof, 4)) {
+        premisesComplete = false;
+        break;
+      }
+      premiseProofs.push_back(premiseProof);
+    }
+    if (!premisesComplete) {
       continue;
     }
 
@@ -1050,7 +1153,9 @@ bool MegalodonChecker::hypothesisApplicationProofTerm(Kernel::Formula* goal, con
     if (!complete) {
       continue;
     }
-    proof << ' ' << parenthesize(premiseProof);
+    for (const std::string& premiseProof : premiseProofs) {
+      proof << ' ' << parenthesize(premiseProof);
+    }
     result = parenthesize(proof.str());
     return true;
   }
