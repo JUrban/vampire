@@ -94,6 +94,7 @@ private:
   bool _usesFalse = false;
   bool _usesDisjunction = false;
   bool _usesSetExists = false;
+  bool _usesTrue = false;
 };
 
 } // namespace Shell

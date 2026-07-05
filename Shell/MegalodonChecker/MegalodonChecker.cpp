@@ -369,6 +369,16 @@ bool MegalodonChecker::termToMegalodon(Kernel::TermList term, std::string& resul
 
 bool MegalodonChecker::termToMegalodon(Kernel::TermList term, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result)
 {
+  if (HOL::isTrue(term)) {
+    _usesTrue = true;
+    result = "vampire_true";
+    return true;
+  }
+  if (HOL::isFalse(term)) {
+    _usesFalse = true;
+    result = "vampire_false";
+    return true;
+  }
   if (term.isVar()) {
     std::set<unsigned> seen;
     Kernel::TermList current = term;
@@ -2402,6 +2412,7 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
   _usesFalse = false;
   _usesDisjunction = false;
   _usesSetExists = false;
+  _usesTrue = false;
 
   std::vector<std::string> assumptionLines;
   std::vector<Hypothesis> hypotheses;
@@ -2438,6 +2449,9 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
   }
   if (_usesConjunction) {
     lines.push_back("Definition vampire_and : prop->prop->prop := fun A B:prop => forall P:prop, (A -> B -> P) -> P.");
+  }
+  if (_usesTrue) {
+    lines.push_back("Definition vampire_true : prop := forall P:prop, P -> P.");
   }
   if (_usesSetExists) {
     lines.push_back("Variable vampire_exists_set:(set->prop)->prop.");
@@ -2476,6 +2490,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
   _usesFalse = false;
   _usesDisjunction = false;
   _usesSetExists = false;
+  _usesTrue = false;
 
   auto symbolsDeclarable = [&]() {
     for (const auto& entry : _functions) {
@@ -2501,6 +2516,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
     bool usesFalseSnapshot = _usesFalse;
     bool usesDisjunctionSnapshot = _usesDisjunction;
     bool usesSetExistsSnapshot = _usesSetExists;
+    bool usesTrueSnapshot = _usesTrue;
 
     std::string proposition;
     if (!formulaToMegalodon(assumptions[i].formula, proposition) || !symbolsDeclarable()) {
@@ -2512,6 +2528,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
       _usesFalse = usesFalseSnapshot;
       _usesDisjunction = usesDisjunctionSnapshot;
       _usesSetExists = usesSetExistsSnapshot;
+      _usesTrue = usesTrueSnapshot;
       continue;
     }
     assumptionLines.push_back("Axiom ax" + std::to_string(i) + ":" + proposition + ".");
@@ -2532,6 +2549,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
     bool usesFalseSnapshot = _usesFalse;
     bool usesDisjunctionSnapshot = _usesDisjunction;
     bool usesSetExistsSnapshot = _usesSetExists;
+    bool usesTrueSnapshot = _usesTrue;
 
     std::string proposition;
     bool rendered = false;
@@ -2553,6 +2571,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
       _usesFalse = usesFalseSnapshot;
       _usesDisjunction = usesDisjunctionSnapshot;
       _usesSetExists = usesSetExistsSnapshot;
+      _usesTrue = usesTrueSnapshot;
       continue;
     }
     std::string name = "S" + std::to_string(unit->number());
@@ -2572,6 +2591,9 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
   }
   if (_usesConjunction) {
     lines.push_back("Definition vampire_and : prop->prop->prop := fun A B:prop => forall P:prop, (A -> B -> P) -> P.");
+  }
+  if (_usesTrue) {
+    lines.push_back("Definition vampire_true : prop := forall P:prop, P -> P.");
   }
   if (_usesSetExists) {
     lines.push_back("Variable vampire_exists_set:(set->prop)->prop.");
