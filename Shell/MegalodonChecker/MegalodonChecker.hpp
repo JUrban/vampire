@@ -53,9 +53,11 @@ private:
   void implicationChain(Kernel::Formula* formula, std::vector<Kernel::Formula*>& premises, Kernel::Formula*& conclusion) const;
   bool formulaMatchesAfterReplacement(Kernel::Formula* source, Kernel::Formula* target, Kernel::TermList needle, Kernel::TermList replacement, bool& replaced);
   bool termMatchesAfterReplacement(Kernel::TermList source, Kernel::TermList target, Kernel::TermList needle, Kernel::TermList replacement, bool& replaced);
+  bool formulaMatchesAfterPatternReplacement(Kernel::Formula* source, Kernel::Formula* target, Kernel::TermList pattern, Kernel::TermList replacement, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution);
+  bool termMatchesAfterPatternReplacement(Kernel::TermList source, Kernel::TermList target, Kernel::TermList pattern, Kernel::TermList replacement, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution);
   bool substituteTerm(Kernel::TermList term, const std::map<unsigned, Kernel::TermList>& substitution, Kernel::TermList& result);
   bool rewriteTermOnce(Kernel::TermList term, Kernel::TermList pattern, Kernel::TermList replacement, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution, Kernel::TermList& result);
-  bool appendEqualityRewriteStep(const Hypothesis& hypothesis, const std::vector<unsigned>& variables, Kernel::TermList lhs, Kernel::TermList rhs, const std::map<unsigned, Kernel::TermList>& substitution, unsigned& nextLabel, std::vector<std::string>& lines);
+  bool appendEqualityRewriteStep(const Hypothesis& hypothesis, const std::vector<unsigned>& variables, Kernel::TermList lhs, Kernel::TermList rhs, bool forward, const std::map<unsigned, Kernel::TermList>& substitution, unsigned& nextLabel, std::vector<std::string>& lines);
   bool matchFormula(Kernel::Formula* pattern, Kernel::Formula* target, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution);
   bool matchTerm(Kernel::TermList pattern, Kernel::TermList target, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution);
   bool matchFormula(Kernel::Formula* pattern, Kernel::Formula* target, const std::map<unsigned, Kernel::TermList>& targetSubstitution, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution);
