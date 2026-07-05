@@ -320,7 +320,7 @@ void Options::init()
     _problemName.description="";
     //_lookup.insert(&_problemName);
 
-    _proof = ChoiceOptionValue<Proof>("proof","p",Proof::ON,{"off","on","proofcheck","tptp","property","smt2_proofcheck","smtcheck","leancheck"});
+    _proof = ChoiceOptionValue<Proof>("proof","p",Proof::ON,{"off","on","proofcheck","tptp","property","smt2_proofcheck","smtcheck","leancheck","megalodon"});
     _proof.description=
       "Specifies whether proof (or similar e.g. model/saturation) will be output and in which format:\n"
       "- off gives no proof output\n"
@@ -330,7 +330,8 @@ void Options::init()
       "- property is a developmental option. It allows developers to output statistics about the proof using a ProofPrinter "
       "object (see Kernel/InferenceStore::ProofPropertyPrinter\n"
       "- smtcheck produces a ground SMT script for proof checking\n"
-      "- leancheck produces a LEAN script for proof checking\n";
+      "- leancheck produces a LEAN script for proof checking\n"
+      "- megalodon produces a Megalodon proof-reconstruction outline\n";
     _lookup.insert(&_proof);
     _proof.tag(OptionTag::OUTPUT);
     _proof.addHardConstraint(If(equal(Proof::SMTCHECK)).then(_proofExtra.is(equal(ProofExtra::FULL))));
@@ -338,6 +339,9 @@ void Options::init()
     _proof.addHardConstraint(If(equal(Proof::LEANCHECK)).then( _shuffleInput.is(equal(false))));
     _proof.addHardConstraint(If(equal(Proof::LEANCHECK)).then( _skolemizationType.is(equal(SkolemizationType::SYNTACTIC))));
     _proof.addHardConstraint(If(equal(Proof::LEANCHECK)).then( _outputMode.is(equal(Output::LEAN))));
+    _proof.addHardConstraint(If(equal(Proof::MEGALODON)).then(_proofExtra.is(equal(ProofExtra::LEAN))));
+    _proof.addHardConstraint(If(equal(Proof::MEGALODON)).then( _shuffleInput.is(equal(false))));
+    _proof.addHardConstraint(If(equal(Proof::MEGALODON)).then( _skolemizationType.is(equal(SkolemizationType::SYNTACTIC))));
 
     _skolemizationType = ChoiceOptionValue<SkolemizationType>("skolemization","skt",SkolemizationType::STANDARD,{"standard","syntactic"});
     _skolemizationType.description=

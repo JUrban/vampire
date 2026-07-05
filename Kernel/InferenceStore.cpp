@@ -28,6 +28,7 @@
 #include "Shell/UIHelper.hpp"
 #include "Shell/SMTCheck.hpp"
 #include "Shell/LeanChecker/LeanChecker.hpp"
+#include "Shell/MegalodonChecker/MegalodonChecker.hpp"
 
 #include "Parse/TPTP.hpp"
 
@@ -1627,6 +1628,8 @@ InferenceStore::AbstractProofPrinter* InferenceStore::createProofPrinter(std::os
     return new SMTCheckPrinter(out, this);
   case Shell::Options::Proof::LEANCHECK:
     return new LeanChecker(out, this);
+  case Shell::Options::Proof::MEGALODON:
+    return new MegalodonChecker(out, this);
   }
   ASSERTION_VIOLATION;
 }

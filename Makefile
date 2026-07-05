@@ -361,6 +361,7 @@ VS_OBJ = Shell/AnswerLiteralManager.o\
 	         Shell/LeanChecker/LeanChecker.o\
 	         Shell/LeanChecker/LeanPrinter.o\
 	         Shell/LeanChecker/VariablePrenexOrderingTree.o\
+	         Shell/MegalodonChecker/MegalodonChecker.o\
 	         Shell/LispLexer.o\
          Shell/LispParser.o\
          Shell/Naming.o\

@@ -585,7 +585,8 @@ public:
     PROPERTY = 4,
     SMT2_PROOFCHECK = 5,
     SMTCHECK = 6,
-    LEANCHECK = 7
+    LEANCHECK = 7,
+    MEGALODON = 8
   };
 
   /** Values for --equality_proxy */
