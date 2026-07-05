@@ -45,6 +45,7 @@ private:
   bool conjunctionProjectionProofTerm(Kernel::Formula* source, const std::string& sourceProof, Kernel::Formula* goal, std::string& result);
   bool conjunctionProjectionProofTerm(const std::vector<Kernel::Formula*>& conjuncts, std::size_t begin, const std::string& sourceProof, const std::string& goalText, std::string& result);
   bool equalityRewriteProofTerm(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::string& result);
+  bool equalitySimplificationProofTerm(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::string& result, unsigned& nextHyp);
   bool equalityRewriteScript(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::vector<std::string>& lines);
   bool equalityNormalizationScript(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::vector<std::string>& lines);
   bool hypothesisApplicationProofTerm(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::string& result);
@@ -55,6 +56,7 @@ private:
   bool termMatchesAfterReplacement(Kernel::TermList source, Kernel::TermList target, Kernel::TermList needle, Kernel::TermList replacement, bool& replaced);
   bool formulaMatchesAfterPatternReplacement(Kernel::Formula* source, Kernel::Formula* target, Kernel::TermList pattern, Kernel::TermList replacement, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution);
   bool termMatchesAfterPatternReplacement(Kernel::TermList source, Kernel::TermList target, Kernel::TermList pattern, Kernel::TermList replacement, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution);
+  bool rewriteFormulaOnce(Kernel::Formula* source, Kernel::TermList pattern, Kernel::TermList replacement, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution, Kernel::Formula*& result);
   bool substituteTerm(Kernel::TermList term, const std::map<unsigned, Kernel::TermList>& substitution, Kernel::TermList& result);
   bool rewriteTermOnce(Kernel::TermList term, Kernel::TermList pattern, Kernel::TermList replacement, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution, Kernel::TermList& result);
   bool appendEqualityRewriteStep(const Hypothesis& hypothesis, const std::vector<unsigned>& variables, Kernel::TermList lhs, Kernel::TermList rhs, bool forward, const std::map<unsigned, Kernel::TermList>& substitution, unsigned& nextLabel, std::vector<std::string>& lines);
