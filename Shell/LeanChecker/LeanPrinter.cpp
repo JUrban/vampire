@@ -393,11 +393,53 @@ std::ostream &operator<<(std::ostream &out, Lit lit)
   return out;
 }
 
+void printSort(std::ostream &out, TermList sort, bool parenthesizeArrow)
+{
+  if (sort.isVar()) {
+    out << "ι";
+    return;
+  }
+  if (sort.isArrowSort()) {
+    if (parenthesizeArrow) {
+      out << "(";
+    }
+    printSort(out, sort.domain(), true);
+    out << " → ";
+    printSort(out, sort.result(), false);
+    if (parenthesizeArrow) {
+      out << ")";
+    }
+    return;
+  }
+  AtomicSort *atomicSort = static_cast<AtomicSort *>(sort.term());
+  ASS_EQ(atomicSort->arity(), 0)
+  out << SortName(atomicSort);
+}
+
 std::ostream &operator<<(std::ostream &out, Sort print)
 {
-  AtomicSort *sort = static_cast<AtomicSort *>(print.sort.term());
-  ASS_EQ(sort->arity(), 0)
-  return out << SortName(sort);
+  printSort(out, print.sort, true);
+  return out;
+}
+
+void printBoolTermFormula(std::ostream &out, TermList t, SortMap &conclSorts, SortMap &otherSorts, bool variablesAsPattern)
+{
+  if (t.isTerm()) {
+    Term* term = t.term();
+    if (!term->isSpecial()) {
+      if (env.signature->isFoolConstantSymbol(true, term->functor())) {
+        out << "True";
+        return;
+      }
+      if (env.signature->isFoolConstantSymbol(false, term->functor())) {
+        out << "False";
+        return;
+      }
+    }
+  }
+  out << "(";
+  printArgs(out, Args{&t, conclSorts, otherSorts}, variablesAsPattern, true);
+  out << " = true)";
 }
 
 void outputSortsWithQuantor(std::ostream &out, SortMap &sorts, std::string quantor, std::string end)
@@ -531,8 +573,7 @@ void printFormula(std::ostream &out, Formula *f, SortMap &conclSorts, SortMap &o
       out << ")";
     } break;
     case BOOL_TERM:
-      out << "missing bool term implementation for Lean output" << std::endl;
-      ASSERTION_VIOLATION;
+      printBoolTermFormula(out, f->getBooleanTerm(), conclSorts, otherSorts, variablesAsPattern);
       break;
     case TRUE:
       out << "True";
