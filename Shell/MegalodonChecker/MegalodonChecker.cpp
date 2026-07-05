@@ -731,6 +731,30 @@ bool MegalodonChecker::matchFormula(
     return false;
   }
   switch (pattern->connective()) {
+    case Kernel::FORALL: {
+      if (Kernel::VSList::length(pattern->vars()) != Kernel::VSList::length(target->vars())) {
+        return false;
+      }
+      std::map<unsigned, Kernel::TermList> extendedTargetSubstitution = targetSubstitution;
+      std::vector<unsigned> scopedVariables = variables;
+      Kernel::VSList::Iterator pit(pattern->vars());
+      Kernel::VSList::Iterator tit(target->vars());
+      while (pit.hasNext() && tit.hasNext()) {
+        auto [patternVar, patternSort] = pit.next();
+        auto [targetVar, targetSort] = tit.next();
+        std::string patternSortText;
+        std::string targetSortText;
+        if (!sortToMegalodon(patternSort, patternSortText) || !sortToMegalodon(targetSort, targetSortText) || patternSortText != targetSortText) {
+          return false;
+        }
+        extendedTargetSubstitution[targetVar] = Kernel::TermList::var(patternVar);
+        scopedVariables.erase(std::remove(scopedVariables.begin(), scopedVariables.end(), patternVar), scopedVariables.end());
+      }
+      return matchFormula(pattern->qarg(), target->qarg(), extendedTargetSubstitution, scopedVariables, substitution);
+    }
+    case Kernel::IMP:
+      return matchFormula(pattern->left(), target->left(), targetSubstitution, variables, substitution)
+        && matchFormula(pattern->right(), target->right(), targetSubstitution, variables, substitution);
     case Kernel::BOOL_TERM:
       return matchTerm(pattern->getBooleanTerm(), target->getBooleanTerm(), targetSubstitution, variables, substitution);
     case Kernel::LITERAL: {
@@ -856,10 +880,6 @@ bool MegalodonChecker::premiseProofTerm(
     }
   }
 
-  if (premise->connective() == Kernel::FORALL) {
-    return false;
-  }
-
   for (const Hypothesis& hypothesis : hypotheses) {
     std::map<unsigned, Kernel::TermList> extended = substitution;
     if (matchFormula(premise, hypothesis.formula, std::map<unsigned, Kernel::TermList>(), variables, extended)) {
@@ -868,6 +888,11 @@ bool MegalodonChecker::premiseProofTerm(
       return true;
     }
   }
+
+  if (premise->connective() == Kernel::FORALL) {
+    return false;
+  }
+
   return instantiatedProofTerm(premise, substitution, hypotheses, result, depth);
 }
 
