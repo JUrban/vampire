@@ -19,6 +19,7 @@
 #include "Shell/TPTPPrinter.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <set>
 #include <sstream>
 #include <utility>
@@ -116,13 +117,139 @@ std::string MegalodonChecker::parenthesize(const std::string& value) const
   return "(" + value + ")";
 }
 
+namespace {
+
+bool isHexDigit(char ch)
+{
+  return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
+}
+
+int hexValue(char ch)
+{
+  if (ch >= '0' && ch <= '9') {
+    return ch - '0';
+  }
+  if (ch >= 'a' && ch <= 'f') {
+    return 10 + ch - 'a';
+  }
+  if (ch >= 'A' && ch <= 'F') {
+    return 10 + ch - 'A';
+  }
+  return 0;
+}
+
+bool isMegalodonNameStart(char ch)
+{
+  return ch == '_' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+}
+
+bool isMegalodonNameChar(char ch)
+{
+  return isMegalodonNameStart(ch) || ch == '\'' || (ch >= '0' && ch <= '9');
+}
+
+bool isReservedMegalodonName(const std::string& name)
+{
+  static const std::set<std::string> reserved = {
+    "Axiom", "Definition", "Infix", "Qed", "Theorem", "Variable",
+    "admit", "claim", "else", "exists", "forall", "fun", "if", "in",
+    "let", "prop", "set", "then", "vampire_and", "vampire_eq",
+    "vampire_false", "vampire_or"
+  };
+  return reserved.find(name) != reserved.end();
+}
+
+std::string unquoteTptpName(const std::string& name)
+{
+  if (name.size() < 2 || name.front() != '\'' || name.back() != '\'') {
+    return name;
+  }
+  std::ostringstream out;
+  for (std::size_t i = 1; i + 1 < name.size(); ++i) {
+    if (name[i] == '\\' && i + 2 < name.size()) {
+      ++i;
+    }
+    out << name[i];
+  }
+  return out.str();
+}
+
+}
+
+std::string MegalodonChecker::decodeMegalodonTptpName(const std::string& tptpName) const
+{
+  std::string encoded = unquoteTptpName(tptpName);
+  if (encoded == "emptyname") {
+    return encoded;
+  }
+  if (encoded.rfind("c_", 0) == 0 && encoded.size() > 2) {
+    char firstPayload = encoded[2];
+    if (firstPayload == '_' || (firstPayload >= 'A' && firstPayload <= 'Z') || (firstPayload >= '0' && firstPayload <= '9')) {
+      encoded = encoded.substr(2);
+    }
+  }
+
+  std::ostringstream out;
+  for (std::size_t i = 0; i < encoded.size(); ++i) {
+    if (encoded[i] == '_' && i + 2 < encoded.size() && isHexDigit(encoded[i + 1]) && isHexDigit(encoded[i + 2])) {
+      out << static_cast<char>(hexValue(encoded[i + 1]) * 16 + hexValue(encoded[i + 2]));
+      i += 2;
+    } else {
+      out << encoded[i];
+    }
+  }
+  return out.str();
+}
+
+std::string MegalodonChecker::sanitizeMegalodonName(const std::string& name, const std::string& fallbackPrefix) const
+{
+  if (name.empty()) {
+    return fallbackPrefix;
+  }
+  std::ostringstream out;
+  if (!isMegalodonNameStart(name[0])) {
+    out << fallbackPrefix << '_';
+  }
+  for (char ch : name) {
+    if (isMegalodonNameChar(ch)) {
+      out << ch;
+    } else {
+      out << '_';
+    }
+  }
+  std::string sanitized = out.str();
+  if (sanitized.empty() || isReservedMegalodonName(sanitized)) {
+    sanitized = fallbackPrefix + "_" + sanitized;
+  }
+  if (sanitized.size() > 1 && sanitized[0] == 'X' && std::all_of(sanitized.begin() + 1, sanitized.end(), [](char ch) { return std::isdigit(static_cast<unsigned char>(ch)); })) {
+    sanitized = fallbackPrefix + "_" + sanitized;
+  }
+  return sanitized;
+}
+
+std::string MegalodonChecker::recoverMegalodonSymbolName(const std::string& tptpName, const std::string& fallbackPrefix)
+{
+  std::string decoded = decodeMegalodonTptpName(tptpName);
+  std::string candidate = sanitizeMegalodonName(decoded, fallbackPrefix);
+  if (_usedSymbolNames.insert(candidate).second) {
+    return candidate;
+  }
+
+  for (unsigned i = 1;; ++i) {
+    std::string renamed = candidate + "_" + std::to_string(i);
+    if (_usedSymbolNames.insert(renamed).second) {
+      return renamed;
+    }
+  }
+}
+
 std::string MegalodonChecker::functionName(unsigned functor)
 {
   auto found = _functions.find(functor);
   if (found != _functions.end()) {
     return found->second;
   }
-  std::string name = "f" + std::to_string(_functions.size());
+  std::string name = recoverMegalodonSymbolName(env.signature->functionName(functor), "f");
   _functions.emplace(functor, name);
   return name;
 }
@@ -133,7 +260,7 @@ std::string MegalodonChecker::predicateName(unsigned predicate)
   if (found != _predicates.end()) {
     return found->second;
   }
-  std::string name = "p" + std::to_string(_predicates.size());
+  std::string name = recoverMegalodonSymbolName(env.signature->predicateName(predicate), "p");
   _predicates.emplace(predicate, name);
   return name;
 }
@@ -2191,6 +2318,7 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
 {
   _functions.clear();
   _predicates.clear();
+  _usedSymbolNames.clear();
   _usesEquality = false;
   _usesConjunction = false;
   _usesFalse = false;
@@ -2260,6 +2388,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
 {
   _functions.clear();
   _predicates.clear();
+  _usedSymbolNames.clear();
   _usesEquality = false;
   _usesConjunction = false;
   _usesFalse = false;
@@ -2283,6 +2412,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
   for (std::size_t i = 0; i < assumptions.size(); ++i) {
     auto functionsSnapshot = _functions;
     auto predicatesSnapshot = _predicates;
+    auto usedSymbolNamesSnapshot = _usedSymbolNames;
     bool usesEqualitySnapshot = _usesEquality;
     bool usesConjunctionSnapshot = _usesConjunction;
     bool usesFalseSnapshot = _usesFalse;
@@ -2292,6 +2422,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
     if (!formulaToMegalodon(assumptions[i].formula, proposition) || !symbolsDeclarable()) {
       _functions = functionsSnapshot;
       _predicates = predicatesSnapshot;
+      _usedSymbolNames = usedSymbolNamesSnapshot;
       _usesEquality = usesEqualitySnapshot;
       _usesConjunction = usesConjunctionSnapshot;
       _usesFalse = usesFalseSnapshot;
@@ -2310,6 +2441,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
   for (Kernel::Unit* unit : proof) {
     auto functionsSnapshot = _functions;
     auto predicatesSnapshot = _predicates;
+    auto usedSymbolNamesSnapshot = _usedSymbolNames;
     bool usesEqualitySnapshot = _usesEquality;
     bool usesConjunctionSnapshot = _usesConjunction;
     bool usesFalseSnapshot = _usesFalse;
@@ -2329,6 +2461,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
     if (!rendered || !symbolsDeclarable()) {
       _functions = functionsSnapshot;
       _predicates = predicatesSnapshot;
+      _usedSymbolNames = usedSymbolNamesSnapshot;
       _usesEquality = usesEqualitySnapshot;
       _usesConjunction = usesConjunctionSnapshot;
       _usesFalse = usesFalseSnapshot;

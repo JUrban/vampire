@@ -39,6 +39,9 @@ private:
   bool skeletonLiteralToMegalodon(Kernel::Literal* literal, std::string& result);
   bool skeletonClauseToMegalodon(Kernel::Clause* clause, std::string& result);
   bool skeletonDisjunctionToMegalodon(const std::vector<std::string>& literals, std::string& result);
+  std::string recoverMegalodonSymbolName(const std::string& tptpName, const std::string& fallbackPrefix);
+  std::string decodeMegalodonTptpName(const std::string& tptpName) const;
+  std::string sanitizeMegalodonName(const std::string& name, const std::string& fallbackPrefix) const;
   bool termToMegalodon(Kernel::TermList term, std::string& result);
   bool termToMegalodon(Kernel::TermList term, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result);
   bool termToMegalodonReplacing(Kernel::TermList term, Kernel::TermList needle, const std::string& replacement, std::string& result);
@@ -85,6 +88,7 @@ private:
   InferenceReplayer _replayer;
   std::map<unsigned, std::string> _functions;
   std::map<unsigned, std::string> _predicates;
+  std::set<std::string> _usedSymbolNames;
   bool _usesEquality = false;
   bool _usesConjunction = false;
   bool _usesFalse = false;
