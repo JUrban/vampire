@@ -36,6 +36,9 @@ private:
   bool formulaToMegalodon(Kernel::Formula* formula, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result);
   bool conjunctionToMegalodon(const std::vector<Kernel::Formula*>& conjuncts, std::size_t begin, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result);
   bool literalToMegalodon(Kernel::Literal* literal, std::string& result);
+  bool skeletonLiteralToMegalodon(Kernel::Literal* literal, std::string& result);
+  bool skeletonClauseToMegalodon(Kernel::Clause* clause, std::string& result);
+  bool skeletonDisjunctionToMegalodon(const std::vector<std::string>& literals, std::string& result);
   bool termToMegalodon(Kernel::TermList term, std::string& result);
   bool termToMegalodon(Kernel::TermList term, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result);
   bool termToMegalodonReplacing(Kernel::TermList term, Kernel::TermList needle, const std::string& replacement, std::string& result);
@@ -84,6 +87,8 @@ private:
   std::map<unsigned, std::string> _predicates;
   bool _usesEquality = false;
   bool _usesConjunction = false;
+  bool _usesFalse = false;
+  bool _usesDisjunction = false;
 };
 
 } // namespace Shell

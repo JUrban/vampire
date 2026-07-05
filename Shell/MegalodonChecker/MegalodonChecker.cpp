@@ -10,7 +10,9 @@
 #include "Kernel/SortHelper.hpp"
 #include "Kernel/Substitution.hpp"
 #include "Kernel/Term.hpp"
+#include "Kernel/TermIterators.hpp"
 #include "Kernel/Unit.hpp"
+#include "Lib/DHMap.hpp"
 #include "Lib/Environment.hpp"
 #include "Shell/InferenceRecorder.hpp"
 #include "Shell/Options.hpp"
@@ -460,6 +462,76 @@ bool MegalodonChecker::literalToMegalodon(Kernel::Literal* literal, std::string&
     out << ' ' << arg;
   }
   result = out.str();
+  return true;
+}
+
+bool MegalodonChecker::skeletonLiteralToMegalodon(Kernel::Literal* literal, std::string& result)
+{
+  Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
+  if (!literalToMegalodon(positive, result)) {
+    return false;
+  }
+  if (literal->isNegative()) {
+    _usesFalse = true;
+    result = parenthesize(result) + " -> vampire_false";
+  }
+  return true;
+}
+
+bool MegalodonChecker::skeletonDisjunctionToMegalodon(const std::vector<std::string>& literals, std::string& result)
+{
+  if (literals.empty()) {
+    _usesFalse = true;
+    result = "vampire_false";
+    return true;
+  }
+  if (literals.size() == 1) {
+    result = literals[0];
+    return true;
+  }
+  _usesDisjunction = true;
+  result = "vampire_or " + parenthesize(literals[0]) + " " + parenthesize(literals[1]);
+  for (std::size_t i = 2; i < literals.size(); ++i) {
+    result = "vampire_or " + parenthesize(result) + " " + parenthesize(literals[i]);
+  }
+  return true;
+}
+
+bool MegalodonChecker::skeletonClauseToMegalodon(Kernel::Clause* clause, std::string& result)
+{
+  std::vector<std::string> literals;
+  literals.reserve(clause->length());
+  for (Kernel::Literal* literal : clause->iterLits()) {
+    std::string proposition;
+    if (!skeletonLiteralToMegalodon(literal, proposition)) {
+      return false;
+    }
+    literals.push_back(proposition);
+  }
+  if (!skeletonDisjunctionToMegalodon(literals, result)) {
+    return false;
+  }
+
+  Lib::DHMap<unsigned, Kernel::TermList> varSorts;
+  Kernel::SortHelper::collectVariableSorts(clause, varSorts);
+  std::set<unsigned> vars;
+  for (Kernel::Literal* literal : clause->iterLits()) {
+    Kernel::TermVarIterator vit(literal);
+    while (vit.hasNext()) {
+      vars.insert(vit.next());
+    }
+  }
+  for (auto it = vars.rbegin(); it != vars.rend(); ++it) {
+    Kernel::TermList sort;
+    if (!varSorts.find(*it, sort)) {
+      return false;
+    }
+    std::string sortText;
+    if (!sortToMegalodon(sort, sortText)) {
+      return false;
+    }
+    result = "forall " + variableName(*it) + ":" + sortText + ", " + result;
+  }
   return true;
 }
 
@@ -2121,6 +2193,8 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
   _predicates.clear();
   _usesEquality = false;
   _usesConjunction = false;
+  _usesFalse = false;
+  _usesDisjunction = false;
 
   std::vector<std::string> assumptionLines;
   std::vector<Hypothesis> hypotheses;
@@ -2188,32 +2262,77 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
   _predicates.clear();
   _usesEquality = false;
   _usesConjunction = false;
+  _usesFalse = false;
+  _usesDisjunction = false;
+
+  auto symbolsDeclarable = [&]() {
+    for (const auto& entry : _functions) {
+      if (functionDeclaration(entry.first, entry.second).empty()) {
+        return false;
+      }
+    }
+    for (const auto& entry : _predicates) {
+      if (predicateDeclaration(entry.first, entry.second).empty()) {
+        return false;
+      }
+    }
+    return true;
+  };
 
   std::vector<std::string> assumptionLines;
   for (std::size_t i = 0; i < assumptions.size(); ++i) {
+    auto functionsSnapshot = _functions;
+    auto predicatesSnapshot = _predicates;
+    bool usesEqualitySnapshot = _usesEquality;
+    bool usesConjunctionSnapshot = _usesConjunction;
+    bool usesFalseSnapshot = _usesFalse;
+    bool usesDisjunctionSnapshot = _usesDisjunction;
+
     std::string proposition;
-    if (!formulaToMegalodon(assumptions[i].formula, proposition)) {
+    if (!formulaToMegalodon(assumptions[i].formula, proposition) || !symbolsDeclarable()) {
+      _functions = functionsSnapshot;
+      _predicates = predicatesSnapshot;
+      _usesEquality = usesEqualitySnapshot;
+      _usesConjunction = usesConjunctionSnapshot;
+      _usesFalse = usesFalseSnapshot;
+      _usesDisjunction = usesDisjunctionSnapshot;
       continue;
     }
     assumptionLines.push_back("Axiom ax" + std::to_string(i) + ":" + proposition + ".");
   }
 
   std::string theorem;
-  if (!formulaToMegalodon(formula, theorem)) {
+  if (!formulaToMegalodon(formula, theorem) || !symbolsDeclarable()) {
     return false;
   }
 
   std::vector<std::string> claimLines;
   for (Kernel::Unit* unit : proof) {
-    if (unit->isClause()) {
-      continue;
-    }
-    Kernel::Formula* stepFormula = static_cast<Kernel::FormulaUnit*>(unit)->formula();
-    if (unit->inference().rule() == Kernel::InferenceRule::NEGATED_CONJECTURE && stepFormula->connective() == Kernel::NOT) {
-      stepFormula = stepFormula->uarg();
-    }
+    auto functionsSnapshot = _functions;
+    auto predicatesSnapshot = _predicates;
+    bool usesEqualitySnapshot = _usesEquality;
+    bool usesConjunctionSnapshot = _usesConjunction;
+    bool usesFalseSnapshot = _usesFalse;
+    bool usesDisjunctionSnapshot = _usesDisjunction;
+
     std::string proposition;
-    if (!formulaToMegalodon(stepFormula, proposition)) {
+    bool rendered = false;
+    if (unit->isClause()) {
+      rendered = skeletonClauseToMegalodon(unit->asClause(), proposition);
+    } else {
+      Kernel::Formula* stepFormula = static_cast<Kernel::FormulaUnit*>(unit)->formula();
+      if (unit->inference().rule() == Kernel::InferenceRule::NEGATED_CONJECTURE && stepFormula->connective() == Kernel::NOT) {
+        stepFormula = stepFormula->uarg();
+      }
+      rendered = formulaToMegalodon(stepFormula, proposition);
+    }
+    if (!rendered || !symbolsDeclarable()) {
+      _functions = functionsSnapshot;
+      _predicates = predicatesSnapshot;
+      _usesEquality = usesEqualitySnapshot;
+      _usesConjunction = usesConjunctionSnapshot;
+      _usesFalse = usesFalseSnapshot;
+      _usesDisjunction = usesDisjunctionSnapshot;
       continue;
     }
     std::string name = "S" + std::to_string(unit->number());
@@ -2221,6 +2340,12 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
     claimLines.push_back("{ admit. }");
   }
 
+  if (_usesFalse) {
+    lines.push_back("Definition vampire_false : prop := forall P:prop, P.");
+  }
+  if (_usesDisjunction) {
+    lines.push_back("Definition vampire_or : prop->prop->prop := fun A B:prop => forall P:prop, (A -> P) -> (B -> P) -> P.");
+  }
   if (_usesEquality) {
     lines.push_back("Definition vampire_eq : set->set->prop := fun x y:set => forall Q:set->prop, Q x -> Q y.");
     lines.push_back("Infix = 502 := vampire_eq.");
