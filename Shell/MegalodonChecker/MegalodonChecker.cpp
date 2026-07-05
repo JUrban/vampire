@@ -630,6 +630,45 @@ bool MegalodonChecker::instantiatedProofTerm(
       return true;
     }
   }
+  if (goal->connective() == Kernel::FORALL) {
+    std::string inner;
+    if (!instantiatedProofTerm(goal->qarg(), substitution, hypotheses, inner, depth)) {
+      return false;
+    }
+    std::vector<std::pair<unsigned, Kernel::TermList>> vars;
+    Kernel::VSList::Iterator vit(goal->vars());
+    while (vit.hasNext()) {
+      vars.push_back(vit.next());
+    }
+    for (auto it = vars.rbegin(); it != vars.rend(); ++it) {
+      std::string sort;
+      if (!sortToMegalodon(it->second, sort)) {
+        return false;
+      }
+      inner = "fun " + variableName(it->first) + ":" + sort + " => " + inner;
+    }
+    result = parenthesize(inner);
+    return true;
+  }
+  if (goal->connective() == Kernel::IMP) {
+    std::string lhs;
+    if (!formulaToMegalodon(goal->left(), substitution, lhs)) {
+      return false;
+    }
+    std::string hypName = "Hinst" + std::to_string(depth);
+    std::vector<Hypothesis> extended = hypotheses;
+    extended.push_back({lhs, hypName, goal->left()});
+    std::string rhs;
+    if (!instantiatedProofTerm(goal->right(), substitution, extended, rhs, depth)) {
+      return false;
+    }
+    std::string lhsAnnotation = lhs;
+    if (goal->left()->connective() != Kernel::BOOL_TERM && goal->left()->connective() != Kernel::LITERAL) {
+      lhsAnnotation = parenthesize(lhsAnnotation);
+    }
+    result = parenthesize("fun " + hypName + ":" + lhsAnnotation + " => " + rhs);
+    return true;
+  }
   if (depth == 0) {
     return false;
   }
@@ -811,11 +850,23 @@ bool MegalodonChecker::proofTerm(Kernel::Formula* goal, const std::vector<Hypoth
   return false;
 }
 
-bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, std::vector<std::string>& lines)
+bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::vector<Hypothesis>& assumptions, std::vector<std::string>& lines)
 {
   _functions.clear();
   _predicates.clear();
   _usesEquality = false;
+
+  std::vector<std::string> assumptionLines;
+  std::vector<Hypothesis> hypotheses;
+  for (const Hypothesis& assumption : assumptions) {
+    std::string proposition;
+    if (!formulaToMegalodon(assumption.formula, proposition)) {
+      continue;
+    }
+    std::string name = "ax" + std::to_string(hypotheses.size());
+    assumptionLines.push_back("Variable " + name + ":" + proposition + ".");
+    hypotheses.push_back({proposition, name, assumption.formula});
+  }
 
   std::string theorem;
   if (!formulaToMegalodon(formula, theorem)) {
@@ -824,7 +875,6 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, std::vector<
 
   unsigned nextHyp = 0;
   std::string proof;
-  std::vector<Hypothesis> hypotheses;
   if (!proofTerm(formula, hypotheses, proof, nextHyp)) {
     return false;
   }
@@ -847,6 +897,9 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, std::vector<
     }
     lines.push_back(decl);
   }
+  for (const std::string& line : assumptionLines) {
+    lines.push_back(line);
+  }
   lines.push_back("Theorem vampire_reconstructed: " + theorem + ".");
   lines.push_back("exact " + parenthesize(proof) + ".");
   return true;
@@ -854,6 +907,18 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, std::vector<
 
 void MegalodonChecker::printMegalodonSourceCandidate()
 {
+  std::vector<Hypothesis> assumptions;
+  for (Kernel::Unit* unit : proof) {
+    if (unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::INPUT) {
+      continue;
+    }
+    if (unit->inputType() != Kernel::UnitInputType::AXIOM && unit->inputType() != Kernel::UnitInputType::ASSUMPTION) {
+      continue;
+    }
+    Kernel::Formula* formula = static_cast<Kernel::FormulaUnit*>(unit)->formula();
+    assumptions.push_back({"", "", formula});
+  }
+
   for (Kernel::Unit* unit : proof) {
     if (unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::NEGATED_CONJECTURE) {
       continue;
@@ -863,7 +928,7 @@ void MegalodonChecker::printMegalodonSourceCandidate()
       formula = formula->uarg();
     }
     std::vector<std::string> lines;
-    if (!tryMegalodonSource(formula, lines)) {
+    if (!tryMegalodonSource(formula, assumptions, lines)) {
       continue;
     }
     out << "megalodon_source_candidate_start.\n";

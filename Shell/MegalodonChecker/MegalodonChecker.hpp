@@ -28,7 +28,7 @@ private:
 
   bool inferenceNeedsReplayInformation(const Kernel::InferenceRule& rule) const;
   void printMegalodonSourceCandidate();
-  bool tryMegalodonSource(Kernel::Formula* formula, std::vector<std::string>& lines);
+  bool tryMegalodonSource(Kernel::Formula* formula, const std::vector<Hypothesis>& assumptions, std::vector<std::string>& lines);
   bool formulaToMegalodon(Kernel::Formula* formula, std::string& result);
   bool formulaToMegalodon(Kernel::Formula* formula, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result);
   bool literalToMegalodon(Kernel::Literal* literal, std::string& result);
