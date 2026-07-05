@@ -406,7 +406,7 @@ bool MegalodonChecker::termToMegalodon(Kernel::TermList term, const std::map<uns
       if (!termToMegalodon(*it, substitution, arg)) {
         return false;
       }
-      if (it->isApplication()) {
+      if (it->isApplication() || (it->isTerm() && it->term()->isSpecial())) {
         arg = parenthesize(arg);
       }
       out << ' ' << arg;
@@ -414,7 +414,43 @@ bool MegalodonChecker::termToMegalodon(Kernel::TermList term, const std::map<uns
     result = out.str();
     return true;
   }
-  if (!term.isTerm() || term.term()->isSpecial()) {
+  if (term.isTerm() && term.term()->isSpecial()) {
+    Kernel::Term* special = term.term();
+    switch (special->specialFunctor()) {
+      case Kernel::SpecialFunctor::FORMULA:
+        return formulaToMegalodon(special->getSpecialData()->getFormula(), substitution, result);
+      case Kernel::SpecialFunctor::LAMBDA: {
+        const Kernel::Term::SpecialTermData* data = special->getSpecialData();
+        std::string body;
+        Kernel::TermList lambdaBody = data->getLambdaExp();
+        if (lambdaBody.isTerm() && lambdaBody.term()->isFormula()) {
+          if (!formulaToMegalodon(lambdaBody.term()->getSpecialData()->getFormula(), substitution, body)) {
+            return false;
+          }
+        } else if (!termToMegalodon(lambdaBody, substitution, body)) {
+          return false;
+        }
+
+        std::vector<std::pair<unsigned, Kernel::TermList>> vars;
+        Kernel::VSList::Iterator vit(data->getLambdaVars());
+        while (vit.hasNext()) {
+          vars.push_back(vit.next());
+        }
+        for (auto it = vars.rbegin(); it != vars.rend(); ++it) {
+          std::string sort;
+          if (!sortToMegalodon(it->second, sort)) {
+            return false;
+          }
+          body = "fun " + variableName(it->first) + ":" + sort + " => " + body;
+        }
+        result = parenthesize(body);
+        return true;
+      }
+      default:
+        return false;
+    }
+  }
+  if (!term.isTerm()) {
     return false;
   }
 
@@ -432,7 +468,8 @@ bool MegalodonChecker::termToMegalodon(Kernel::TermList term, const std::map<uns
     if (!termToMegalodon(t->termArg(i), substitution, arg)) {
       return false;
     }
-    if (t->termArg(i).isTerm() && t->termArg(i).term()->numTermArguments() > 0) {
+    if (t->termArg(i).isApplication()
+      || (t->termArg(i).isTerm() && (t->termArg(i).term()->isSpecial() || t->termArg(i).term()->numTermArguments() > 0))) {
       arg = parenthesize(arg);
     }
     out << ' ' << arg;
@@ -470,7 +507,7 @@ bool MegalodonChecker::termToMegalodonReplacing(Kernel::TermList term, Kernel::T
       if (!termToMegalodonReplacing(*it, needle, replacement, arg)) {
         return false;
       }
-      if (it->isApplication()) {
+      if (it->isApplication() || (it->isTerm() && it->term()->isSpecial())) {
         arg = parenthesize(arg);
       }
       out << ' ' << arg;
@@ -496,7 +533,8 @@ bool MegalodonChecker::termToMegalodonReplacing(Kernel::TermList term, Kernel::T
     if (!termToMegalodonReplacing(t->termArg(i), needle, replacement, arg)) {
       return false;
     }
-    if (t->termArg(i).isTerm() && t->termArg(i).term()->numTermArguments() > 0) {
+    if (t->termArg(i).isApplication()
+      || (t->termArg(i).isTerm() && (t->termArg(i).term()->isSpecial() || t->termArg(i).term()->numTermArguments() > 0))) {
       arg = parenthesize(arg);
     }
     out << ' ' << arg;
@@ -745,6 +783,25 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::m
       result = lhs + " -> " + rhs;
       return true;
     }
+    case Kernel::NOT: {
+      std::string body;
+      if (!formulaToMegalodon(formula->uarg(), substitution, body)) {
+        return false;
+      }
+      _usesFalse = true;
+      result = parenthesize(body) + " -> vampire_false";
+      return true;
+    }
+    case Kernel::OR: {
+      std::string lhs;
+      std::string rhs;
+      if (!formulaToMegalodon(formula->left(), substitution, lhs) || !formulaToMegalodon(formula->right(), substitution, rhs)) {
+        return false;
+      }
+      _usesDisjunction = true;
+      result = "vampire_or " + parenthesize(lhs) + " " + parenthesize(rhs);
+      return true;
+    }
     case Kernel::FORALL: {
       std::string body;
       if (!formulaToMegalodon(formula->qarg(), substitution, body)) {
@@ -772,6 +829,27 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::m
         conjuncts.push_back(args.next());
       }
       return conjunctionToMegalodon(conjuncts, 0, substitution, result);
+    }
+    case Kernel::EXISTS: {
+      std::string body;
+      if (!formulaToMegalodon(formula->qarg(), substitution, body)) {
+        return false;
+      }
+      std::vector<std::pair<unsigned, Kernel::TermList>> vars;
+      Kernel::VSList::Iterator vit(formula->vars());
+      while (vit.hasNext()) {
+        vars.push_back(vit.next());
+      }
+      for (auto it = vars.rbegin(); it != vars.rend(); ++it) {
+        std::string sort;
+        if (!sortToMegalodon(it->second, sort) || sort != "set") {
+          return false;
+        }
+        _usesSetExists = true;
+        body = "vampire_exists_set (fun " + variableName(it->first) + ":" + sort + " => " + body + ")";
+      }
+      result = body;
+      return true;
     }
     case Kernel::TRUE:
       result = "true";
@@ -2323,6 +2401,7 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
   _usesConjunction = false;
   _usesFalse = false;
   _usesDisjunction = false;
+  _usesSetExists = false;
 
   std::vector<std::string> assumptionLines;
   std::vector<Hypothesis> hypotheses;
@@ -2360,6 +2439,9 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
   if (_usesConjunction) {
     lines.push_back("Definition vampire_and : prop->prop->prop := fun A B:prop => forall P:prop, (A -> B -> P) -> P.");
   }
+  if (_usesSetExists) {
+    lines.push_back("Variable vampire_exists_set:(set->prop)->prop.");
+  }
   for (const auto& entry : _functions) {
     std::string decl = functionDeclaration(entry.first, entry.second);
     if (decl.empty()) {
@@ -2393,6 +2475,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
   _usesConjunction = false;
   _usesFalse = false;
   _usesDisjunction = false;
+  _usesSetExists = false;
 
   auto symbolsDeclarable = [&]() {
     for (const auto& entry : _functions) {
@@ -2417,6 +2500,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
     bool usesConjunctionSnapshot = _usesConjunction;
     bool usesFalseSnapshot = _usesFalse;
     bool usesDisjunctionSnapshot = _usesDisjunction;
+    bool usesSetExistsSnapshot = _usesSetExists;
 
     std::string proposition;
     if (!formulaToMegalodon(assumptions[i].formula, proposition) || !symbolsDeclarable()) {
@@ -2427,6 +2511,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
       _usesConjunction = usesConjunctionSnapshot;
       _usesFalse = usesFalseSnapshot;
       _usesDisjunction = usesDisjunctionSnapshot;
+      _usesSetExists = usesSetExistsSnapshot;
       continue;
     }
     assumptionLines.push_back("Axiom ax" + std::to_string(i) + ":" + proposition + ".");
@@ -2446,6 +2531,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
     bool usesConjunctionSnapshot = _usesConjunction;
     bool usesFalseSnapshot = _usesFalse;
     bool usesDisjunctionSnapshot = _usesDisjunction;
+    bool usesSetExistsSnapshot = _usesSetExists;
 
     std::string proposition;
     bool rendered = false;
@@ -2466,6 +2552,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
       _usesConjunction = usesConjunctionSnapshot;
       _usesFalse = usesFalseSnapshot;
       _usesDisjunction = usesDisjunctionSnapshot;
+      _usesSetExists = usesSetExistsSnapshot;
       continue;
     }
     std::string name = "S" + std::to_string(unit->number());
@@ -2485,6 +2572,9 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
   }
   if (_usesConjunction) {
     lines.push_back("Definition vampire_and : prop->prop->prop := fun A B:prop => forall P:prop, (A -> B -> P) -> P.");
+  }
+  if (_usesSetExists) {
+    lines.push_back("Variable vampire_exists_set:(set->prop)->prop.");
   }
   for (const auto& entry : _functions) {
     std::string decl = functionDeclaration(entry.first, entry.second);

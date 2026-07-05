@@ -93,6 +93,7 @@ private:
   bool _usesConjunction = false;
   bool _usesFalse = false;
   bool _usesDisjunction = false;
+  bool _usesSetExists = false;
 };
 
 } // namespace Shell
