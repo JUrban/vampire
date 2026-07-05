@@ -4,6 +4,7 @@
 #include "Kernel/Clause.hpp"
 #include "Kernel/Formula.hpp"
 #include "Kernel/FormulaUnit.hpp"
+#include "Kernel/HOL/HOL.hpp"
 #include "Kernel/Inference.hpp"
 #include "Kernel/Signature.hpp"
 #include "Kernel/SortHelper.hpp"
@@ -623,8 +624,91 @@ bool MegalodonChecker::equalityProofTerm(Kernel::Formula* goal, const std::vecto
   if (!termToMegalodon(goalLhs, goalLhsText)) {
     return false;
   }
+  std::string goalLhsArgument = parenthesize(goalLhsText);
   if (goalLhs == goalRhs) {
-    result = parenthesize("fun Q:set->prop => fun H:Q " + goalLhsText + " => H");
+    result = parenthesize("fun Q:set->prop => fun H:Q " + goalLhsArgument + " => H");
+    return true;
+  }
+
+  std::string goalRhsText;
+  if (!termToMegalodon(goalRhs, goalRhsText)) {
+    return false;
+  }
+  std::string goalRhsArgument = parenthesize(goalRhsText);
+  std::string reflGoalRhs = parenthesize("fun Q:set->prop => fun H:Q " + goalRhsArgument + " => H");
+
+  for (const Hypothesis& hypothesis : hypotheses) {
+    Kernel::Formula* body = hypothesis.formula;
+    std::vector<unsigned> variables;
+    while (body->connective() == Kernel::FORALL) {
+      Kernel::VSList::Iterator vit(body->vars());
+      while (vit.hasNext()) {
+        variables.push_back(vit.next().first);
+      }
+      body = body->qarg();
+    }
+
+    Kernel::TermList hypothesisLhs;
+    Kernel::TermList hypothesisRhs;
+    if (!equalityLiteral(body, hypothesisLhs, hypothesisRhs)) {
+      continue;
+    }
+
+    std::map<unsigned, Kernel::TermList> directSubstitution;
+    if (matchTerm(hypothesisLhs, goalLhs, variables, directSubstitution)
+      && matchTerm(hypothesisRhs, goalRhs, variables, directSubstitution)) {
+      std::ostringstream proof;
+      proof << hypothesis.proof;
+      bool complete = true;
+      for (unsigned variable : variables) {
+        auto found = directSubstitution.find(variable);
+        if (found == directSubstitution.end()) {
+          complete = false;
+          break;
+        }
+        std::string arg;
+        if (!termToMegalodon(found->second, arg)) {
+          complete = false;
+          break;
+        }
+        proof << ' ' << parenthesize(arg);
+      }
+      if (complete) {
+        result = parenthesize(proof.str());
+        return true;
+      }
+    }
+
+    std::map<unsigned, Kernel::TermList> reverseSubstitution;
+    if (!matchTerm(hypothesisLhs, goalRhs, variables, reverseSubstitution)
+      || !matchTerm(hypothesisRhs, goalLhs, variables, reverseSubstitution)) {
+      continue;
+    }
+
+    std::ostringstream proof;
+    proof << hypothesis.proof;
+    bool complete = true;
+    for (unsigned variable : variables) {
+      auto found = reverseSubstitution.find(variable);
+      if (found == reverseSubstitution.end()) {
+        complete = false;
+        break;
+      }
+      std::string arg;
+      if (!termToMegalodon(found->second, arg)) {
+        complete = false;
+        break;
+      }
+      proof << ' ' << parenthesize(arg);
+    }
+    if (!complete) {
+      continue;
+    }
+    result = parenthesize(
+      parenthesize(proof.str()) + " "
+      + parenthesize("fun Zsym:set => Zsym = " + goalRhsArgument) + " "
+      + reflGoalRhs
+    );
     return true;
   }
 
@@ -644,7 +728,7 @@ bool MegalodonChecker::equalityProofTerm(Kernel::Formula* goal, const std::vecto
         continue;
       }
       result = parenthesize(
-        "fun Q:set->prop => fun H:Q " + goalLhsText + " => "
+        "fun Q:set->prop => fun H:Q " + goalLhsArgument + " => "
         + rightHypothesis.proof + " Q (" + leftHypothesis.proof + " Q H)"
       );
       return true;
@@ -851,6 +935,145 @@ bool MegalodonChecker::formulaMatchesAfterReplacement(
     default:
       return false;
   }
+}
+
+bool MegalodonChecker::substituteTerm(
+  Kernel::TermList term,
+  const std::map<unsigned, Kernel::TermList>& substitution,
+  Kernel::TermList& result)
+{
+  if (term.isVar()) {
+    auto found = substitution.find(term.var());
+    result = found == substitution.end() ? term : found->second;
+    return true;
+  }
+  if (term.isApplication()) {
+    Kernel::TermList lhs;
+    Kernel::TermList rhs;
+    if (!substituteTerm(term.lhs(), substitution, lhs) || !substituteTerm(term.rhs(), substitution, rhs)) {
+      return false;
+    }
+    if (lhs == term.lhs() && rhs == term.rhs()) {
+      result = term;
+      return true;
+    }
+    result = HOL::create::app(*term.term()->nthArgument(0), *term.term()->nthArgument(1), lhs, rhs);
+    return true;
+  }
+  if (!term.isTerm() || term.term()->isSpecial()) {
+    result = term;
+    return true;
+  }
+
+  Kernel::Term* original = term.term();
+  std::vector<Kernel::TermList> args;
+  args.reserve(original->arity());
+  bool changed = false;
+  for (unsigned i = 0; i < original->arity(); ++i) {
+    Kernel::TermList arg;
+    if (!substituteTerm(*original->nthArgument(i), substitution, arg)) {
+      return false;
+    }
+    changed = changed || arg != *original->nthArgument(i);
+    args.push_back(arg);
+  }
+  result = changed ? Kernel::TermList(Kernel::Term::create(original->functor(), original->arity(), args.data())) : term;
+  return true;
+}
+
+bool MegalodonChecker::rewriteTermOnce(
+  Kernel::TermList term,
+  Kernel::TermList pattern,
+  Kernel::TermList replacement,
+  const std::vector<unsigned>& variables,
+  std::map<unsigned, Kernel::TermList>& substitution,
+  Kernel::TermList& result)
+{
+  substitution.clear();
+  if (matchTerm(pattern, term, variables, substitution)) {
+    return substituteTerm(replacement, substitution, result);
+  }
+
+  if (term.isApplication()) {
+    std::map<unsigned, Kernel::TermList> childSubstitution;
+    Kernel::TermList lhs;
+    if (rewriteTermOnce(term.lhs(), pattern, replacement, variables, childSubstitution, lhs)) {
+      result = HOL::create::app(*term.term()->nthArgument(0), *term.term()->nthArgument(1), lhs, term.rhs());
+      substitution = childSubstitution;
+      return true;
+    }
+    Kernel::TermList rhs;
+    if (rewriteTermOnce(term.rhs(), pattern, replacement, variables, childSubstitution, rhs)) {
+      result = HOL::create::app(*term.term()->nthArgument(0), *term.term()->nthArgument(1), term.lhs(), rhs);
+      substitution = childSubstitution;
+      return true;
+    }
+    return false;
+  }
+
+  if (!term.isTerm() || term.term()->isSpecial()) {
+    return false;
+  }
+
+  Kernel::Term* original = term.term();
+  for (unsigned i = 0; i < original->arity(); ++i) {
+    std::map<unsigned, Kernel::TermList> childSubstitution;
+    Kernel::TermList rewrittenArg;
+    if (!rewriteTermOnce(*original->nthArgument(i), pattern, replacement, variables, childSubstitution, rewrittenArg)) {
+      continue;
+    }
+    std::vector<Kernel::TermList> args;
+    args.reserve(original->arity());
+    for (unsigned j = 0; j < original->arity(); ++j) {
+      args.push_back(j == i ? rewrittenArg : *original->nthArgument(j));
+    }
+    result = Kernel::TermList(Kernel::Term::create(original->functor(), original->arity(), args.data()));
+    substitution = childSubstitution;
+    return true;
+  }
+  return false;
+}
+
+bool MegalodonChecker::appendEqualityRewriteStep(
+  const Hypothesis& hypothesis,
+  const std::vector<unsigned>& variables,
+  Kernel::TermList lhs,
+  Kernel::TermList rhs,
+  const std::map<unsigned, Kernel::TermList>& substitution,
+  unsigned& nextLabel,
+  std::vector<std::string>& lines)
+{
+  Kernel::TermList instantiatedLhs;
+  Kernel::TermList instantiatedRhs;
+  if (!substituteTerm(lhs, substitution, instantiatedLhs) || !substituteTerm(rhs, substitution, instantiatedRhs)) {
+    return false;
+  }
+
+  std::string lhsText;
+  std::string rhsText;
+  if (!termToMegalodon(instantiatedLhs, lhsText) || !termToMegalodon(instantiatedRhs, rhsText)) {
+    return false;
+  }
+
+  std::ostringstream proof;
+  proof << hypothesis.proof;
+  for (unsigned variable : variables) {
+    auto found = substitution.find(variable);
+    if (found == substitution.end()) {
+      return false;
+    }
+    std::string arg;
+    if (!termToMegalodon(found->second, arg)) {
+      return false;
+    }
+    proof << ' ' << parenthesize(arg);
+  }
+
+  std::string label = "L" + std::to_string(nextLabel++);
+  lines.push_back("claim " + label + ": " + lhsText + " = " + rhsText + ".");
+  lines.push_back("{ exact " + parenthesize(proof.str()) + ". }");
+  lines.push_back("rewrite " + label + ".");
+  return true;
 }
 
 void MegalodonChecker::implicationChain(Kernel::Formula* formula, std::vector<Kernel::Formula*>& premises, Kernel::Formula*& conclusion) const
@@ -1115,6 +1338,103 @@ bool MegalodonChecker::equalityRewriteScript(Kernel::Formula* goal, const std::v
     }
   }
   return false;
+}
+
+bool MegalodonChecker::equalityNormalizationScript(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::vector<std::string>& lines)
+{
+  Kernel::TermList goalLhs;
+  Kernel::TermList goalRhs;
+  if (!equalityLiteral(goal, goalLhs, goalRhs)) {
+    return false;
+  }
+
+  struct EqualityRule {
+    const Hypothesis* hypothesis;
+    std::vector<unsigned> variables;
+    Kernel::TermList lhs;
+    Kernel::TermList rhs;
+  };
+
+  std::vector<EqualityRule> rules;
+  auto termSize = [&](auto&& self, Kernel::TermList term) -> unsigned {
+    if (term.isVar()) {
+      return 1;
+    }
+    if (term.isApplication()) {
+      return 1 + self(self, term.lhs()) + self(self, term.rhs());
+    }
+    if (!term.isTerm()) {
+      return 1;
+    }
+    unsigned result = 1;
+    Kernel::Term* t = term.term();
+    for (unsigned i = 0; i < t->numTermArguments(); ++i) {
+      result += self(self, t->termArg(i));
+    }
+    return result;
+  };
+  for (const Hypothesis& hypothesis : hypotheses) {
+    Kernel::Formula* body = hypothesis.formula;
+    std::vector<unsigned> variables;
+    while (body->connective() == Kernel::FORALL) {
+      Kernel::VSList::Iterator vit(body->vars());
+      while (vit.hasNext()) {
+        variables.push_back(vit.next().first);
+      }
+      body = body->qarg();
+    }
+    Kernel::TermList lhs;
+    Kernel::TermList rhs;
+    if (equalityLiteral(body, lhs, rhs) && termSize(termSize, rhs) < termSize(termSize, lhs)) {
+      rules.push_back({&hypothesis, variables, lhs, rhs});
+    }
+  }
+  if (rules.empty()) {
+    return false;
+  }
+
+  std::vector<std::string> script;
+  unsigned nextLabel = 0;
+  constexpr unsigned maxStepsPerSide = 8;
+  auto normalize = [&](Kernel::TermList& term) {
+    for (unsigned step = 0; step < maxStepsPerSide; ++step) {
+      bool changed = false;
+      for (const EqualityRule& rule : rules) {
+        std::map<unsigned, Kernel::TermList> substitution;
+        Kernel::TermList rewritten;
+        if (!rewriteTermOnce(term, rule.lhs, rule.rhs, rule.variables, substitution, rewritten)) {
+          continue;
+        }
+        if (rewritten == term) {
+          continue;
+        }
+        if (!appendEqualityRewriteStep(*rule.hypothesis, rule.variables, rule.lhs, rule.rhs, substitution, nextLabel, script)) {
+          return false;
+        }
+        term = rewritten;
+        changed = true;
+        break;
+      }
+      if (!changed) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  Kernel::TermList normalizedLhs = goalLhs;
+  Kernel::TermList normalizedRhs = goalRhs;
+  if (!normalize(normalizedLhs) || !normalize(normalizedRhs) || normalizedLhs != normalizedRhs || script.empty()) {
+    return false;
+  }
+
+  std::string normalizedText;
+  if (!termToMegalodon(normalizedLhs, normalizedText)) {
+    return false;
+  }
+  script.push_back("exact " + parenthesize("fun Q:set->prop => fun H:Q " + parenthesize(normalizedText) + " => H") + ".");
+  lines.insert(lines.end(), script.begin(), script.end());
+  return true;
 }
 
 bool MegalodonChecker::hypothesisApplicationProofTerm(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::string& result)
@@ -1415,7 +1735,9 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
   unsigned nextHyp = 0;
   std::string proof;
   std::vector<std::string> proofLines;
-  if (!equalityRewriteScript(formula, hypotheses, proofLines) && proofTerm(formula, hypotheses, proof, nextHyp)) {
+  if (!equalityRewriteScript(formula, hypotheses, proofLines)
+    && !equalityNormalizationScript(formula, hypotheses, proofLines)
+    && proofTerm(formula, hypotheses, proof, nextHyp)) {
     proofLines.push_back("exact " + parenthesize(proof) + ".");
   }
   if (proofLines.empty()) {
