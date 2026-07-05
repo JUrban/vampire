@@ -346,6 +346,30 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, std::string&
   return formulaToMegalodon(formula, substitution, result);
 }
 
+bool MegalodonChecker::conjunctionToMegalodon(
+  const std::vector<Kernel::Formula*>& conjuncts,
+  std::size_t begin,
+  const std::map<unsigned, Kernel::TermList>& substitution,
+  std::string& result)
+{
+  if (begin >= conjuncts.size()) {
+    return false;
+  }
+  if (begin + 1 == conjuncts.size()) {
+    return formulaToMegalodon(conjuncts[begin], substitution, result);
+  }
+
+  std::string lhs;
+  std::string rhs;
+  if (!formulaToMegalodon(conjuncts[begin], substitution, lhs)
+    || !conjunctionToMegalodon(conjuncts, begin + 1, substitution, rhs)) {
+    return false;
+  }
+  _usesConjunction = true;
+  result = "vampire_and " + parenthesize(lhs) + " " + parenthesize(rhs);
+  return true;
+}
+
 bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result)
 {
   switch (formula->connective()) {
@@ -418,6 +442,14 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::m
       }
       result = body;
       return true;
+    }
+    case Kernel::AND: {
+      std::vector<Kernel::Formula*> conjuncts;
+      auto args = formula->args()->iter();
+      while (args.hasNext()) {
+        conjuncts.push_back(args.next());
+      }
+      return conjunctionToMegalodon(conjuncts, 0, substitution, result);
     }
     case Kernel::TRUE:
       result = "true";
@@ -775,6 +807,118 @@ bool MegalodonChecker::hypothesisApplicationProofTerm(Kernel::Formula* goal, con
   return false;
 }
 
+bool MegalodonChecker::conjunctionIntroductionProofTerm(
+  Kernel::Formula* goal,
+  const std::vector<Hypothesis>& hypotheses,
+  std::string& result,
+  unsigned& nextHyp)
+{
+  if (goal->connective() != Kernel::AND) {
+    return false;
+  }
+  std::vector<Kernel::Formula*> conjuncts;
+  auto args = goal->args()->iter();
+  while (args.hasNext()) {
+    conjuncts.push_back(args.next());
+  }
+  return conjunctionIntroductionProofTerm(conjuncts, 0, hypotheses, result, nextHyp);
+}
+
+bool MegalodonChecker::conjunctionIntroductionProofTerm(
+  const std::vector<Kernel::Formula*>& conjuncts,
+  std::size_t begin,
+  const std::vector<Hypothesis>& hypotheses,
+  std::string& result,
+  unsigned& nextHyp)
+{
+  if (begin + 1 >= conjuncts.size()) {
+    return false;
+  }
+
+  std::string lhsText;
+  std::string rhsText;
+  if (!formulaToMegalodon(conjuncts[begin], lhsText)
+    || !conjunctionToMegalodon(conjuncts, begin + 1, std::map<unsigned, Kernel::TermList>(), rhsText)) {
+    return false;
+  }
+
+  std::string lhsProof;
+  if (!proofTerm(conjuncts[begin], hypotheses, lhsProof, nextHyp)) {
+    return false;
+  }
+
+  std::string rhsProof;
+  if (begin + 2 == conjuncts.size()) {
+    if (!proofTerm(conjuncts[begin + 1], hypotheses, rhsProof, nextHyp)) {
+      return false;
+    }
+  } else if (!conjunctionIntroductionProofTerm(conjuncts, begin + 1, hypotheses, rhsProof, nextHyp)) {
+    return false;
+  }
+
+  result = parenthesize(
+    "fun P:prop => fun H:" + parenthesize(lhsText) + " -> " + parenthesize(rhsText) + " -> P => "
+    + "H " + parenthesize(lhsProof) + " " + parenthesize(rhsProof)
+  );
+  return true;
+}
+
+bool MegalodonChecker::conjunctionProjectionProofTerm(Kernel::Formula* source, const std::string& sourceProof, Kernel::Formula* goal, std::string& result)
+{
+  if (source->connective() != Kernel::AND) {
+    return false;
+  }
+
+  std::string goalText;
+  if (!formulaToMegalodon(goal, goalText)) {
+    return false;
+  }
+
+  std::vector<Kernel::Formula*> conjuncts;
+  auto args = source->args()->iter();
+  while (args.hasNext()) {
+    conjuncts.push_back(args.next());
+  }
+  return conjunctionProjectionProofTerm(conjuncts, 0, sourceProof, goalText, result);
+}
+
+bool MegalodonChecker::conjunctionProjectionProofTerm(
+  const std::vector<Kernel::Formula*>& conjuncts,
+  std::size_t begin,
+  const std::string& sourceProof,
+  const std::string& goalText,
+  std::string& result)
+{
+  if (begin + 1 >= conjuncts.size()) {
+    return false;
+  }
+
+  std::string lhsText;
+  std::string rhsText;
+  if (!formulaToMegalodon(conjuncts[begin], lhsText)
+    || !conjunctionToMegalodon(conjuncts, begin + 1, std::map<unsigned, Kernel::TermList>(), rhsText)) {
+    return false;
+  }
+
+  if (lhsText == goalText) {
+    result = parenthesize(
+      sourceProof + " " + parenthesize(goalText) + " "
+      + parenthesize("fun Hleft:" + parenthesize(lhsText) + " => fun Hright:" + parenthesize(rhsText) + " => Hleft")
+    );
+    return true;
+  }
+
+  std::string rhsProjection = parenthesize(
+    sourceProof + " " + parenthesize(rhsText) + " "
+    + parenthesize("fun Hleft:" + parenthesize(lhsText) + " => fun Hright:" + parenthesize(rhsText) + " => Hright")
+  );
+  if (rhsText == goalText) {
+    result = rhsProjection;
+    return true;
+  }
+  return conjunctionProjectionProofTerm(conjuncts, begin + 1, rhsProjection, goalText, result);
+}
+
 bool MegalodonChecker::proofTerm(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::string& result, unsigned& nextHyp)
 {
   std::string goalText;
@@ -785,6 +929,12 @@ bool MegalodonChecker::proofTerm(Kernel::Formula* goal, const std::vector<Hypoth
   for (const Hypothesis& hypothesis : hypotheses) {
     if (hypothesis.proposition == goalText) {
       result = hypothesis.proof;
+      return true;
+    }
+  }
+
+  for (const Hypothesis& hypothesis : hypotheses) {
+    if (conjunctionProjectionProofTerm(hypothesis.formula, hypothesis.proof, goal, result)) {
       return true;
     }
   }
@@ -804,6 +954,10 @@ bool MegalodonChecker::proofTerm(Kernel::Formula* goal, const std::vector<Hypoth
       result = parenthesize(hypothesis.proof + " " + parenthesize(goalText));
       return true;
     }
+  }
+
+  if (conjunctionIntroductionProofTerm(goal, hypotheses, result, nextHyp)) {
+    return true;
   }
 
   if (goal->connective() == Kernel::FORALL) {
@@ -855,6 +1009,7 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
   _functions.clear();
   _predicates.clear();
   _usesEquality = false;
+  _usesConjunction = false;
 
   std::vector<std::string> assumptionLines;
   std::vector<Hypothesis> hypotheses;
@@ -864,7 +1019,7 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
       continue;
     }
     std::string name = "ax" + std::to_string(hypotheses.size());
-    assumptionLines.push_back("Variable " + name + ":" + proposition + ".");
+    assumptionLines.push_back("Axiom " + name + ":" + proposition + ".");
     hypotheses.push_back({proposition, name, assumption.formula});
   }
 
@@ -882,6 +1037,9 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
   if (_usesEquality) {
     lines.push_back("Definition vampire_eq : set->set->prop := fun x y:set => forall Q:set->prop, Q x -> Q y.");
     lines.push_back("Infix = 502 := vampire_eq.");
+  }
+  if (_usesConjunction) {
+    lines.push_back("Definition vampire_and : prop->prop->prop := fun A B:prop => forall P:prop, (A -> B -> P) -> P.");
   }
   for (const auto& entry : _functions) {
     std::string decl = functionDeclaration(entry.first, entry.second);

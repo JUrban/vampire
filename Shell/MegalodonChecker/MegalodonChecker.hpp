@@ -4,6 +4,7 @@
 #include "Kernel/InferenceStore.hpp"
 #include "Shell/InferenceReplay.hpp"
 
+#include <cstddef>
 #include <ostream>
 #include <map>
 #include <string>
@@ -31,11 +32,16 @@ private:
   bool tryMegalodonSource(Kernel::Formula* formula, const std::vector<Hypothesis>& assumptions, std::vector<std::string>& lines);
   bool formulaToMegalodon(Kernel::Formula* formula, std::string& result);
   bool formulaToMegalodon(Kernel::Formula* formula, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result);
+  bool conjunctionToMegalodon(const std::vector<Kernel::Formula*>& conjuncts, std::size_t begin, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result);
   bool literalToMegalodon(Kernel::Literal* literal, std::string& result);
   bool termToMegalodon(Kernel::TermList term, std::string& result);
   bool termToMegalodon(Kernel::TermList term, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result);
   bool sortToMegalodon(Kernel::TermList sort, std::string& result);
   bool proofTerm(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::string& result, unsigned& nextHyp);
+  bool conjunctionIntroductionProofTerm(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::string& result, unsigned& nextHyp);
+  bool conjunctionIntroductionProofTerm(const std::vector<Kernel::Formula*>& conjuncts, std::size_t begin, const std::vector<Hypothesis>& hypotheses, std::string& result, unsigned& nextHyp);
+  bool conjunctionProjectionProofTerm(Kernel::Formula* source, const std::string& sourceProof, Kernel::Formula* goal, std::string& result);
+  bool conjunctionProjectionProofTerm(const std::vector<Kernel::Formula*>& conjuncts, std::size_t begin, const std::string& sourceProof, const std::string& goalText, std::string& result);
   bool hypothesisApplicationProofTerm(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::string& result);
   bool instantiatedProofTerm(Kernel::Formula* goal, const std::map<unsigned, Kernel::TermList>& substitution, const std::vector<Hypothesis>& hypotheses, std::string& result, unsigned depth);
   bool matchFormula(Kernel::Formula* pattern, Kernel::Formula* target, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution);
@@ -59,6 +65,7 @@ private:
   std::map<unsigned, std::string> _functions;
   std::map<unsigned, std::string> _predicates;
   bool _usesEquality = false;
+  bool _usesConjunction = false;
 };
 
 } // namespace Shell
