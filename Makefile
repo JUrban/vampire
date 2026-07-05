@@ -354,9 +354,14 @@ VS_OBJ = Shell/AnswerLiteralManager.o\
          Shell/GoalGuessing.o\
          Shell/InequalitySplitting.o\
          Shell/InterpolantMinimizer.o\
-         Shell/Interpolants.o\
-         Shell/InterpretedNormalizer.o\
-         Shell/LispLexer.o\
+	         Shell/Interpolants.o\
+	         Shell/InferenceRecorder.o\
+	         Shell/InferenceReplay.o\
+	         Shell/InterpretedNormalizer.o\
+	         Shell/LeanChecker/LeanChecker.o\
+	         Shell/LeanChecker/LeanPrinter.o\
+	         Shell/LeanChecker/VariablePrenexOrderingTree.o\
+	         Shell/LispLexer.o\
          Shell/LispParser.o\
          Shell/Naming.o\
          Shell/NNF.o\
