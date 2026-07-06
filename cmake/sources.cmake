@@ -690,6 +690,8 @@ set(SOURCES
     Shell/LeanChecker/LeanPrinter.hpp
     Shell/LeanChecker/VariablePrenexOrderingTree.cpp
     Shell/LeanChecker/VariablePrenexOrderingTree.hpp
+    Shell/MegalodonChecker/MegalodonChecker.cpp
+    Shell/MegalodonChecker/MegalodonChecker.hpp
     Shell/Lexer.cpp
     Shell/Lexer.hpp
     Shell/LispLexer.cpp

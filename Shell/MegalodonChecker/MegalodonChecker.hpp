@@ -2,6 +2,7 @@
 #define __MEGALODON_CHECKER__
 
 #include "Kernel/InferenceStore.hpp"
+#include "Shell/InferenceRecorder.hpp"
 #include "Shell/InferenceReplay.hpp"
 
 #include <cstddef>
@@ -86,6 +87,8 @@ private:
   std::string quote(const std::string& value) const;
   std::string parents(Kernel::Unit* u) const;
   std::string unitKind(Kernel::Unit* u) const;
+  void printReplaySubstitutions(Kernel::Unit* u, const InferenceRecorder::InferenceInformation* info);
+  std::string substitutedClauseText(Kernel::Clause* clause, const Kernel::Substitution& substitution) const;
 
   InferenceReplayer _replayer;
   std::map<unsigned, std::string> _functions;

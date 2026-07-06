@@ -8,6 +8,7 @@
 #include "Kernel/Inference.hpp"
 #include "Kernel/Signature.hpp"
 #include "Kernel/SortHelper.hpp"
+#include "Kernel/SubstHelper.hpp"
 #include "Kernel/Substitution.hpp"
 #include "Kernel/Term.hpp"
 #include "Kernel/TermIterators.hpp"
@@ -84,6 +85,42 @@ std::string MegalodonChecker::quote(const std::string& value) const
   }
   out << '"';
   return out.str();
+}
+
+std::string MegalodonChecker::substitutedClauseText(Kernel::Clause* clause, const Kernel::Substitution& substitution) const
+{
+  std::ostringstream out;
+  out << "cnf(u" << clause->number() << "_subst,axiom,\n    ";
+  if (clause->isEmpty()) {
+    out << "$false";
+  } else {
+    bool first = true;
+    for (Kernel::Literal* literal : *clause) {
+      if (!first) {
+        out << " | ";
+      }
+      first = false;
+      out << Kernel::SubstHelper::apply(literal, substitution)->toString();
+    }
+  }
+  out << ").\n";
+  return out.str();
+}
+
+void MegalodonChecker::printReplaySubstitutions(Kernel::Unit* u, const InferenceRecorder::InferenceInformation* info)
+{
+  if (info == nullptr || info->premises.size() != info->substitutionForBanksSub.size()) {
+    return;
+  }
+
+  out << "megalodon_step_substitutions(" << u->number() << ",[";
+  for (std::size_t i = 0; i < info->premises.size(); ++i) {
+    if (i != 0) {
+      out << ',';
+    }
+    out << quote(substitutedClauseText(info->premises[i], info->substitutionForBanksSub[i]));
+  }
+  out << "]).\n";
 }
 
 std::string MegalodonChecker::parents(Kernel::Unit* u) const
@@ -2792,6 +2829,11 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
       << substitutions << ','
       << quote(TPTPPrinter::toString(u))
       << ").\n";
+  if (replayed) {
+    const InferenceRecorder::InferenceInformation* info =
+      InferenceRecorder::instance()->getLastRecordedInferenceInformation();
+    printReplaySubstitutions(u, info);
+  }
 }
 
 } // namespace Shell
