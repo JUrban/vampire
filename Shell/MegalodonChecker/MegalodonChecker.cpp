@@ -61,14 +61,20 @@ std::string MegalodonChecker::replayKind(const Kernel::InferenceRule& rule) cons
 {
   switch (rule) {
     case Kernel::InferenceRule::RESOLUTION:
+      return "resolution";
     case Kernel::InferenceRule::FACTORING:
+      return "factoring";
     case Kernel::InferenceRule::EQUALITY_RESOLUTION:
     case Kernel::InferenceRule::EQUALITY_RESOLUTION_WITH_DELETION:
+      return "equality_resolution";
     case Kernel::InferenceRule::EQUALITY_FACTORING:
+      return "equality_factoring";
     case Kernel::InferenceRule::SUPERPOSITION:
+      return "superposition";
     case Kernel::InferenceRule::FORWARD_DEMODULATION:
+      return "forward_demodulation";
     case Kernel::InferenceRule::BACKWARD_DEMODULATION:
-      return "substitution_replay";
+      return "backward_demodulation";
     case Kernel::InferenceRule::RECTIFY:
       return "rectify";
     case Kernel::InferenceRule::REMOVE_DUPLICATE_LITERALS:
