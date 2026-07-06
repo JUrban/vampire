@@ -361,6 +361,29 @@ std::string MegalodonChecker::predicateDeclaration(unsigned predicate, const std
   return out.str();
 }
 
+bool MegalodonChecker::recordEqualitySort(Kernel::TermList sort)
+{
+  std::string sortText;
+  if (!sortToMegalodon(sort, sortText)) {
+    return false;
+  }
+  if (!_equalitySort.empty() && _equalitySort != sortText) {
+    return false;
+  }
+  _usesEquality = true;
+  _equalitySort = sortText;
+  return true;
+}
+
+std::string MegalodonChecker::equalityDefinition() const
+{
+  std::string sortText = _equalitySort.empty() ? "set" : _equalitySort;
+  std::string argumentSort = sortText.find("->") == std::string::npos ? sortText : parenthesize(sortText);
+  return "Definition vampire_eq : " + argumentSort + "->" + argumentSort
+    + "->prop := fun x y:" + sortText
+    + " => forall Q:" + argumentSort + "->prop, Q x -> Q y.";
+}
+
 bool MegalodonChecker::termToMegalodon(Kernel::TermList term, std::string& result)
 {
   std::map<unsigned, Kernel::TermList> substitution;
@@ -607,11 +630,9 @@ bool MegalodonChecker::literalToMegalodon(Kernel::Literal* literal, std::string&
     return false;
   }
   if (literal->isEquality()) {
-    std::string equalitySort;
-    if (!sortToMegalodon(Kernel::SortHelper::getEqualityArgumentSort(literal), equalitySort) || equalitySort != "set") {
+    if (!recordEqualitySort(Kernel::SortHelper::getEqualityArgumentSort(literal))) {
       return false;
     }
-    _usesEquality = true;
     std::string lhs;
     std::string rhs;
     if (!termToMegalodon(*literal->nthArgument(0), substitution, lhs) || !termToMegalodon(*literal->nthArgument(1), substitution, rhs)) {
@@ -749,11 +770,9 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::m
         return false;
       }
       if (literal->isEquality()) {
-        std::string equalitySort;
-        if (!sortToMegalodon(Kernel::SortHelper::getEqualityArgumentSort(literal), equalitySort) || equalitySort != "set") {
+        if (!recordEqualitySort(Kernel::SortHelper::getEqualityArgumentSort(literal))) {
           return false;
         }
-        _usesEquality = true;
         std::string lhs;
         std::string rhs;
         if (!termToMegalodon(*literal->nthArgument(0), substitution, lhs) || !termToMegalodon(*literal->nthArgument(1), substitution, rhs)) {
@@ -2408,6 +2427,7 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
   _predicates.clear();
   _usedSymbolNames.clear();
   _usesEquality = false;
+  _equalitySort.clear();
   _usesConjunction = false;
   _usesFalse = false;
   _usesDisjunction = false;
@@ -2444,7 +2464,7 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
   }
 
   if (_usesEquality) {
-    lines.push_back("Definition vampire_eq : set->set->prop := fun x y:set => forall Q:set->prop, Q x -> Q y.");
+    lines.push_back(equalityDefinition());
     lines.push_back("Infix = 502 := vampire_eq.");
   }
   if (_usesConjunction) {
@@ -2486,6 +2506,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
   _predicates.clear();
   _usedSymbolNames.clear();
   _usesEquality = false;
+  _equalitySort.clear();
   _usesConjunction = false;
   _usesFalse = false;
   _usesDisjunction = false;
@@ -2506,12 +2527,19 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
     return true;
   };
 
+  std::string theorem;
+  if (!formulaToMegalodon(formula, theorem) || !symbolsDeclarable()) {
+    return false;
+  }
+
   std::vector<std::string> assumptionLines;
+  unsigned renderedAssumption = 0;
   for (std::size_t i = 0; i < assumptions.size(); ++i) {
     auto functionsSnapshot = _functions;
     auto predicatesSnapshot = _predicates;
     auto usedSymbolNamesSnapshot = _usedSymbolNames;
     bool usesEqualitySnapshot = _usesEquality;
+    std::string equalitySortSnapshot = _equalitySort;
     bool usesConjunctionSnapshot = _usesConjunction;
     bool usesFalseSnapshot = _usesFalse;
     bool usesDisjunctionSnapshot = _usesDisjunction;
@@ -2524,6 +2552,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
       _predicates = predicatesSnapshot;
       _usedSymbolNames = usedSymbolNamesSnapshot;
       _usesEquality = usesEqualitySnapshot;
+      _equalitySort = equalitySortSnapshot;
       _usesConjunction = usesConjunctionSnapshot;
       _usesFalse = usesFalseSnapshot;
       _usesDisjunction = usesDisjunctionSnapshot;
@@ -2531,12 +2560,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
       _usesTrue = usesTrueSnapshot;
       continue;
     }
-    assumptionLines.push_back("Axiom ax" + std::to_string(i) + ":" + proposition + ".");
-  }
-
-  std::string theorem;
-  if (!formulaToMegalodon(formula, theorem) || !symbolsDeclarable()) {
-    return false;
+    assumptionLines.push_back("Axiom ax" + std::to_string(renderedAssumption++) + ":" + proposition + ".");
   }
 
   std::vector<std::string> claimLines;
@@ -2545,6 +2569,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
     auto predicatesSnapshot = _predicates;
     auto usedSymbolNamesSnapshot = _usedSymbolNames;
     bool usesEqualitySnapshot = _usesEquality;
+    std::string equalitySortSnapshot = _equalitySort;
     bool usesConjunctionSnapshot = _usesConjunction;
     bool usesFalseSnapshot = _usesFalse;
     bool usesDisjunctionSnapshot = _usesDisjunction;
@@ -2567,6 +2592,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
       _predicates = predicatesSnapshot;
       _usedSymbolNames = usedSymbolNamesSnapshot;
       _usesEquality = usesEqualitySnapshot;
+      _equalitySort = equalitySortSnapshot;
       _usesConjunction = usesConjunctionSnapshot;
       _usesFalse = usesFalseSnapshot;
       _usesDisjunction = usesDisjunctionSnapshot;
@@ -2586,7 +2612,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
     lines.push_back("Definition vampire_or : prop->prop->prop := fun A B:prop => forall P:prop, (A -> P) -> (B -> P) -> P.");
   }
   if (_usesEquality) {
-    lines.push_back("Definition vampire_eq : set->set->prop := fun x y:set => forall Q:set->prop, Q x -> Q y.");
+    lines.push_back(equalityDefinition());
     lines.push_back("Infix = 502 := vampire_eq.");
   }
   if (_usesConjunction) {
