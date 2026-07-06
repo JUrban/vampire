@@ -87,6 +87,7 @@ private:
   std::string quote(const std::string& value) const;
   std::string parents(Kernel::Unit* u) const;
   std::string unitKind(Kernel::Unit* u) const;
+  std::string replayKind(const Kernel::InferenceRule& rule) const;
   void printReplaySubstitutions(Kernel::Unit* u, const InferenceRecorder::InferenceInformation* info);
   std::string substitutedClauseText(Kernel::Clause* clause, const Kernel::Substitution& substitution) const;
 

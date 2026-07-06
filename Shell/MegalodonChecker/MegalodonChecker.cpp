@@ -57,6 +57,60 @@ bool MegalodonChecker::inferenceNeedsReplayInformation(const Kernel::InferenceRu
   }
 }
 
+std::string MegalodonChecker::replayKind(const Kernel::InferenceRule& rule) const
+{
+  switch (rule) {
+    case Kernel::InferenceRule::RESOLUTION:
+    case Kernel::InferenceRule::FACTORING:
+    case Kernel::InferenceRule::EQUALITY_RESOLUTION:
+    case Kernel::InferenceRule::EQUALITY_RESOLUTION_WITH_DELETION:
+    case Kernel::InferenceRule::EQUALITY_FACTORING:
+    case Kernel::InferenceRule::SUPERPOSITION:
+    case Kernel::InferenceRule::FORWARD_DEMODULATION:
+    case Kernel::InferenceRule::BACKWARD_DEMODULATION:
+      return "substitution_replay";
+    case Kernel::InferenceRule::RECTIFY:
+      return "rectify";
+    case Kernel::InferenceRule::REMOVE_DUPLICATE_LITERALS:
+    case Kernel::InferenceRule::REORIENT_EQUATIONS:
+    case Kernel::InferenceRule::TRIVIAL_INEQUALITY_REMOVAL:
+    case Kernel::InferenceRule::REORDER_LITERALS:
+    case Kernel::InferenceRule::EVALUATION:
+      return "generic_clause";
+    case Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION:
+    case Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION:
+      return "subsumption_resolution";
+    case Kernel::InferenceRule::DEFINITION_UNFOLDING:
+    case Kernel::InferenceRule::DEFINITION_FOLDING_TWEE:
+    case Kernel::InferenceRule::DEFINITION_FOLDING_PRED:
+      return "definition_rewrite";
+    case Kernel::InferenceRule::CLAUSIFY:
+      return "cnf";
+    case Kernel::InferenceRule::FOOL_ELIMINATION:
+      return "fool";
+    case Kernel::InferenceRule::NNF:
+    case Kernel::InferenceRule::ENNF:
+    case Kernel::InferenceRule::FLATTEN:
+    case Kernel::InferenceRule::REDUCE_FALSE_TRUE:
+    case Kernel::InferenceRule::THEORY_NORMALIZATION:
+    case Kernel::InferenceRule::BOOL_SIMP:
+      return "normal_form";
+    case Kernel::InferenceRule::SKOLEMIZE:
+      return "skolemize";
+    case Kernel::InferenceRule::AVATAR_COMPONENT:
+      return "avatar_component";
+    case Kernel::InferenceRule::AVATAR_REFUTATION:
+    case Kernel::InferenceRule::AVATAR_REFUTATION_SMT:
+      return "avatar_refutation";
+    case Kernel::InferenceRule::AVATAR_CONTRADICTION_CLAUSE:
+      return "avatar_contradiction";
+    case Kernel::InferenceRule::AVATAR_SPLIT_CLAUSE:
+      return "avatar_split";
+    default:
+      return "generic";
+  }
+}
+
 std::string MegalodonChecker::quote(const std::string& value) const
 {
   std::ostringstream out;
@@ -2828,6 +2882,10 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
       << (replayed ? "true" : "false") << ','
       << substitutions << ','
       << quote(TPTPPrinter::toString(u))
+      << ").\n";
+  out << "megalodon_step_replay_kind("
+      << u->number() << ','
+      << quote(replayKind(rule))
       << ").\n";
   if (replayed) {
     const InferenceRecorder::InferenceInformation* info =
