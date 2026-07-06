@@ -582,7 +582,13 @@ bool MegalodonChecker::formulaToMegalodonReplacing(Kernel::Formula* formula, Ker
     case Kernel::LITERAL: {
       Kernel::Literal* literal = formula->literal();
       if (literal->isNegative()) {
-        return false;
+        Kernel::Literal* positive = Kernel::Literal::complementaryLiteral(literal);
+        if (!literalToMegalodon(positive, result)) {
+          return false;
+        }
+        _usesFalse = true;
+        result = parenthesize(result) + " -> vampire_false";
+        return true;
       }
       if (literal->isEquality()) {
         std::string equalitySort;
@@ -767,7 +773,13 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::m
     case Kernel::LITERAL: {
       Kernel::Literal* literal = formula->literal();
       if (literal->isNegative()) {
-        return false;
+        Kernel::Literal* positive = Kernel::Literal::complementaryLiteral(literal);
+        if (!literalToMegalodon(positive, result)) {
+          return false;
+        }
+        _usesFalse = true;
+        result = parenthesize(result) + " -> vampire_false";
+        return true;
       }
       if (literal->isEquality()) {
         if (!recordEqualitySort(Kernel::SortHelper::getEqualityArgumentSort(literal))) {
@@ -799,6 +811,10 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::m
       return true;
     }
     case Kernel::BOOL_TERM:
+      if (formula->getBooleanTerm().isVar()) {
+        result = variableName(formula->getBooleanTerm().var());
+        return true;
+      }
       return termToMegalodon(formula->getBooleanTerm(), substitution, result);
     case Kernel::IMP: {
       std::string lhs;
@@ -822,13 +838,25 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::m
       return true;
     }
     case Kernel::OR: {
-      std::string lhs;
-      std::string rhs;
-      if (!formulaToMegalodon(formula->left(), substitution, lhs) || !formulaToMegalodon(formula->right(), substitution, rhs)) {
+      std::vector<std::string> disjuncts;
+      auto args = formula->args()->iter();
+      while (args.hasNext()) {
+        std::string disjunct;
+        if (!formulaToMegalodon(args.next(), substitution, disjunct)) {
+          return false;
+        }
+        disjuncts.push_back(disjunct);
+      }
+      if (disjuncts.empty()) {
         return false;
       }
-      _usesDisjunction = true;
-      result = "vampire_or " + parenthesize(lhs) + " " + parenthesize(rhs);
+      if (disjuncts.size() == 1) {
+        result = disjuncts[0];
+        return true;
+      }
+      if (!skeletonDisjunctionToMegalodon(disjuncts, result)) {
+        return false;
+      }
       return true;
     }
     case Kernel::FORALL: {
