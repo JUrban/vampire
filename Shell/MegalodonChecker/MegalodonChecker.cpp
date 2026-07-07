@@ -370,6 +370,54 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     _renderingReplayExtra = renderingReplayExtra;
     return ok;
   };
+  auto addLambdaSubtermFields = [&](std::vector<std::string>& fields, const std::string& prefix, Kernel::Clause* clause, const Kernel::Substitution* substitution) {
+    std::vector<std::string> lambdas;
+    std::set<std::string> seen;
+    auto addLambda = [&](Kernel::TermList term) {
+      if (lambdas.size() >= 32) {
+        return;
+      }
+      std::string text;
+      if (renderTermForExtra(term, text) && seen.insert(text).second) {
+        lambdas.push_back(text);
+      }
+    };
+    std::function<void(Kernel::TermList)> visitTerm = [&](Kernel::TermList term) {
+      if (term.isVar()) {
+        return;
+      }
+      if (term.isLambdaTerm()) {
+        addLambda(term);
+        visitTerm(term.lambdaBody());
+        return;
+      }
+      if (term.isApplication()) {
+        visitTerm(term.lhs());
+        visitTerm(term.rhs());
+        return;
+      }
+      if (!term.isTerm() || term.term()->isSpecial()) {
+        return;
+      }
+      Kernel::Term* t = term.term();
+      for (unsigned i = 0; i < t->numTermArguments(); ++i) {
+        visitTerm(t->termArg(i));
+      }
+    };
+    for (Kernel::Literal* literal : clause->iterLits()) {
+      Kernel::Literal* current = substitution == nullptr ? literal : Kernel::SubstHelper::apply(literal, *substitution);
+      for (unsigned i = 0; i < current->arity(); ++i) {
+        visitTerm(*current->nthArgument(i));
+      }
+    }
+    if (lambdas.empty()) {
+      return;
+    }
+    fields.push_back(prefix + "_lambda_count=" + std::to_string(lambdas.size()));
+    for (std::size_t i = 0; i < lambdas.size(); ++i) {
+      fields.push_back(prefix + "_lambda_" + std::to_string(i) + "=" + lambdas[i]);
+    }
+  };
   auto renderClauseForExtra = [&](Kernel::Clause* clause, std::string& text) {
     bool usesEquality = _usesEquality;
     std::string equalitySort = _equalitySort;
@@ -946,6 +994,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         }
         if (renderTermForExtra(info->demodulationReplacement, text)) {
           fields.push_back("replacement=" + text);
+        }
+        if (!info->premises.empty() && !info->substitutionForBanksSub.empty()) {
+          addLambdaSubtermFields(fields, "main_parent", info->premises[0], &info->substitutionForBanksSub[0]);
+        }
+        if (u->isClause()) {
+          addLambdaSubtermFields(fields, "conclusion", u->asClause(), nullptr);
         }
       }
       emit("rewrite", fields);
