@@ -1212,11 +1212,19 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::m
       }
       for (auto it = vars.rbegin(); it != vars.rend(); ++it) {
         std::string sort;
-        if (!sortToMegalodon(it->second, sort) || sort != "set") {
+        if (!sortToMegalodon(it->second, sort)) {
           return false;
         }
-        _usesSetExists = true;
-        body = "vampire_exists_set (fun " + variableName(it->first) + ":" + sort + " => " + body + ")";
+        if (sort == "set") {
+          _usesSetExists = true;
+          body = "vampire_exists_set (fun " + variableName(it->first) + ":" + sort + " => " + body + ")";
+        } else if (sort == "prop") {
+          body = "vampire_exists_prop (fun " + variableName(it->first) + ":" + sort + " => " + body + ")";
+        } else if (sort == "set->prop") {
+          body = "vampire_exists_set_prop (fun " + variableName(it->first) + ":" + sort + " => " + body + ")";
+        } else {
+          return false;
+        }
       }
       result = body;
       return true;
