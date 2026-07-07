@@ -80,6 +80,7 @@ private:
   bool equalityLiteral(Kernel::Formula* formula, Kernel::TermList& lhs, Kernel::TermList& rhs);
   bool equalityProofTerm(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::string& result);
   bool quantifiedPropHypothesis(Kernel::Formula* formula, std::string& binderName, Kernel::Formula*& body);
+  std::string propEqualityDefinition() const;
   std::string functionName(unsigned functor);
   std::string predicateName(unsigned predicate);
   std::string functionDeclaration(unsigned functor, const std::string& name);
@@ -108,6 +109,7 @@ private:
   bool _usesDisjunction = false;
   bool _usesSetExists = false;
   bool _usesTrue = false;
+  bool _usesPropEquality = false;
 };
 
 } // namespace Shell

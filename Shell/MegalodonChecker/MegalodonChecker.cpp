@@ -619,6 +619,11 @@ std::string MegalodonChecker::equalityDefinition() const
     + " => forall Q:" + argumentSort + "->prop, Q x -> Q y.";
 }
 
+std::string MegalodonChecker::propEqualityDefinition() const
+{
+  return "Definition vampire_eq_prop : prop->prop->prop := fun x y:prop => forall Q:prop->prop, Q x -> Q y.";
+}
+
 bool MegalodonChecker::termToMegalodon(Kernel::TermList term, std::string& result)
 {
   std::map<unsigned, Kernel::TermList> substitution;
@@ -871,12 +876,22 @@ bool MegalodonChecker::literalToMegalodon(Kernel::Literal* literal, std::string&
     return false;
   }
   if (literal->isEquality()) {
-    if (!recordEqualitySort(Kernel::SortHelper::getEqualityArgumentSort(literal))) {
+    Kernel::TermList equalityArgumentSort = Kernel::SortHelper::getEqualityArgumentSort(literal);
+    std::string equalitySort;
+    if (!sortToMegalodon(equalityArgumentSort, equalitySort)) {
       return false;
     }
     std::string lhs;
     std::string rhs;
     if (!termToMegalodon(*literal->nthArgument(0), substitution, lhs) || !termToMegalodon(*literal->nthArgument(1), substitution, rhs)) {
+      return false;
+    }
+    if (equalitySort == "prop") {
+      _usesPropEquality = true;
+      result = "vampire_eq_prop " + parenthesize(lhs) + " " + parenthesize(rhs);
+      return true;
+    }
+    if (!recordEqualitySort(equalityArgumentSort)) {
       return false;
     }
     result = lhs + " = " + rhs;
@@ -1052,12 +1067,22 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::m
         return true;
       }
       if (literal->isEquality()) {
-        if (!recordEqualitySort(Kernel::SortHelper::getEqualityArgumentSort(literal))) {
+        Kernel::TermList equalityArgumentSort = Kernel::SortHelper::getEqualityArgumentSort(literal);
+        std::string equalitySort;
+        if (!sortToMegalodon(equalityArgumentSort, equalitySort)) {
           return false;
         }
         std::string lhs;
         std::string rhs;
         if (!termToMegalodon(*literal->nthArgument(0), substitution, lhs) || !termToMegalodon(*literal->nthArgument(1), substitution, rhs)) {
+          return false;
+        }
+        if (equalitySort == "prop") {
+          _usesPropEquality = true;
+          result = "vampire_eq_prop " + parenthesize(lhs) + " " + parenthesize(rhs);
+          return true;
+        }
+        if (!recordEqualitySort(equalityArgumentSort)) {
           return false;
         }
         result = lhs + " = " + rhs;
@@ -2745,6 +2770,7 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
   _usesDisjunction = false;
   _usesSetExists = false;
   _usesTrue = false;
+  _usesPropEquality = false;
 
   std::vector<std::string> assumptionLines;
   std::vector<Hypothesis> hypotheses;
@@ -2778,6 +2804,9 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
   if (_usesEquality) {
     lines.push_back(equalityDefinition());
     lines.push_back("Infix = 502 := vampire_eq.");
+  }
+  if (_usesPropEquality) {
+    lines.push_back(propEqualityDefinition());
   }
   if (_usesConjunction) {
     lines.push_back("Definition vampire_and : prop->prop->prop := fun A B:prop => forall P:prop, (A -> B -> P) -> P.");
@@ -2857,6 +2886,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
     bool usesDisjunctionSnapshot = _usesDisjunction;
     bool usesSetExistsSnapshot = _usesSetExists;
     bool usesTrueSnapshot = _usesTrue;
+    bool usesPropEqualitySnapshot = _usesPropEquality;
 
     std::string proposition;
     if (!formulaToMegalodon(assumptions[i].formula, proposition) || !symbolsDeclarable()) {
@@ -2870,6 +2900,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
       _usesDisjunction = usesDisjunctionSnapshot;
       _usesSetExists = usesSetExistsSnapshot;
       _usesTrue = usesTrueSnapshot;
+      _usesPropEquality = usesPropEqualitySnapshot;
       continue;
     }
     assumptionLines.push_back("Axiom ax" + std::to_string(renderedAssumption++) + ":" + proposition + ".");
@@ -2887,6 +2918,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
     bool usesDisjunctionSnapshot = _usesDisjunction;
     bool usesSetExistsSnapshot = _usesSetExists;
     bool usesTrueSnapshot = _usesTrue;
+    bool usesPropEqualitySnapshot = _usesPropEquality;
 
     std::string proposition;
     bool rendered = false;
@@ -2910,6 +2942,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
       _usesDisjunction = usesDisjunctionSnapshot;
       _usesSetExists = usesSetExistsSnapshot;
       _usesTrue = usesTrueSnapshot;
+      _usesPropEquality = usesPropEqualitySnapshot;
       continue;
     }
     std::string name = "S" + std::to_string(unit->number());
@@ -2926,6 +2959,9 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
   if (_usesEquality) {
     lines.push_back(equalityDefinition());
     lines.push_back("Infix = 502 := vampire_eq.");
+  }
+  if (_usesPropEquality) {
+    lines.push_back(propEqualityDefinition());
   }
   if (_usesConjunction) {
     lines.push_back("Definition vampire_and : prop->prop->prop := fun A B:prop => forall P:prop, (A -> B -> P) -> P.");
