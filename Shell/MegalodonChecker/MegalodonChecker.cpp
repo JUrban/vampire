@@ -3598,9 +3598,15 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
   }
 
   std::string propositionText;
-  bool hasProposition = u->isClause()
-    ? skeletonClauseToMegalodon(u->asClause(), propositionText)
-    : formulaToMegalodon(u->getFormula(), propositionText);
+  bool hasProposition = false;
+  if (u->isClause()) {
+    hasProposition = skeletonClauseToMegalodon(u->asClause(), propositionText);
+  } else {
+    bool renderingReplayExtra = _renderingReplayExtra;
+    _renderingReplayExtra = true;
+    hasProposition = formulaToMegalodon(u->getFormula(), propositionText);
+    _renderingReplayExtra = renderingReplayExtra;
+  }
   std::string formulaText = u->isClause()
     ? "cnf(u" + std::to_string(u->number()) + ",plain,$true).\n"
     : "tff(u" + std::to_string(u->number()) + ",plain,$true).\n";
@@ -3619,6 +3625,15 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
         << u->number() << ','
         << quote(propositionText)
         << ").\n";
+  } else if (!u->isClause()) {
+    Kernel::Formula* formula = u->getFormula();
+    out << "megalodon_step_extra("
+        << u->number() << ','
+        << quote("proposition") << ",["
+        << quote("conversion_failed=1") << ','
+        << quote("connective=" + std::to_string(static_cast<int>(formula->connective()))) << ','
+        << quote("raw=" + formula->toString())
+        << "]).\n";
   }
   out << "megalodon_step_replay_kind("
       << u->number() << ','
