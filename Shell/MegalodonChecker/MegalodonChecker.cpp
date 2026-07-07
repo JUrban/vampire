@@ -371,7 +371,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     return ok;
   };
   auto addLambdaSubtermFields = [&](std::vector<std::string>& fields, const std::string& prefix, Kernel::Clause* clause, const Kernel::Substitution* substitution) {
-    std::vector<std::string> lambdas;
+    std::vector<std::pair<std::string, std::string>> lambdas;
     std::set<std::string> seen;
     auto addLambda = [&](Kernel::TermList term) {
       if (lambdas.size() >= 32) {
@@ -379,7 +379,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       }
       std::string text;
       if (renderTermForExtra(term, text) && seen.insert(text).second) {
-        lambdas.push_back(text);
+        std::string sortText;
+        Kernel::TermList sort;
+        if (Kernel::SortHelper::tryGetResultSort(term, sort)) {
+          sortToMegalodon(sort, sortText);
+        }
+        lambdas.push_back({text, sortText});
       }
     };
     std::function<void(Kernel::TermList)> visitTerm = [&](Kernel::TermList term) {
@@ -415,7 +420,10 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     fields.push_back(prefix + "_lambda_count=" + std::to_string(lambdas.size()));
     for (std::size_t i = 0; i < lambdas.size(); ++i) {
-      fields.push_back(prefix + "_lambda_" + std::to_string(i) + "=" + lambdas[i]);
+      fields.push_back(prefix + "_lambda_" + std::to_string(i) + "=" + lambdas[i].first);
+      if (!lambdas[i].second.empty()) {
+        fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_sort=" + lambdas[i].second);
+      }
     }
   };
   auto renderClauseForExtra = [&](Kernel::Clause* clause, std::string& text) {
@@ -1041,6 +1049,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         if (u->isClause()) {
           addLambdaSubtermFields(fields, "conclusion", u->asClause(), nullptr);
         }
+      }
+      if ((info == nullptr || !info->hasDemodulationRewrite) && u->isClause()) {
+        addLambdaSubtermFields(fields, "conclusion", u->asClause(), nullptr);
       }
       emit("rewrite", fields);
       return;
