@@ -639,6 +639,93 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     emit("definition_rewrite", fields);
   }
 
+  if (u->inference().rule() == Kernel::InferenceRule::CLAUSIFY && u->isClause()) {
+    UnitIterator parentIterator = u->getParents();
+    if (parentIterator.hasNext()) {
+      Kernel::Unit* parent = parentIterator.next();
+      std::vector<std::string> fields;
+      fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
+      std::string sourceText;
+      if (renderUnitForExtra(parent, sourceText)) {
+        fields.push_back("source=" + sourceText);
+      }
+      std::string targetText;
+      if (renderUnitForExtra(u, targetText)) {
+        fields.push_back("target=" + targetText);
+      }
+      if (!u->asClause()->isEmpty()) {
+        fields.push_back("target_literal_count=" + std::to_string(u->asClause()->length()));
+        for (unsigned literalIndex = 0; literalIndex < u->asClause()->length(); ++literalIndex) {
+          std::string literalText;
+          if (skeletonLiteralToMegalodon((*u->asClause())[literalIndex], literalText)) {
+            fields.push_back("target_literal_" + std::to_string(literalIndex) + "=" + literalText);
+          }
+        }
+      } else {
+        fields.push_back("target_literal_count=0");
+      }
+      const auto* parentExtra = env.proofExtra.find(parent);
+      if (parentExtra != nullptr) {
+        const auto* cnfExtra = static_cast<const Inferences::CNFTransformationInferenceExtra*>(parentExtra);
+        fields.push_back("parent_clause_count=" + std::to_string(cnfExtra->number));
+      }
+      emit("cnf", fields);
+    }
+  }
+
+  if (u->inference().rule() == Kernel::InferenceRule::SKOLEMIZE && !u->isClause()) {
+    std::vector<std::string> fields;
+    fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
+    std::string targetText;
+    if (renderUnitForExtra(u, targetText)) {
+      fields.push_back("target=" + targetText);
+    }
+    unsigned parentIndex = 0;
+    for (Kernel::Unit* parent : iterTraits(u->getParents())) {
+      std::string parentText;
+      if (renderUnitForExtra(parent, parentText)) {
+        fields.push_back("parent_" + std::to_string(parentIndex) + "=" + parentText);
+        if (parentIndex == 0) {
+          fields.push_back("source=" + parentText);
+        }
+      }
+      ++parentIndex;
+    }
+    if (_is->hasIntroducedSymbols(u)) {
+      auto& symbols = _is->getIntroducedSymbols(u);
+      fields.push_back("introduced_count=" + std::to_string(symbols.size()));
+      unsigned symbolIndex = 0;
+      for (auto symbol : iterTraits(Kernel::InferenceStore::SymbolStack::ConstIterator(symbols))) {
+        const std::string prefix = "introduced_" + std::to_string(symbolIndex);
+        fields.push_back(prefix + "_kind=" + std::to_string(static_cast<int>(symbol.first)));
+        fields.push_back(prefix + "_raw_symbol=" + std::to_string(symbol.second));
+        long replacedVar = _is->variableReplacedByIntroducedSymbol(symbol.second);
+        if (replacedVar >= 0) {
+          fields.push_back(prefix + "_replaced_var=" + variableName(static_cast<unsigned>(replacedVar)));
+        }
+        if (symbol.first == SymbolType::FUNC) {
+          std::string name = functionName(symbol.second);
+          fields.push_back(prefix + "_symbol=" + name);
+          std::string declaration = functionDeclaration(symbol.second, name);
+          if (!declaration.empty()) {
+            fields.push_back(prefix + "_declaration=" + declaration);
+          }
+        } else if (symbol.first == SymbolType::PRED) {
+          std::string name = predicateName(symbol.second);
+          fields.push_back(prefix + "_symbol=" + name);
+          std::string declaration = predicateDeclaration(symbol.second, name);
+          if (!declaration.empty()) {
+            fields.push_back(prefix + "_declaration=" + declaration);
+          }
+        } else {
+          fields.push_back(prefix + "_symbol=" + recoverMegalodonSymbolName(env.signature->typeConName(symbol.second), "T"));
+        }
+        ++symbolIndex;
+      }
+    }
+    emit("skolemize", fields);
+  }
+
   if (u->inference().rule() == Kernel::InferenceRule::PREDICATE_DEFINITION && _is->hasIntroducedSymbols(u)) {
     auto& symbols = _is->getIntroducedSymbols(u);
     if (symbols.size() == 1 && symbols.top().first == SymbolType::PRED) {
