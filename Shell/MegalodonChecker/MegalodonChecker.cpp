@@ -2946,14 +2946,77 @@ void MegalodonChecker::print()
   out << "megalodon_reconstruction_start.\n";
   out << "megalodon_reconstruction_version(1).\n";
   AbstractProofPrinter::print();
+  printMegalodonSymbolDeclarations();
   printMegalodonSourceCandidate();
   printMegalodonClaimSkeleton();
   out << "megalodon_final_step(" << (*proof.rbegin())->number() << ").\n";
   out << "megalodon_reconstruction_end.\n";
 }
 
+void MegalodonChecker::recordStepSymbols(Kernel::Unit* u)
+{
+  std::string ignored;
+  if (u->isClause()) {
+    skeletonClauseToMegalodon(u->asClause(), ignored);
+    return;
+  }
+  Kernel::Formula* stepFormula = static_cast<Kernel::FormulaUnit*>(u)->formula();
+  if (u->inference().rule() == Kernel::InferenceRule::NEGATED_CONJECTURE && stepFormula->connective() == Kernel::NOT) {
+    stepFormula = stepFormula->uarg();
+  }
+  formulaToMegalodon(stepFormula, ignored);
+}
+
+void MegalodonChecker::printMegalodonSymbolDeclarations()
+{
+  for (const auto& entry : _functions) {
+    std::string decl = functionDeclaration(entry.first, entry.second);
+    if (!decl.empty()) {
+      out << "megalodon_symbol_declaration(" << quote(decl) << ").\n";
+    }
+  }
+  for (const auto& entry : _predicates) {
+    std::string decl = predicateDeclaration(entry.first, entry.second);
+    if (!decl.empty()) {
+      out << "megalodon_symbol_declaration(" << quote(decl) << ").\n";
+    }
+  }
+}
+
+void MegalodonChecker::printStepVariableSorts(Kernel::Unit* u)
+{
+  Lib::DHMap<unsigned, Kernel::TermList> varSorts;
+  Kernel::SortHelper::collectVariableSorts(u, varSorts);
+  std::vector<std::pair<unsigned, std::string>> rendered;
+  Lib::DHMap<unsigned, Kernel::TermList>::Iterator it(varSorts);
+  while (it.hasNext()) {
+    unsigned var;
+    Kernel::TermList sort;
+    it.next(var, sort);
+    std::string sortText;
+    if (sortToMegalodon(sort, sortText)) {
+      rendered.push_back({var, variableName(var) + ":" + sortText});
+    }
+  }
+  if (rendered.empty()) {
+    return;
+  }
+  std::sort(rendered.begin(), rendered.end(), [](const auto& left, const auto& right) {
+    return left.first < right.first;
+  });
+  out << "megalodon_step_variable_sorts(" << u->number() << ",[";
+  for (std::size_t i = 0; i < rendered.size(); ++i) {
+    if (i != 0) {
+      out << ',';
+    }
+    out << quote(rendered[i].second);
+  }
+  out << "]).\n";
+}
+
 void MegalodonChecker::printStep(Kernel::Unit* u)
 {
+  recordStepSymbols(u);
   const Kernel::InferenceRule& rule = u->inference().rule();
   bool replayed = false;
   unsigned substitutions = 0;
@@ -2987,6 +3050,7 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
       << u->number() << ','
       << quote(replayKind(rule))
       << ").\n";
+  printStepVariableSorts(u);
   if (replayed) {
     const InferenceRecorder::InferenceInformation* info =
       InferenceRecorder::instance()->getLastRecordedInferenceInformation();
