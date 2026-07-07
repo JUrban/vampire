@@ -401,6 +401,25 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         if (!sort.empty()) {
           fields.push_back("sort=" + sort);
         }
+        Lib::DHMap<unsigned, Kernel::TermList> bodyVarSorts;
+        Kernel::SortHelper::collectVariableSorts(formula, bodyVarSorts);
+        std::vector<std::pair<unsigned, std::string>> renderedBodyVarSorts;
+        Lib::DHMap<unsigned, Kernel::TermList>::Iterator varSortIterator(bodyVarSorts);
+        while (varSortIterator.hasNext()) {
+          unsigned var;
+          Kernel::TermList varSort;
+          varSortIterator.next(var, varSort);
+          std::string varSortText;
+          if (sortToMegalodon(varSort, varSortText)) {
+            renderedBodyVarSorts.push_back({var, variableName(var) + ":" + varSortText});
+          }
+        }
+        std::sort(renderedBodyVarSorts.begin(), renderedBodyVarSorts.end(), [](const auto& left, const auto& right) {
+          return left.first < right.first;
+        });
+        for (std::size_t index = 0; index < renderedBodyVarSorts.size(); ++index) {
+          fields.push_back("body_variable_sort_" + std::to_string(index) + "=" + renderedBodyVarSorts[index].second);
+        }
         fields.push_back("formula=" + formulaText);
         emit("predicate_definition", fields);
       }
