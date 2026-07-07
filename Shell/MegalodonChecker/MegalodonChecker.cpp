@@ -237,6 +237,10 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     ) {
       Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, info->substitutionForBanksSub[parentIndex]);
       fields.push_back(prefix + "_substituted=" + literalText(substituted));
+      std::string substitutedProposition;
+      if (skeletonLiteralToMegalodon(substituted, substitutedProposition)) {
+        fields.push_back(prefix + "_substituted_proposition=" + substitutedProposition);
+      }
     }
   };
   auto emit = [&](const std::string& kind, const std::vector<std::string>& fields) {
