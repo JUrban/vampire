@@ -27,6 +27,11 @@ public:
     Kernel::Clause *conclusion;
     std::vector<Kernel::Clause *> premises;
     std::vector<Kernel::Substitution> substitutionForBanksSub;
+    bool hasDemodulationRewrite = false;
+    Kernel::TermList demodulationRuleLhs;
+    Kernel::TermList demodulationRuleRhs;
+    Kernel::TermList demodulationRedex;
+    Kernel::TermList demodulationReplacement;
   };
 
   class RectifyInferenceExtra : public GenericInferenceInformation {

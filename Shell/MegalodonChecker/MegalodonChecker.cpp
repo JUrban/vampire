@@ -933,6 +933,21 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       std::vector<std::string> fields;
       fields.push_back(std::string("lhs=") + termText(rewrite->lhs));
       fields.push_back(std::string("target=") + termText(rewrite->rewritten));
+      if (info != nullptr && info->hasDemodulationRewrite) {
+        std::string text;
+        if (renderTermForExtra(info->demodulationRuleLhs, text)) {
+          fields.push_back("rule_lhs=" + text);
+        }
+        if (renderTermForExtra(info->demodulationRuleRhs, text)) {
+          fields.push_back("rule_rhs=" + text);
+        }
+        if (renderTermForExtra(info->demodulationRedex, text)) {
+          fields.push_back("redex=" + text);
+        }
+        if (renderTermForExtra(info->demodulationReplacement, text)) {
+          fields.push_back("replacement=" + text);
+        }
+      }
       emit("rewrite", fields);
       return;
     }

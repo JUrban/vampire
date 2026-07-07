@@ -167,6 +167,11 @@ void InferenceRecorder::forwardDemodulation(unsigned int id, Clause *conclusion,
     }
     info->conclusion = conclusion;
     info->premises = premises;
+    info->hasDemodulationRewrite = true;
+    info->demodulationRuleLhs = data->term;
+    info->demodulationRuleRhs = data->rhs;
+    info->demodulationRedex = trm;
+    info->demodulationReplacement = rhsS;
     info->substitutionForBanksSub.resize(premises.size());
     if (!premises.empty()) {
       auto iter = premises[0]->getVariableIterator();
