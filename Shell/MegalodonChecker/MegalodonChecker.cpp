@@ -3079,6 +3079,14 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
     }
   }
 
+  std::string propositionText;
+  bool hasProposition = u->isClause()
+    ? skeletonClauseToMegalodon(u->asClause(), propositionText)
+    : formulaToMegalodon(u->getFormula(), propositionText);
+  std::string formulaText = u->isClause()
+    ? "cnf(u" + std::to_string(u->number()) + ",plain,$true).\n"
+    : "tff(u" + std::to_string(u->number()) + ",plain,$true).\n";
+
   out << "megalodon_step("
       << u->number() << ','
       << quote(Kernel::ruleName(rule)) << ','
@@ -3086,8 +3094,14 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
       << parents(u) << ','
       << (replayed ? "true" : "false") << ','
       << substitutions << ','
-      << quote(TPTPPrinter::toString(u))
+      << quote(formulaText)
       << ").\n";
+  if (hasProposition) {
+    out << "megalodon_step_proposition("
+        << u->number() << ','
+        << quote(propositionText)
+        << ").\n";
+  }
   out << "megalodon_step_replay_kind("
       << u->number() << ','
       << quote(replayKind(rule))
