@@ -166,7 +166,7 @@ struct BackwardDemodulation::ResultFn
       *resLits,
       SimplifyingInference2(InferenceRule::BACKWARD_DEMODULATION, qr.data->clause, _cl)
     );
-    if(env.options->proofExtra() == Options::ProofExtra::FULL)
+    if(env.options->proofExtra() == Options::ProofExtra::FULL || env.options->proofExtra() == Options::ProofExtra::LEAN)
       env.proofExtra.insert(replacement, new BackwardDemodulationExtra(lhs, lhsS));
     if(env.reconstruction){
       Shell::InferenceRecorder::instance()->backwardDemodulation(replacement->number(), replacement, {qr.data->clause, _cl}, appl);

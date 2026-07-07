@@ -89,6 +89,7 @@ private:
   std::string unitKind(Kernel::Unit* u) const;
   std::string replayKind(const Kernel::InferenceRule& rule) const;
   void printReplaySubstitutions(Kernel::Unit* u, const InferenceRecorder::InferenceInformation* info);
+  void printReplayExtra(Kernel::Unit* u);
   std::string substitutedClauseText(Kernel::Clause* clause, const Kernel::Substitution& substitution) const;
 
   InferenceReplayer _replayer;

@@ -212,7 +212,7 @@ Clause* BinaryResolution::generateClause(Clause* queryCl, Literal* queryLit, Cla
       queryNeg ? sqAnsLit : srAnsLit,
       queryNeg ? srAnsLit : sqAnsLit
     ));
-  } else if (env.options->proofExtra() == Options::ProofExtra::FULL) {
+  } else if (env.options->proofExtra() == Options::ProofExtra::FULL || env.options->proofExtra() == Options::ProofExtra::LEAN) {
     env.proofExtra.insert(cl, new BinaryResolutionExtra(queryLit, resultLit));
   }
   if(env.reconstruction){

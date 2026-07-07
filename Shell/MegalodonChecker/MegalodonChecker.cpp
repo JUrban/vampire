@@ -1,6 +1,7 @@
 #include "MegalodonChecker.hpp"
 
 #include "Forwards.hpp"
+#include "Inferences/ProofExtra.hpp"
 #include "Kernel/Clause.hpp"
 #include "Kernel/Formula.hpp"
 #include "Kernel/FormulaUnit.hpp"
@@ -24,6 +25,7 @@
 #include <set>
 #include <sstream>
 #include <utility>
+#include <vector>
 
 namespace Shell {
 
@@ -181,6 +183,98 @@ void MegalodonChecker::printReplaySubstitutions(Kernel::Unit* u, const Inference
     out << quote(substitutedClauseText(info->premises[i], info->substitutionForBanksSub[i]));
   }
   out << "]).\n";
+}
+
+void MegalodonChecker::printReplayExtra(Kernel::Unit* u)
+{
+  const auto* extra = env.proofExtra.find(u);
+  if (extra == nullptr) {
+    return;
+  }
+
+  auto termText = [](Kernel::TermList term) {
+    std::ostringstream text;
+    text << term;
+    return text.str();
+  };
+  auto literalText = [](Kernel::Literal* literal) {
+    return literal == nullptr ? std::string() : literal->toString();
+  };
+  auto emit = [&](const std::string& kind, const std::vector<std::string>& fields) {
+    out << "megalodon_step_extra(" << u->number() << ',' << quote(kind) << ",[";
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << quote(fields[i]);
+    }
+    out << "]).\n";
+  };
+
+  switch (u->inference().rule()) {
+    case Kernel::InferenceRule::SUPERPOSITION:
+    case Kernel::InferenceRule::EQUALITY_FACTORING: {
+      const auto* rewrite = static_cast<const Inferences::TwoLiteralRewriteInferenceExtra*>(extra);
+      std::vector<std::string> fields;
+      fields.push_back(std::string("selected=") + literalText(rewrite->selected.selectedLiteral.selectedLiteral));
+      fields.push_back(std::string("other=") + literalText(rewrite->selected.otherLiteral));
+      fields.push_back(std::string("lhs=") + termText(rewrite->rewrite.lhs));
+      fields.push_back(std::string("target=") + termText(rewrite->rewrite.rewritten));
+      if (rewrite->selected.synthesisExtra.condition != nullptr) {
+        fields.push_back(std::string("condition=") + literalText(rewrite->selected.synthesisExtra.condition));
+      }
+      if (rewrite->selected.synthesisExtra.thenLit != nullptr) {
+        fields.push_back(std::string("then=") + literalText(rewrite->selected.synthesisExtra.thenLit));
+      }
+      if (rewrite->selected.synthesisExtra.elseLit != nullptr) {
+        fields.push_back(std::string("else=") + literalText(rewrite->selected.synthesisExtra.elseLit));
+      }
+      emit("two_literal_rewrite", fields);
+      return;
+    }
+    case Kernel::InferenceRule::RESOLUTION:
+    case Kernel::InferenceRule::FACTORING: {
+      const auto* selected = static_cast<const Inferences::TwoLiteralInferenceExtra*>(extra);
+      std::vector<std::string> fields;
+      fields.push_back(std::string("selected=") + literalText(selected->selectedLiteral.selectedLiteral));
+      fields.push_back(std::string("other=") + literalText(selected->otherLiteral));
+      if (selected->synthesisExtra.condition != nullptr) {
+        fields.push_back(std::string("condition=") + literalText(selected->synthesisExtra.condition));
+      }
+      if (selected->synthesisExtra.thenLit != nullptr) {
+        fields.push_back(std::string("then=") + literalText(selected->synthesisExtra.thenLit));
+      }
+      if (selected->synthesisExtra.elseLit != nullptr) {
+        fields.push_back(std::string("else=") + literalText(selected->synthesisExtra.elseLit));
+      }
+      emit("two_literal", fields);
+      return;
+    }
+    case Kernel::InferenceRule::FORWARD_DEMODULATION:
+    case Kernel::InferenceRule::BACKWARD_DEMODULATION: {
+      const auto* rewrite = static_cast<const Inferences::RewriteInferenceExtra*>(extra);
+      std::vector<std::string> fields;
+      fields.push_back(std::string("lhs=") + termText(rewrite->lhs));
+      fields.push_back(std::string("target=") + termText(rewrite->rewritten));
+      emit("rewrite", fields);
+      return;
+    }
+    case Kernel::InferenceRule::EQUALITY_RESOLUTION:
+    case Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION:
+    case Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION: {
+      const auto* selected = static_cast<const Inferences::LiteralInferenceExtra*>(extra);
+      std::vector<std::string> fields;
+      fields.push_back(std::string("selected=") + literalText(selected->selectedLiteral));
+      emit("literal", fields);
+      return;
+    }
+    default:
+      break;
+  }
+
+  std::vector<std::string> raw;
+  raw.push_back(extra->toString());
+  emit("raw", raw);
 }
 
 std::string MegalodonChecker::parents(Kernel::Unit* u) const
@@ -2898,6 +2992,7 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
       InferenceRecorder::instance()->getLastRecordedInferenceInformation();
     printReplaySubstitutions(u, info);
   }
+  printReplayExtra(u);
 }
 
 } // namespace Shell

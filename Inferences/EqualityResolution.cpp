@@ -106,7 +106,7 @@ struct EqualityResolution::ResultFn
     resLits->loadFromIterator(constraints->iterFifo());
 
     Clause *cl = Clause::fromStack(*resLits, GeneratingInference1(InferenceRule::EQUALITY_RESOLUTION, _cl));
-    if(env.options->proofExtra() == Options::ProofExtra::FULL){
+    if(env.options->proofExtra() == Options::ProofExtra::FULL || env.options->proofExtra() == Options::ProofExtra::LEAN){
       env.proofExtra.insert(cl, new EqualityResolutionExtra(lit));
     }
     if(env.reconstruction){

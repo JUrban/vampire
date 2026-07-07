@@ -498,7 +498,7 @@ Clause* Superposition::performSuperposition(
       rwAnsLit ? subst->apply(rwAnsLit, !eqIsResult) : nullptr,
       eqAnsLit ? subst->apply(eqAnsLit, eqIsResult) : nullptr
     ));
-  } else if (env.options->proofExtra() == Options::ProofExtra::FULL) {
+  } else if (env.options->proofExtra() == Options::ProofExtra::FULL || env.options->proofExtra() == Options::ProofExtra::LEAN) {
     env.proofExtra.insert(clause, new SuperpositionExtra(
       rwLit,
       eqLit,

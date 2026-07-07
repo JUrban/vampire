@@ -158,7 +158,7 @@ struct EqualityFactoring::ResultFn
     resLits->loadFromIterator(constraints->iterFifo());
 
     Clause *cl = Clause::fromStack(*resLits, GeneratingInference1(InferenceRule::EQUALITY_FACTORING, _cl));
-    if(env.options->proofExtra() == Options::ProofExtra::FULL)
+    if(env.options->proofExtra() == Options::ProofExtra::FULL || env.options->proofExtra() == Options::ProofExtra::LEAN)
       env.proofExtra.insert(cl, new EqualityFactoringExtra(sLit, fLit, sLHS, fRHS));
     if(env.reconstruction){
       InferenceRecorder::instance()->equalityFactoring(cl->number(), cl, {_cl}, absUnif.subs());

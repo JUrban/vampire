@@ -101,7 +101,7 @@ public:
     }
 
     Clause *cl = Clause::fromStack(*resLits, GeneratingInference1(InferenceRule::FACTORING,_cl));
-    if(env.options->proofExtra() == Options::ProofExtra::FULL){
+    if(env.options->proofExtra() == Options::ProofExtra::FULL || env.options->proofExtra() == Options::ProofExtra::LEAN){
       env.proofExtra.insert(cl, new FactoringExtra(l1, l2));
     }
     if(env.reconstruction){

@@ -184,6 +184,7 @@ void Clause::destroy()
   Clause* cl = this;
   for(;;) {
     if ((env.options->proofExtra() == Options::ProofExtra::FULL) ||
+        (env.options->proofExtra() == Options::ProofExtra::LEAN) ||
         (env.options->questionAnswering() == Options::QuestionAnsweringMode::SYNTHESIS)) {
       env.proofExtra.remove(cl);
     }
