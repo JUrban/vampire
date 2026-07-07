@@ -1887,7 +1887,17 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::m
       if (!formulaToMegalodon(formula->left(), substitution, lhs) || !formulaToMegalodon(formula->right(), substitution, rhs)) {
         return false;
       }
-      if (formula->left()->connective() == Kernel::IMP || formula->left()->connective() == Kernel::FORALL) {
+      bool leftIsNegativeLiteral =
+        formula->left()->connective() == Kernel::LITERAL
+        && formula->left()->literal()->isNegative();
+      if (
+        formula->left()->connective() == Kernel::IMP
+        || formula->left()->connective() == Kernel::FORALL
+        || formula->left()->connective() == Kernel::NOT
+        || formula->left()->connective() == Kernel::IFF
+        || formula->left()->connective() == Kernel::XOR
+        || leftIsNegativeLiteral
+      ) {
         lhs = parenthesize(lhs);
       }
       result = lhs + " -> " + rhs;
