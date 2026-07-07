@@ -111,6 +111,7 @@ private:
   bool _usesSetExists = false;
   bool _usesTrue = false;
   bool _usesPropEquality = false;
+  bool _renderingReplayExtra = false;
 };
 
 } // namespace Shell

@@ -290,6 +290,31 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     out << "]).\n";
   };
+  auto renderFormulaForExtra = [&](Kernel::Formula* formula, std::string& text) {
+    bool usesEquality = _usesEquality;
+    std::string equalitySort = _equalitySort;
+    bool usesConjunction = _usesConjunction;
+    bool usesFalse = _usesFalse;
+    bool usesDisjunction = _usesDisjunction;
+    bool usesSetExists = _usesSetExists;
+    bool usesTrue = _usesTrue;
+    bool usesPropEquality = _usesPropEquality;
+    bool renderingReplayExtra = _renderingReplayExtra;
+    _usesEquality = false;
+    _equalitySort.clear();
+    _renderingReplayExtra = true;
+    bool ok = formulaToMegalodon(formula, text);
+    _usesEquality = usesEquality;
+    _equalitySort = equalitySort;
+    _usesConjunction = usesConjunction;
+    _usesFalse = usesFalse;
+    _usesDisjunction = usesDisjunction;
+    _usesSetExists = usesSetExists;
+    _usesTrue = usesTrue;
+    _usesPropEquality = usesPropEquality;
+    _renderingReplayExtra = renderingReplayExtra;
+    return ok;
+  };
 
   auto isNormalFormRule = [](Kernel::InferenceRule rule) {
     switch (rule) {
@@ -316,11 +341,19 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
         std::string sourceText;
         std::string targetText;
-        if (formulaToMegalodon(source, sourceText)) {
+        if (renderFormulaForExtra(source, sourceText)) {
           fields.push_back("source=" + sourceText);
+        } else {
+          fields.push_back("source_conversion_failed=1");
+          fields.push_back("source_connective=" + std::to_string(static_cast<int>(source->connective())));
+          fields.push_back("source_raw=" + source->toString());
         }
-        if (formulaToMegalodon(target, targetText)) {
+        if (renderFormulaForExtra(target, targetText)) {
           fields.push_back("target=" + targetText);
+        } else {
+          fields.push_back("target_conversion_failed=1");
+          fields.push_back("target_connective=" + std::to_string(static_cast<int>(target->connective())));
+          fields.push_back("target_raw=" + target->toString());
         }
 
         unsigned pairCount = 0;
@@ -337,7 +370,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             }
             std::string leftText;
             std::string rightText;
-            if (formulaToMegalodon(left, leftText) && formulaToMegalodon(right, rightText)) {
+            if (renderFormulaForExtra(left, leftText) && renderFormulaForExtra(right, rightText)) {
               totalPairText += leftText.size() + rightText.size();
               if (totalPairText <= textLimit) {
                 unsigned index = pairCount++;
@@ -392,11 +425,19 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
         std::string sourceText;
         std::string targetText;
-        if (formulaToMegalodon(source, sourceText)) {
+        if (renderFormulaForExtra(source, sourceText)) {
           fields.push_back("source=" + sourceText);
+        } else {
+          fields.push_back("source_conversion_failed=1");
+          fields.push_back("source_connective=" + std::to_string(static_cast<int>(source->connective())));
+          fields.push_back("source_raw=" + source->toString());
         }
-        if (formulaToMegalodon(target, targetText)) {
+        if (renderFormulaForExtra(target, targetText)) {
           fields.push_back("target=" + targetText);
+        } else {
+          fields.push_back("target_conversion_failed=1");
+          fields.push_back("target_connective=" + std::to_string(static_cast<int>(target->connective())));
+          fields.push_back("target_raw=" + target->toString());
         }
 
         unsigned pairCount = 0;
@@ -413,7 +454,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             }
             std::string leftText;
             std::string rightText;
-            if (formulaToMegalodon(left, leftText) && formulaToMegalodon(right, rightText)) {
+            if (renderFormulaForExtra(left, leftText) && renderFormulaForExtra(right, rightText)) {
               totalPairText += leftText.size() + rightText.size();
               if (totalPairText <= textLimit) {
                 unsigned index = pairCount++;
@@ -1463,6 +1504,10 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::m
         if (equalitySort == "prop") {
           _usesPropEquality = true;
           result = "vampire_eq_prop " + parenthesize(lhs) + " " + parenthesize(rhs);
+          return true;
+        }
+        if (_renderingReplayExtra) {
+          result = lhs + " = " + rhs;
           return true;
         }
         if (!recordEqualitySort(equalityArgumentSort)) {
