@@ -381,6 +381,44 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
   }
 
+  auto isDefinitionRewriteRule = [](Kernel::InferenceRule rule) {
+    switch (rule) {
+      case Kernel::InferenceRule::DEFINITION_UNFOLDING:
+      case Kernel::InferenceRule::DEFINITION_FOLDING_TWEE:
+      case Kernel::InferenceRule::DEFINITION_FOLDING_PRED:
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  if (isDefinitionRewriteRule(u->inference().rule()) && !u->isClause()) {
+    std::vector<std::string> fields;
+    fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
+    std::string targetText;
+    if (formulaToMegalodon(u->getFormula(), targetText)) {
+      fields.push_back("target=" + targetText);
+    }
+    unsigned parentIndex = 0;
+    for (Kernel::Unit* parent : iterTraits(u->getParents())) {
+      if (parent->isClause()) {
+        ++parentIndex;
+        continue;
+      }
+      std::string parentText;
+      if (formulaToMegalodon(parent->getFormula(), parentText)) {
+        fields.push_back("parent_" + std::to_string(parentIndex) + "=" + parentText);
+        if (parentIndex == 0) {
+          fields.push_back("source=" + parentText);
+        } else if (parentIndex == 1) {
+          fields.push_back("definition=" + parentText);
+        }
+      }
+      ++parentIndex;
+    }
+    emit("definition_rewrite", fields);
+  }
+
   if (u->inference().rule() == Kernel::InferenceRule::PREDICATE_DEFINITION && _is->hasIntroducedSymbols(u)) {
     auto& symbols = _is->getIntroducedSymbols(u);
     if (symbols.size() == 1 && symbols.top().first == SymbolType::PRED) {
