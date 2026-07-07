@@ -936,6 +936,14 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
   }
 
+  if (u->isClause()) {
+    std::vector<std::string> fields;
+    addLambdaSubtermFields(fields, "step", u->asClause(), nullptr);
+    if (!fields.empty()) {
+      emit("lambda_sorts", fields);
+    }
+  }
+
   if (extra == nullptr) {
     return;
   }
