@@ -981,6 +981,39 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       std::vector<std::string> fields;
       fields.push_back(std::string("lhs=") + termText(rewrite->lhs));
       fields.push_back(std::string("target=") + termText(rewrite->rewritten));
+      std::string renderedRewriteTerm;
+      if (renderTermForExtra(rewrite->lhs, renderedRewriteTerm)) {
+        fields.push_back("rule_lhs=" + renderedRewriteTerm);
+      }
+      if (renderTermForExtra(rewrite->rewritten, renderedRewriteTerm)) {
+        fields.push_back("redex=" + renderedRewriteTerm);
+      }
+      if (info == nullptr || !info->hasDemodulationRewrite) {
+        for (Kernel::Unit* parent : iterTraits(u->getParents())) {
+          if (!parent->isClause() || parent->asClause()->length() != 1) {
+            continue;
+          }
+          Kernel::Literal* literal = (*parent->asClause())[0];
+          if (!literal->isEquality() || !literal->isPositive()) {
+            continue;
+          }
+          Kernel::TermList left = *literal->nthArgument(0);
+          Kernel::TermList right = *literal->nthArgument(1);
+          Kernel::TermList orientedRhs;
+          bool oriented = false;
+          if (left == rewrite->lhs || left.toString() == rewrite->lhs.toString()) {
+            orientedRhs = right;
+            oriented = true;
+          } else if (right == rewrite->lhs || right.toString() == rewrite->lhs.toString()) {
+            orientedRhs = left;
+            oriented = true;
+          }
+          if (oriented && renderTermForExtra(orientedRhs, renderedRewriteTerm)) {
+            fields.push_back("rule_rhs=" + renderedRewriteTerm);
+            break;
+          }
+        }
+      }
       if (info != nullptr && info->hasDemodulationRewrite) {
         std::string text;
         if (renderTermForExtra(info->demodulationRuleLhs, text)) {
