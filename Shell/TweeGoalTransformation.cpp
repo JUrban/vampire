@@ -64,6 +64,9 @@ class Definizator : public BottomUpTermTransformer {
     // for each relevant term, cache the introduced symbol and the corresponding definition
     DHMap<Term*,std::pair<unsigned,Clause*>> _cache;
 
+    // concrete bottom-up replacement sequence for the current transformed clause
+    std::vector<std::pair<TermList, TermList>> steps;
+
     Definizator(bool groundOnly) : newUnits(UnitList::empty()), _groundOnly(groundOnly) {}
   private:
     bool _groundOnly;
@@ -178,10 +181,19 @@ class Definizator : public BottomUpTermTransformer {
       }
       // record as a new premise
       UnitList::push(symAndDef.second,premises);
+      steps.push_back({trm, res});
       // cout << "r: " << res.toString() << endl;
       return res;
     }
 };
+
+void Shell::TweeDefinitionFoldingExtra::output(std::ostream& out) const
+{
+  out << "steps=" << steps.size();
+  for (std::size_t i = 0; i < steps.size(); ++i) {
+    out << ",step" << i << "=(" << steps[i].first << " -> " << steps[i].second << ")";
+  }
+}
 
 void Shell::TweeGoalTransformation::apply(Problem &prb, bool groundOnly)
 {
@@ -198,6 +210,7 @@ void Shell::TweeGoalTransformation::apply(Problem &prb, bool groundOnly)
     Clause* c = u->asClause();
 
     df.premises = UnitList::empty(); // will get filled as we traverse and rewrite
+    df.steps.clear();
 
     newLits.reset();
     for (unsigned i = 0; i < c->size(); i++) {
@@ -211,6 +224,9 @@ void Shell::TweeGoalTransformation::apply(Problem &prb, bool groundOnly)
       UnitList::push(c,df.premises);
       Clause* nc = Clause::fromStack(newLits,
         NonspecificInferenceMany(InferenceRule::DEFINITION_FOLDING_TWEE ,df.premises));
+      if(env.options->proofExtra() == Options::ProofExtra::FULL || env.options->proofExtra() == Options::ProofExtra::LEAN) {
+        env.proofExtra.insert(nc, new TweeDefinitionFoldingExtra(df.steps));
+      }
       u = nc; // replace the original in the Problem's list
     }
   }

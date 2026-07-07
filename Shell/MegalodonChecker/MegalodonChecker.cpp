@@ -21,6 +21,7 @@
 #include "Shell/InferenceRecorder.hpp"
 #include "Shell/Options.hpp"
 #include "Shell/TPTPPrinter.hpp"
+#include "Shell/TweeGoalTransformation.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -344,6 +345,31 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     _renderingReplayExtra = renderingReplayExtra;
     return ok;
   };
+  auto renderTermForExtra = [&](Kernel::TermList term, std::string& text) {
+    bool usesEquality = _usesEquality;
+    std::string equalitySort = _equalitySort;
+    bool usesConjunction = _usesConjunction;
+    bool usesFalse = _usesFalse;
+    bool usesDisjunction = _usesDisjunction;
+    bool usesSetExists = _usesSetExists;
+    bool usesTrue = _usesTrue;
+    bool usesPropEquality = _usesPropEquality;
+    bool renderingReplayExtra = _renderingReplayExtra;
+    _usesEquality = false;
+    _equalitySort.clear();
+    _renderingReplayExtra = true;
+    bool ok = termToMegalodon(term, text);
+    _usesEquality = usesEquality;
+    _equalitySort = equalitySort;
+    _usesConjunction = usesConjunction;
+    _usesFalse = usesFalse;
+    _usesDisjunction = usesDisjunction;
+    _usesSetExists = usesSetExists;
+    _usesTrue = usesTrue;
+    _usesPropEquality = usesPropEquality;
+    _renderingReplayExtra = renderingReplayExtra;
+    return ok;
+  };
   auto renderClauseForExtra = [&](Kernel::Clause* clause, std::string& text) {
     bool usesEquality = _usesEquality;
     std::string equalitySort = _equalitySort;
@@ -635,6 +661,21 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         }
       }
       ++parentIndex;
+    }
+    if (u->inference().rule() == Kernel::InferenceRule::DEFINITION_FOLDING_TWEE && extra != nullptr) {
+      const auto* foldingExtra = static_cast<const TweeDefinitionFoldingExtra*>(extra);
+      fields.push_back("fold_step_count=" + std::to_string(foldingExtra->steps.size()));
+      for (std::size_t stepIndex = 0; stepIndex < foldingExtra->steps.size(); ++stepIndex) {
+        const std::string prefix = "fold_step_" + std::to_string(stepIndex);
+        std::string lhs;
+        if (renderTermForExtra(foldingExtra->steps[stepIndex].first, lhs)) {
+          fields.push_back(prefix + "_lhs=" + lhs);
+        }
+        std::string rhs;
+        if (renderTermForExtra(foldingExtra->steps[stepIndex].second, rhs)) {
+          fields.push_back(prefix + "_rhs=" + rhs);
+        }
+      }
     }
     emit("definition_rewrite", fields);
   }

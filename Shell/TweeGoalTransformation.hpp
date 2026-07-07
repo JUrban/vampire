@@ -12,8 +12,22 @@
 #define __TweeGoalTransformation__
 
 #include "Forwards.hpp"
+#include "Kernel/Term.hpp"
+#include "Lib/ProofExtra.hpp"
+
+#include <utility>
+#include <vector>
 
 namespace Shell {
+
+struct TweeDefinitionFoldingExtra : public InferenceExtra {
+  std::vector<std::pair<Kernel::TermList, Kernel::TermList>> steps;
+
+  explicit TweeDefinitionFoldingExtra(std::vector<std::pair<Kernel::TermList, Kernel::TermList>> steps)
+    : steps(std::move(steps)) {}
+
+  void output(std::ostream& out) const override;
+};
 
 class TweeGoalTransformation {
 public:
