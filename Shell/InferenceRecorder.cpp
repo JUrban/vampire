@@ -167,7 +167,14 @@ void InferenceRecorder::forwardDemodulation(unsigned int id, Clause *conclusion,
     }
     info->conclusion = conclusion;
     info->premises = premises;
-    info->substitutionForBanksSub.resize(1);
+    info->substitutionForBanksSub.resize(premises.size());
+    if (!premises.empty()) {
+      auto iter = premises[0]->getVariableIterator();
+      while (iter.hasNext()) {
+        unsigned variable = iter.next();
+        info->substitutionForBanksSub[0].bind(variable, variableMap.apply(variable));
+      }
+    }
     Substitution variableSwapForClauseR;
 
     // qr.data->clause and qr.data->rhs have different variable namings since the demoldulation code normalizes the variables
@@ -183,7 +190,6 @@ void InferenceRecorder::forwardDemodulation(unsigned int id, Clause *conclusion,
   
     // we create a custom substitution to apply the substitution only to variables coming from the demodulator
     // otherwise the substitution we get faults
-    info->substitutionForBanksSub.resize(1);
     DHMap<unsigned int, TermList> sorts;
     auto dataTerm = data->term;
     if (dataTerm.isVar()) {
@@ -213,11 +219,12 @@ void InferenceRecorder::forwardDemodulation(unsigned int id, Clause *conclusion,
     //std::cout << substFixingNormalization << std::endl;
     //std::cout << variableSwapForClause << std::endl;
     //std::cout << variableMap << std::endl;
+    size_t demodulatorBank = premises.size() > 1 ? 1 : 0;
     for (const auto& [var, sort] : iterTraits(sorts.items())) {
       auto newTerm = (*appl)(var);
       //std::cout << var << ": " << newTerm << std::endl;
-      info->substitutionForBanksSub[0].bind(variableSwapForClause.apply(var).var(), 
-        SubstHelper::apply(newTerm, substFixingNormalization));
+      info->substitutionForBanksSub[demodulatorBank].bind(variableSwapForClause.apply(var).var(), 
+        SubstHelper::apply(SubstHelper::apply(newTerm, substFixingNormalization), variableMap));
     }
 
     _inferences[id] = std::move(info);
