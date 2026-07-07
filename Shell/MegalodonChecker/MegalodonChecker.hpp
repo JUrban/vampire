@@ -36,6 +36,7 @@ private:
   bool formulaToMegalodon(Kernel::Formula* formula, std::string& result);
   bool formulaToMegalodon(Kernel::Formula* formula, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result);
   bool conjunctionToMegalodon(const std::vector<Kernel::Formula*>& conjuncts, std::size_t begin, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result);
+  std::string existentialNameForSort(const std::string& sort) const;
   bool literalToMegalodon(Kernel::Literal* literal, std::string& result);
   bool skeletonLiteralToMegalodon(Kernel::Literal* literal, std::string& result);
   bool skeletonSplitLiteralToMegalodon(unsigned split, std::string& result);

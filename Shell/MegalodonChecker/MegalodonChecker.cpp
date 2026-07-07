@@ -1282,6 +1282,26 @@ bool MegalodonChecker::conjunctionToMegalodon(
   return true;
 }
 
+std::string MegalodonChecker::existentialNameForSort(const std::string& sort) const
+{
+  std::string result = "vampire_exists_";
+  bool previousSeparator = false;
+  for (char ch : sort) {
+    unsigned char uch = static_cast<unsigned char>(ch);
+    if (std::isalnum(uch)) {
+      result += ch;
+      previousSeparator = false;
+    } else if (!previousSeparator) {
+      result += '_';
+      previousSeparator = true;
+    }
+  }
+  while (!result.empty() && result.back() == '_') {
+    result.pop_back();
+  }
+  return result;
+}
+
 bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result)
 {
   switch (formula->connective()) {
@@ -1441,16 +1461,11 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::m
         if (!sortToMegalodon(it->second, sort)) {
           return false;
         }
+        std::string existsName = existentialNameForSort(sort);
         if (sort == "set") {
           _usesSetExists = true;
-          body = "vampire_exists_set (fun " + variableName(it->first) + ":" + sort + " => " + body + ")";
-        } else if (sort == "prop") {
-          body = "vampire_exists_prop (fun " + variableName(it->first) + ":" + sort + " => " + body + ")";
-        } else if (sort == "set->prop") {
-          body = "vampire_exists_set_prop (fun " + variableName(it->first) + ":" + sort + " => " + body + ")";
-        } else {
-          return false;
         }
+        body = existsName + " (fun " + variableName(it->first) + ":" + sort + " => " + body + ")";
       }
       result = body;
       return true;
