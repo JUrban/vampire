@@ -315,6 +315,37 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     _renderingReplayExtra = renderingReplayExtra;
     return ok;
   };
+  auto renderClauseForExtra = [&](Kernel::Clause* clause, std::string& text) {
+    bool usesEquality = _usesEquality;
+    std::string equalitySort = _equalitySort;
+    bool usesConjunction = _usesConjunction;
+    bool usesFalse = _usesFalse;
+    bool usesDisjunction = _usesDisjunction;
+    bool usesSetExists = _usesSetExists;
+    bool usesTrue = _usesTrue;
+    bool usesPropEquality = _usesPropEquality;
+    bool renderingReplayExtra = _renderingReplayExtra;
+    _usesEquality = false;
+    _equalitySort.clear();
+    _renderingReplayExtra = true;
+    bool ok = skeletonClauseToMegalodon(clause, text);
+    _usesEquality = usesEquality;
+    _equalitySort = equalitySort;
+    _usesConjunction = usesConjunction;
+    _usesFalse = usesFalse;
+    _usesDisjunction = usesDisjunction;
+    _usesSetExists = usesSetExists;
+    _usesTrue = usesTrue;
+    _usesPropEquality = usesPropEquality;
+    _renderingReplayExtra = renderingReplayExtra;
+    return ok;
+  };
+  auto renderUnitForExtra = [&](Kernel::Unit* unit, std::string& text) {
+    if (unit->isClause()) {
+      return renderClauseForExtra(unit->asClause(), text);
+    }
+    return renderFormulaForExtra(unit->getFormula(), text);
+  };
 
   auto isNormalFormRule = [](Kernel::InferenceRule rule) {
     switch (rule) {
@@ -509,21 +540,17 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
   };
 
-  if (isDefinitionRewriteRule(u->inference().rule()) && !u->isClause()) {
+  if (isDefinitionRewriteRule(u->inference().rule())) {
     std::vector<std::string> fields;
     fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
     std::string targetText;
-    if (formulaToMegalodon(u->getFormula(), targetText)) {
+    if (renderUnitForExtra(u, targetText)) {
       fields.push_back("target=" + targetText);
     }
     unsigned parentIndex = 0;
     for (Kernel::Unit* parent : iterTraits(u->getParents())) {
-      if (parent->isClause()) {
-        ++parentIndex;
-        continue;
-      }
       std::string parentText;
-      if (formulaToMegalodon(parent->getFormula(), parentText)) {
+      if (renderUnitForExtra(parent, parentText)) {
         fields.push_back("parent_" + std::to_string(parentIndex) + "=" + parentText);
         if (parentIndex == 0) {
           fields.push_back("source=" + parentText);
