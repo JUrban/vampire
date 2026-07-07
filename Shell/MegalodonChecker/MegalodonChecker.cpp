@@ -208,22 +208,41 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       parentClauses.push_back(parent->asClause());
     }
   }
-  auto literalPosition = [&](Kernel::Literal* literal) -> std::pair<int, int> {
+  auto literalPositionInParent = [&](Kernel::Literal* literal, std::size_t parentIndex) -> int {
+    if (literal == nullptr) {
+      return -1;
+    }
+    if (parentIndex >= parentClauses.size()) {
+      return -1;
+    }
+    Kernel::Clause* parent = parentClauses[parentIndex];
+    for (unsigned literalIndex = 0; literalIndex < parent->length(); ++literalIndex) {
+      if ((*parent)[literalIndex] == literal) {
+        return static_cast<int>(literalIndex);
+      }
+    }
+    return -1;
+  };
+  auto literalPosition = [&](Kernel::Literal* literal, int preferredParentIndex) -> std::pair<int, int> {
+    if (preferredParentIndex >= 0) {
+      int literalIndex = literalPositionInParent(literal, static_cast<std::size_t>(preferredParentIndex));
+      if (literalIndex >= 0) {
+        return {preferredParentIndex, literalIndex};
+      }
+    }
     if (literal == nullptr) {
       return {-1, -1};
     }
     for (std::size_t parentIndex = 0; parentIndex < parentClauses.size(); ++parentIndex) {
-      Kernel::Clause* parent = parentClauses[parentIndex];
-      for (unsigned literalIndex = 0; literalIndex < parent->length(); ++literalIndex) {
-        if ((*parent)[literalIndex] == literal) {
-          return {static_cast<int>(parentIndex), static_cast<int>(literalIndex)};
-        }
+      int literalIndex = literalPositionInParent(literal, parentIndex);
+      if (literalIndex >= 0) {
+        return {static_cast<int>(parentIndex), literalIndex};
       }
     }
     return {-1, -1};
   };
-  auto addLiteralPositionFields = [&](std::vector<std::string>& fields, const std::string& prefix, Kernel::Literal* literal) {
-    auto [parentIndex, literalIndex] = literalPosition(literal);
+  auto addLiteralPositionFields = [&](std::vector<std::string>& fields, const std::string& prefix, Kernel::Literal* literal, int preferredParentIndex = -1) {
+    auto [parentIndex, literalIndex] = literalPosition(literal, preferredParentIndex);
     if (parentIndex < 0 || literalIndex < 0) {
       return;
     }
@@ -261,8 +280,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(rewrite->selected.selectedLiteral.selectedLiteral));
       fields.push_back(std::string("other=") + literalText(rewrite->selected.otherLiteral));
-      addLiteralPositionFields(fields, "selected", rewrite->selected.selectedLiteral.selectedLiteral);
-      addLiteralPositionFields(fields, "other", rewrite->selected.otherLiteral);
+      addLiteralPositionFields(fields, "selected", rewrite->selected.selectedLiteral.selectedLiteral, 0);
+      addLiteralPositionFields(fields, "other", rewrite->selected.otherLiteral, 1);
       fields.push_back(std::string("lhs=") + termText(rewrite->rewrite.lhs));
       fields.push_back(std::string("target=") + termText(rewrite->rewrite.rewritten));
       if (rewrite->selected.synthesisExtra.condition != nullptr) {
@@ -283,8 +302,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(selected->selectedLiteral.selectedLiteral));
       fields.push_back(std::string("other=") + literalText(selected->otherLiteral));
-      addLiteralPositionFields(fields, "selected", selected->selectedLiteral.selectedLiteral);
-      addLiteralPositionFields(fields, "other", selected->otherLiteral);
+      addLiteralPositionFields(fields, "selected", selected->selectedLiteral.selectedLiteral, 0);
+      addLiteralPositionFields(fields, "other", selected->otherLiteral, 1);
       if (selected->synthesisExtra.condition != nullptr) {
         fields.push_back(std::string("condition=") + literalText(selected->synthesisExtra.condition));
       }
@@ -312,7 +331,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       const auto* selected = static_cast<const Inferences::LiteralInferenceExtra*>(extra);
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(selected->selectedLiteral));
-      addLiteralPositionFields(fields, "selected", selected->selectedLiteral);
+      addLiteralPositionFields(fields, "selected", selected->selectedLiteral, 0);
       emit("literal", fields);
       return;
     }
