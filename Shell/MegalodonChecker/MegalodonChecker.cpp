@@ -381,6 +381,82 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
   }
 
+  if (u->inference().rule() == Kernel::InferenceRule::FOOL_ELIMINATION && !u->isClause()) {
+    UnitIterator parentIterator = u->getParents();
+    if (parentIterator.hasNext()) {
+      Kernel::Unit* parent = parentIterator.next();
+      if (!parent->isClause()) {
+        Kernel::Formula* source = parent->getFormula();
+        Kernel::Formula* target = u->getFormula();
+        std::vector<std::string> fields;
+        fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
+        std::string sourceText;
+        std::string targetText;
+        if (formulaToMegalodon(source, sourceText)) {
+          fields.push_back("source=" + sourceText);
+        }
+        if (formulaToMegalodon(target, targetText)) {
+          fields.push_back("target=" + targetText);
+        }
+
+        unsigned pairCount = 0;
+        std::size_t totalPairText = 0;
+        const unsigned pairLimit = 48;
+        const std::size_t textLimit = 180000;
+        std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned)> collectPairs =
+          [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth) {
+            if (left == nullptr || right == nullptr || depth > 24 || pairCount >= pairLimit || totalPairText >= textLimit) {
+              return;
+            }
+            if (left->toString() == right->toString()) {
+              return;
+            }
+            std::string leftText;
+            std::string rightText;
+            if (formulaToMegalodon(left, leftText) && formulaToMegalodon(right, rightText)) {
+              totalPairText += leftText.size() + rightText.size();
+              if (totalPairText <= textLimit) {
+                unsigned index = pairCount++;
+                fields.push_back("pair_" + std::to_string(index) + "_source=" + leftText);
+                fields.push_back("pair_" + std::to_string(index) + "_target=" + rightText);
+              }
+            }
+            if (left->connective() != right->connective()) {
+              return;
+            }
+            switch (left->connective()) {
+              case Kernel::AND:
+              case Kernel::OR: {
+                Kernel::FormulaList::Iterator leftIt(left->args());
+                Kernel::FormulaList::Iterator rightIt(right->args());
+                while (leftIt.hasNext() && rightIt.hasNext()) {
+                  collectPairs(leftIt.next(), rightIt.next(), depth + 1);
+                }
+                return;
+              }
+              case Kernel::IMP:
+              case Kernel::IFF:
+              case Kernel::XOR:
+                collectPairs(left->left(), right->left(), depth + 1);
+                collectPairs(left->right(), right->right(), depth + 1);
+                return;
+              case Kernel::NOT:
+                collectPairs(left->uarg(), right->uarg(), depth + 1);
+                return;
+              case Kernel::FORALL:
+              case Kernel::EXISTS:
+                collectPairs(left->qarg(), right->qarg(), depth + 1);
+                return;
+              default:
+                return;
+            }
+          };
+        collectPairs(source, target, 0);
+        emit("fool", fields);
+      }
+    }
+  }
+
   auto isDefinitionRewriteRule = [](Kernel::InferenceRule rule) {
     switch (rule) {
       case Kernel::InferenceRule::DEFINITION_UNFOLDING:
