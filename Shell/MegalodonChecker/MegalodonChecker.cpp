@@ -315,6 +315,35 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     _renderingReplayExtra = renderingReplayExtra;
     return ok;
   };
+  auto renderFormulaForExtraWithSubstitution = [&](Kernel::Formula* formula, Kernel::Substitution substitution, std::string& text) {
+    bool usesEquality = _usesEquality;
+    std::string equalitySort = _equalitySort;
+    bool usesConjunction = _usesConjunction;
+    bool usesFalse = _usesFalse;
+    bool usesDisjunction = _usesDisjunction;
+    bool usesSetExists = _usesSetExists;
+    bool usesTrue = _usesTrue;
+    bool usesPropEquality = _usesPropEquality;
+    bool renderingReplayExtra = _renderingReplayExtra;
+    _usesEquality = false;
+    _equalitySort.clear();
+    _renderingReplayExtra = true;
+    std::map<unsigned, Kernel::TermList> substitutionMap;
+    for (auto [variable, term] : iterTraits(substitution.items())) {
+      substitutionMap[variable] = term;
+    }
+    bool ok = formulaToMegalodon(formula, substitutionMap, text);
+    _usesEquality = usesEquality;
+    _equalitySort = equalitySort;
+    _usesConjunction = usesConjunction;
+    _usesFalse = usesFalse;
+    _usesDisjunction = usesDisjunction;
+    _usesSetExists = usesSetExists;
+    _usesTrue = usesTrue;
+    _usesPropEquality = usesPropEquality;
+    _renderingReplayExtra = renderingReplayExtra;
+    return ok;
+  };
   auto renderClauseForExtra = [&](Kernel::Clause* clause, std::string& text) {
     bool usesEquality = _usesEquality;
     std::string equalitySort = _equalitySort;
@@ -442,6 +471,53 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         collectPairs(source, target, 0);
         emit("normal_form", fields);
       }
+    }
+  }
+
+  if (u->inference().rule() == Kernel::InferenceRule::RECTIFY && !u->isClause()) {
+    const auto* genericInfo = InferenceRecorder::instance()->getGenericLastInferenceInformation();
+    const auto* rectifyInfo = static_cast<const InferenceRecorder::RectifyInferenceExtra*>(genericInfo);
+    if (rectifyInfo != nullptr) {
+      std::vector<std::string> fields;
+      fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
+      UnitIterator parentIterator = u->getParents();
+      if (parentIterator.hasNext()) {
+        Kernel::Unit* parent = parentIterator.next();
+        if (!parent->isClause()) {
+          std::string sourceText;
+          if (renderFormulaForExtra(parent->getFormula(), sourceText)) {
+            fields.push_back("source=" + sourceText);
+          }
+        }
+      }
+      std::string targetText;
+      if (renderFormulaForExtra(u->getFormula(), targetText)) {
+        fields.push_back("target=" + targetText);
+      }
+      fields.push_back("renaming_count=" + std::to_string(rectifyInfo->renamings.size()));
+      unsigned index = 0;
+      const unsigned renamingLimit = 64;
+      for (auto [newFormula, formulaAndSubst] : rectifyInfo->renamings) {
+        if (index >= renamingLimit) {
+          fields.push_back("renaming_truncated=1");
+          break;
+        }
+        auto [formula, substitution] = formulaAndSubst;
+        std::string originalText;
+        if (renderFormulaForExtra(formula, originalText)) {
+          fields.push_back("renaming_" + std::to_string(index) + "_source=" + originalText);
+        }
+        std::string substitutedText;
+        if (renderFormulaForExtraWithSubstitution(formula, substitution, substitutedText)) {
+          fields.push_back("renaming_" + std::to_string(index) + "_source_substituted=" + substitutedText);
+        }
+        std::string newText;
+        if (renderFormulaForExtra(newFormula, newText)) {
+          fields.push_back("renaming_" + std::to_string(index) + "_target=" + newText);
+        }
+        ++index;
+      }
+      emit("rectify", fields);
     }
   }
 
