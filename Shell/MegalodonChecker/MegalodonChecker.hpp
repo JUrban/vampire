@@ -92,7 +92,7 @@ private:
   void printMegalodonSymbolDeclarations();
   void printStepVariableSorts(Kernel::Unit* u);
   void printReplaySubstitutions(Kernel::Unit* u, const InferenceRecorder::InferenceInformation* info);
-  void printReplayExtra(Kernel::Unit* u);
+  void printReplayExtra(Kernel::Unit* u, const InferenceRecorder::InferenceInformation* info);
   std::string substitutedClauseText(Kernel::Clause* clause, const Kernel::Substitution& substitution) const;
 
   InferenceReplayer _replayer;

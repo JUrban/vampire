@@ -185,7 +185,7 @@ void MegalodonChecker::printReplaySubstitutions(Kernel::Unit* u, const Inference
   out << "]).\n";
 }
 
-void MegalodonChecker::printReplayExtra(Kernel::Unit* u)
+void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder::InferenceInformation* info)
 {
   const auto* extra = env.proofExtra.find(u);
   if (extra == nullptr) {
@@ -199,6 +199,43 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u)
   };
   auto literalText = [](Kernel::Literal* literal) {
     return literal == nullptr ? std::string() : literal->toString();
+  };
+  std::vector<Kernel::Clause*> parentClauses;
+  for (Kernel::Unit* parent : iterTraits(u->getParents())) {
+    if (parent->isClause()) {
+      parentClauses.push_back(parent->asClause());
+    }
+  }
+  auto literalPosition = [&](Kernel::Literal* literal) -> std::pair<int, int> {
+    if (literal == nullptr) {
+      return {-1, -1};
+    }
+    for (std::size_t parentIndex = 0; parentIndex < parentClauses.size(); ++parentIndex) {
+      Kernel::Clause* parent = parentClauses[parentIndex];
+      for (unsigned literalIndex = 0; literalIndex < parent->length(); ++literalIndex) {
+        if ((*parent)[literalIndex] == literal) {
+          return {static_cast<int>(parentIndex), static_cast<int>(literalIndex)};
+        }
+      }
+    }
+    return {-1, -1};
+  };
+  auto addLiteralPositionFields = [&](std::vector<std::string>& fields, const std::string& prefix, Kernel::Literal* literal) {
+    auto [parentIndex, literalIndex] = literalPosition(literal);
+    if (parentIndex < 0 || literalIndex < 0) {
+      return;
+    }
+    fields.push_back(prefix + "_parent_index=" + std::to_string(parentIndex));
+    fields.push_back(prefix + "_literal_index=" + std::to_string(literalIndex));
+    fields.push_back(prefix + "_parent_unit=" + std::to_string(parentClauses[parentIndex]->number()));
+    if (
+      info != nullptr
+      && static_cast<std::size_t>(parentIndex) < info->substitutionForBanksSub.size()
+      && static_cast<std::size_t>(parentIndex) < info->premises.size()
+    ) {
+      Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, info->substitutionForBanksSub[parentIndex]);
+      fields.push_back(prefix + "_substituted=" + literalText(substituted));
+    }
   };
   auto emit = [&](const std::string& kind, const std::vector<std::string>& fields) {
     out << "megalodon_step_extra(" << u->number() << ',' << quote(kind) << ",[";
@@ -218,6 +255,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u)
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(rewrite->selected.selectedLiteral.selectedLiteral));
       fields.push_back(std::string("other=") + literalText(rewrite->selected.otherLiteral));
+      addLiteralPositionFields(fields, "selected", rewrite->selected.selectedLiteral.selectedLiteral);
+      addLiteralPositionFields(fields, "other", rewrite->selected.otherLiteral);
       fields.push_back(std::string("lhs=") + termText(rewrite->rewrite.lhs));
       fields.push_back(std::string("target=") + termText(rewrite->rewrite.rewritten));
       if (rewrite->selected.synthesisExtra.condition != nullptr) {
@@ -238,6 +277,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u)
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(selected->selectedLiteral.selectedLiteral));
       fields.push_back(std::string("other=") + literalText(selected->otherLiteral));
+      addLiteralPositionFields(fields, "selected", selected->selectedLiteral.selectedLiteral);
+      addLiteralPositionFields(fields, "other", selected->otherLiteral);
       if (selected->synthesisExtra.condition != nullptr) {
         fields.push_back(std::string("condition=") + literalText(selected->synthesisExtra.condition));
       }
@@ -265,6 +306,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u)
       const auto* selected = static_cast<const Inferences::LiteralInferenceExtra*>(extra);
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(selected->selectedLiteral));
+      addLiteralPositionFields(fields, "selected", selected->selectedLiteral);
       emit("literal", fields);
       return;
     }
@@ -3020,6 +3062,7 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
   const Kernel::InferenceRule& rule = u->inference().rule();
   bool replayed = false;
   unsigned substitutions = 0;
+  const InferenceRecorder::InferenceInformation* replayInfo = nullptr;
   if (inferenceNeedsReplayInformation(rule)) {
     if (u->isClause()) {
       InferenceRecorder::instance()->setCurrentGoal(u->asClause());
@@ -3028,11 +3071,10 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
     if (rule == Kernel::InferenceRule::RECTIFY) {
       replayed = InferenceRecorder::instance()->getGenericLastInferenceInformation() != nullptr;
     } else {
-      const InferenceRecorder::InferenceInformation* info =
-        InferenceRecorder::instance()->getLastRecordedInferenceInformation();
-      replayed = info != nullptr;
-      if (info != nullptr) {
-        substitutions = info->substitutionForBanksSub.size();
+      replayInfo = InferenceRecorder::instance()->getLastRecordedInferenceInformation();
+      replayed = replayInfo != nullptr;
+      if (replayInfo != nullptr) {
+        substitutions = replayInfo->substitutionForBanksSub.size();
       }
     }
   }
@@ -3052,11 +3094,9 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
       << ").\n";
   printStepVariableSorts(u);
   if (replayed) {
-    const InferenceRecorder::InferenceInformation* info =
-      InferenceRecorder::instance()->getLastRecordedInferenceInformation();
-    printReplaySubstitutions(u, info);
+    printReplaySubstitutions(u, replayInfo);
   }
-  printReplayExtra(u);
+  printReplayExtra(u, replayInfo);
 }
 
 } // namespace Shell
