@@ -584,6 +584,14 @@ void PortfolioMode::runSlice(std::string sliceCode, int timeLimitInDeciseconds, 
   try
   {
     Options& opt = *env.options;
+    const Options::Proof parentProof = opt.proof();
+    const bool parentRequestsMegalodonProof =
+      parentProof == Options::Proof::MEGALODON ||
+      ((parentProof == Options::Proof::ON || parentProof == Options::Proof::TPTP) &&
+       opt.proofExtra() == Options::ProofExtra::LEAN &&
+       opt.skolemizationType() == Options::SkolemizationType::SYNTACTIC &&
+       !opt.shuffleInput());
+    const bool parentOutputAxiomNames = opt.outputAxiomNames();
 
     // opt.randomSeed() would normally be inherited from the parent
     // addCommentSignForSZS(cout) << "runSlice - seed before setting: " << opt.randomSeed() << endl;
@@ -596,6 +604,19 @@ void PortfolioMode::runSlice(std::string sliceCode, int timeLimitInDeciseconds, 
       opt.enableShuffling();
     }
     opt.readFromEncodedOptions(sliceCode);
+    opt.setOutputAxiomNames(parentOutputAxiomNames);
+    if (parentRequestsMegalodonProof || parentProof == Options::Proof::LEANCHECK) {
+      opt.set("proof", parentRequestsMegalodonProof ? "megalodon" : "leancheck");
+      opt.set("proof_extra", "lean");
+      opt.set("shuffle_input", "off");
+      opt.set("skolemization", "syntactic");
+      opt.set("output_mode", "lean");
+    } else if (parentProof == Options::Proof::SMTCHECK) {
+      opt.set("proof", "smtcheck");
+      opt.set("proof_extra", "full");
+    } else if (parentProof == Options::Proof::SMT2_PROOFCHECK) {
+      opt.set("proof", "smt2_proofcheck");
+    }
     opt.setTimeLimitInDeciseconds(sliceTime);
     int stl = opt.simulatedTimeLimit();
     if (stl) {
