@@ -190,9 +190,6 @@ void MegalodonChecker::printReplaySubstitutions(Kernel::Unit* u, const Inference
 void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder::InferenceInformation* info)
 {
   const auto* extra = env.proofExtra.find(u);
-  if (extra == nullptr) {
-    return;
-  }
 
   auto termText = [](Kernel::TermList term) {
     std::ostringstream text;
@@ -272,6 +269,36 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     out << "]).\n";
   };
+
+  if (u->inference().rule() == Kernel::InferenceRule::PREDICATE_DEFINITION && _is->hasIntroducedSymbols(u)) {
+    auto& symbols = _is->getIntroducedSymbols(u);
+    if (symbols.size() == 1 && symbols.top().first == SymbolType::PRED) {
+      unsigned symbol = symbols.top().second;
+      Kernel::Formula* formula = _is->formulaReplacedByIntroducedSymbol(symbol);
+      std::string formulaText;
+      if (formula != nullptr && formulaToMegalodon(formula, formulaText)) {
+        std::string name = predicateName(symbol);
+        std::string declaration = predicateDeclaration(symbol, name);
+        std::string sort;
+        std::size_t colon = declaration.find(':');
+        std::size_t dot = declaration.rfind('.');
+        if (colon != std::string::npos && dot != std::string::npos && colon < dot) {
+          sort = declaration.substr(colon + 1, dot - colon - 1);
+        }
+        std::vector<std::string> fields;
+        fields.push_back("introduced_symbol=" + name);
+        if (!sort.empty()) {
+          fields.push_back("sort=" + sort);
+        }
+        fields.push_back("formula=" + formulaText);
+        emit("predicate_definition", fields);
+      }
+    }
+  }
+
+  if (extra == nullptr) {
+    return;
+  }
 
   switch (u->inference().rule()) {
     case Kernel::InferenceRule::SUPERPOSITION:
