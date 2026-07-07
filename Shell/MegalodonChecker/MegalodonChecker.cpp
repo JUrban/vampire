@@ -256,6 +256,26 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       std::string substitutedProposition;
       if (skeletonLiteralToMegalodon(substituted, substitutedProposition)) {
         fields.push_back(prefix + "_substituted_proposition=" + substitutedProposition);
+      } else if (substituted->isEquality()) {
+        Kernel::TermList equalityArgumentSort = Kernel::SortHelper::getEqualityArgumentSort(substituted);
+        std::string equalitySort;
+        std::string lhs;
+        std::string rhs;
+        if (sortToMegalodon(equalityArgumentSort, equalitySort)
+          && termToMegalodon(*substituted->nthArgument(0), lhs)
+          && termToMegalodon(*substituted->nthArgument(1), rhs)) {
+          if (equalitySort == "prop") {
+            _usesPropEquality = true;
+            substitutedProposition = "vampire_eq_prop " + parenthesize(lhs) + " " + parenthesize(rhs);
+          } else {
+            substitutedProposition = lhs + " = " + rhs;
+          }
+          if (substituted->isNegative()) {
+            _usesFalse = true;
+            substitutedProposition = parenthesize(substitutedProposition) + " -> vampire_false";
+          }
+          fields.push_back(prefix + "_substituted_proposition=" + substitutedProposition);
+        }
       }
     }
   };
@@ -341,6 +361,26 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     if (!fields.empty()) {
       emit("function_definition", fields);
+    }
+  }
+
+  if (u->isClause() && u->asClause()->length() == 1) {
+    Kernel::Literal* literal = (*u->asClause())[0];
+    if (literal->isEquality() && literal->isPositive()) {
+      std::string equalitySort;
+      std::string lhs;
+      std::string rhs;
+      if (sortToMegalodon(Kernel::SortHelper::getEqualityArgumentSort(literal), equalitySort)
+        && equalitySort.find("->") != std::string::npos
+        && termToMegalodon(*literal->nthArgument(0), lhs)
+        && termToMegalodon(*literal->nthArgument(1), rhs)) {
+        std::vector<std::string> fields;
+        fields.push_back("equality_sort=" + equalitySort);
+        fields.push_back("lhs=" + lhs);
+        fields.push_back("rhs=" + rhs);
+        fields.push_back("proposition=" + lhs + " = " + rhs);
+        emit("clause_equality", fields);
+      }
     }
   }
 
