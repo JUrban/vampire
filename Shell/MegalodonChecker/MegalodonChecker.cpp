@@ -296,6 +296,54 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
   }
 
+  if (u->inference().rule() == Kernel::InferenceRule::FUNCTION_DEFINITION && u->isClause()) {
+    std::vector<std::string> fields;
+    if (_is->hasIntroducedSymbols(u)) {
+      auto& symbols = _is->getIntroducedSymbols(u);
+      if (symbols.size() == 1 && symbols.top().first == SymbolType::FUNC) {
+        unsigned symbol = symbols.top().second;
+        std::string name = functionName(symbol);
+        std::string declaration = functionDeclaration(symbol, name);
+        std::string sort;
+        std::size_t colon = declaration.find(':');
+        std::size_t dot = declaration.rfind('.');
+        if (colon != std::string::npos && dot != std::string::npos && colon < dot) {
+          sort = declaration.substr(colon + 1, dot - colon - 1);
+        }
+        fields.push_back("introduced_symbol=" + name);
+        if (!sort.empty()) {
+          fields.push_back("sort=" + sort);
+        }
+      }
+    }
+    if (u->asClause()->length() == 1) {
+      Kernel::Literal* literal = (*u->asClause())[0];
+      if (literal->isEquality() && literal->isPositive()) {
+        std::string equalitySort;
+        if (sortToMegalodon(Kernel::SortHelper::getEqualityArgumentSort(literal), equalitySort)) {
+          fields.push_back("equality_sort=" + equalitySort);
+        }
+        std::string lhs;
+        std::string rhs;
+        if (termToMegalodon(*literal->nthArgument(0), lhs)) {
+          fields.push_back("lhs=" + lhs);
+        }
+        if (termToMegalodon(*literal->nthArgument(1), rhs)) {
+          fields.push_back("rhs=" + rhs);
+        }
+        std::string proposition;
+        if (skeletonLiteralToMegalodon(literal, proposition)) {
+          fields.push_back("proposition=" + proposition);
+        } else if (!lhs.empty() && !rhs.empty()) {
+          fields.push_back("proposition=" + lhs + " = " + rhs);
+        }
+      }
+    }
+    if (!fields.empty()) {
+      emit("function_definition", fields);
+    }
+  }
+
   if (extra == nullptr) {
     return;
   }
@@ -729,7 +777,8 @@ bool MegalodonChecker::termToMegalodon(Kernel::TermList term, const std::map<uns
       if (!termToMegalodon(*it, substitution, arg)) {
         return false;
       }
-      if (it->isApplication() || (it->isTerm() && it->term()->isSpecial())) {
+      if (it->isApplication()
+        || (it->isTerm() && (it->term()->isSpecial() || it->term()->numTermArguments() > 0))) {
         arg = parenthesize(arg);
       }
       out << ' ' << arg;
