@@ -38,8 +38,10 @@ private:
   bool conjunctionToMegalodon(const std::vector<Kernel::Formula*>& conjuncts, std::size_t begin, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result);
   bool literalToMegalodon(Kernel::Literal* literal, std::string& result);
   bool skeletonLiteralToMegalodon(Kernel::Literal* literal, std::string& result);
+  bool skeletonSplitLiteralToMegalodon(unsigned split, std::string& result);
   bool skeletonClauseToMegalodon(Kernel::Clause* clause, std::string& result);
   bool skeletonDisjunctionToMegalodon(const std::vector<std::string>& literals, std::string& result);
+  bool signedNameToMegalodon(const std::string& name, std::string& result);
   std::string recoverMegalodonSymbolName(const std::string& tptpName, const std::string& fallbackPrefix);
   std::string decodeMegalodonTptpName(const std::string& tptpName) const;
   std::string sanitizeMegalodonName(const std::string& name, const std::string& fallbackPrefix) const;

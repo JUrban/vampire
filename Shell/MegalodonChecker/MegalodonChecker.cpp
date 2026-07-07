@@ -16,6 +16,8 @@
 #include "Kernel/Unit.hpp"
 #include "Lib/DHMap.hpp"
 #include "Lib/Environment.hpp"
+#include "Lib/SharedSet.hpp"
+#include "Saturation/Splitter.hpp"
 #include "Shell/InferenceRecorder.hpp"
 #include "Shell/Options.hpp"
 #include "Shell/TPTPPrinter.hpp"
@@ -913,6 +915,31 @@ bool MegalodonChecker::skeletonLiteralToMegalodon(Kernel::Literal* literal, std:
   return true;
 }
 
+bool MegalodonChecker::signedNameToMegalodon(const std::string& rawName, std::string& result)
+{
+  std::string name = rawName;
+  bool negative = false;
+  if (!name.empty() && name[0] == '~') {
+    negative = true;
+    name = name.substr(1);
+  } else if (name.rfind("¬", 0) == 0) {
+    negative = true;
+    name = name.substr(2);
+  }
+
+  result = sanitizeMegalodonName(name, "split");
+  if (negative) {
+    _usesFalse = true;
+    result = parenthesize(result) + " -> vampire_false";
+  }
+  return true;
+}
+
+bool MegalodonChecker::skeletonSplitLiteralToMegalodon(unsigned split, std::string& result)
+{
+  return signedNameToMegalodon(Saturation::Splitter::getFormulaStringFromName(split, true), result);
+}
+
 bool MegalodonChecker::skeletonDisjunctionToMegalodon(const std::vector<std::string>& literals, std::string& result)
 {
   if (literals.empty()) {
@@ -942,6 +969,16 @@ bool MegalodonChecker::skeletonClauseToMegalodon(Kernel::Clause* clause, std::st
       return false;
     }
     literals.push_back(proposition);
+  }
+  if (clause->splits() && !clause->splits()->isEmpty()) {
+    auto split = clause->splits()->iter();
+    while (split.hasNext()) {
+      std::string proposition;
+      if (!skeletonSplitLiteralToMegalodon(split.next(), proposition)) {
+        return false;
+      }
+      literals.push_back(proposition);
+    }
   }
   if (!skeletonDisjunctionToMegalodon(literals, result)) {
     return false;
@@ -1049,6 +1086,8 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::m
         return true;
       }
       return termToMegalodon(formula->getBooleanTerm(), substitution, result);
+    case Kernel::NAME:
+      return signedNameToMegalodon(static_cast<Kernel::NamedFormula*>(formula)->name(), result);
     case Kernel::IMP: {
       std::string lhs;
       std::string rhs;
@@ -1059,6 +1098,18 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::m
         lhs = parenthesize(lhs);
       }
       result = lhs + " -> " + rhs;
+      return true;
+    }
+    case Kernel::IFF: {
+      std::string lhs;
+      std::string rhs;
+      if (!formulaToMegalodon(formula->left(), substitution, lhs) || !formulaToMegalodon(formula->right(), substitution, rhs)) {
+        return false;
+      }
+      _usesConjunction = true;
+      result = "vampire_and "
+        + parenthesize(parenthesize(lhs) + " -> " + rhs) + " "
+        + parenthesize(parenthesize(rhs) + " -> " + lhs);
       return true;
     }
     case Kernel::NOT: {
