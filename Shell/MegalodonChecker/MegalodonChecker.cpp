@@ -952,6 +952,13 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       if (rewrite->selected.synthesisExtra.elseLit != nullptr) {
         fields.push_back(std::string("else=") + literalText(rewrite->selected.synthesisExtra.elseLit));
       }
+      if (info != nullptr && info->premises.size() >= 2 && info->substitutionForBanksSub.size() >= 2) {
+        addLambdaSubtermFields(fields, "selected_parent", info->premises[0], &info->substitutionForBanksSub[0]);
+        addLambdaSubtermFields(fields, "other_parent", info->premises[1], &info->substitutionForBanksSub[1]);
+      }
+      if (u->isClause()) {
+        addLambdaSubtermFields(fields, "conclusion", u->asClause(), nullptr);
+      }
       emit("two_literal_rewrite", fields);
       return;
     }
