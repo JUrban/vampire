@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
 #include <set>
 #include <sstream>
 #include <utility>
@@ -289,6 +290,96 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     out << "]).\n";
   };
+
+  auto isNormalFormRule = [](Kernel::InferenceRule rule) {
+    switch (rule) {
+      case Kernel::InferenceRule::NNF:
+      case Kernel::InferenceRule::ENNF:
+      case Kernel::InferenceRule::FLATTEN:
+      case Kernel::InferenceRule::REDUCE_FALSE_TRUE:
+      case Kernel::InferenceRule::THEORY_NORMALIZATION:
+      case Kernel::InferenceRule::BOOL_SIMP:
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  if (isNormalFormRule(u->inference().rule()) && !u->isClause()) {
+    UnitIterator parentIterator = u->getParents();
+    if (parentIterator.hasNext()) {
+      Kernel::Unit* parent = parentIterator.next();
+      if (!parent->isClause()) {
+        Kernel::Formula* source = parent->getFormula();
+        Kernel::Formula* target = u->getFormula();
+        std::vector<std::string> fields;
+        fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
+        std::string sourceText;
+        std::string targetText;
+        if (formulaToMegalodon(source, sourceText)) {
+          fields.push_back("source=" + sourceText);
+        }
+        if (formulaToMegalodon(target, targetText)) {
+          fields.push_back("target=" + targetText);
+        }
+
+        unsigned pairCount = 0;
+        std::size_t totalPairText = 0;
+        const unsigned pairLimit = 32;
+        const std::size_t textLimit = 120000;
+        std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned)> collectPairs =
+          [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth) {
+            if (left == nullptr || right == nullptr || depth > 16 || pairCount >= pairLimit || totalPairText >= textLimit) {
+              return;
+            }
+            if (left->toString() == right->toString()) {
+              return;
+            }
+            std::string leftText;
+            std::string rightText;
+            if (formulaToMegalodon(left, leftText) && formulaToMegalodon(right, rightText)) {
+              totalPairText += leftText.size() + rightText.size();
+              if (totalPairText <= textLimit) {
+                unsigned index = pairCount++;
+                fields.push_back("pair_" + std::to_string(index) + "_source=" + leftText);
+                fields.push_back("pair_" + std::to_string(index) + "_target=" + rightText);
+              }
+            }
+            if (left->connective() != right->connective()) {
+              return;
+            }
+            switch (left->connective()) {
+              case Kernel::AND:
+              case Kernel::OR: {
+                Kernel::FormulaList::Iterator leftIt(left->args());
+                Kernel::FormulaList::Iterator rightIt(right->args());
+                while (leftIt.hasNext() && rightIt.hasNext()) {
+                  collectPairs(leftIt.next(), rightIt.next(), depth + 1);
+                }
+                return;
+              }
+              case Kernel::IMP:
+              case Kernel::IFF:
+              case Kernel::XOR:
+                collectPairs(left->left(), right->left(), depth + 1);
+                collectPairs(left->right(), right->right(), depth + 1);
+                return;
+              case Kernel::NOT:
+                collectPairs(left->uarg(), right->uarg(), depth + 1);
+                return;
+              case Kernel::FORALL:
+              case Kernel::EXISTS:
+                collectPairs(left->qarg(), right->qarg(), depth + 1);
+                return;
+              default:
+                return;
+            }
+          };
+        collectPairs(source, target, 0);
+        emit("normal_form", fields);
+      }
+    }
+  }
 
   if (u->inference().rule() == Kernel::InferenceRule::PREDICATE_DEFINITION && _is->hasIntroducedSymbols(u)) {
     auto& symbols = _is->getIntroducedSymbols(u);
