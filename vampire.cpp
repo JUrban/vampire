@@ -467,6 +467,12 @@ void dispatchByMode(Problem* problem)
     break;
 
   case Options::Mode::CASC:
+  {
+    const Options::Proof requestedProof = env.options->proof();
+    const bool requestedLeanStyleProof =
+      requestedProof == Options::Proof::LEANCHECK ||
+      requestedProof == Options::Proof::MEGALODON;
+
     env.options->setIgnoreMissing(Options::IgnoreMissing::WARN);
     if (env.options->intent() == Options::Intent::UNSAT) {
       env.options->setSchedule(Options::Schedule::CASC);
@@ -477,6 +483,13 @@ void dispatchByMode(Problem* problem)
     env.options->setOutputMode(Options::Output::SZS);
     env.options->setProof(Options::Proof::TPTP);
     env.options->setOutputAxiomNames(true);
+    if (requestedLeanStyleProof) {
+      env.options->setProof(requestedProof);
+      env.options->set("proof_extra", "lean");
+      env.options->set("shuffle_input", "off");
+      env.options->set("skolemization", "syntactic");
+      env.options->setOutputMode(Options::Output::LEAN);
+    }
 
     // env.options->setNormalize(true);
     // env.options->setRandomizeSeedForPortfolioWorkers(false);
@@ -485,6 +498,7 @@ void dispatchByMode(Problem* problem)
       vampireReturnValue = VAMP_RESULT_STATUS_SUCCESS;
     }
     break;
+  }
 
   case Options::Mode::SMTCOMP:
     env.options->setIgnoreMissing(Options::IgnoreMissing::OFF);
