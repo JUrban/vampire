@@ -399,7 +399,14 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     return ok;
   };
   auto addLambdaSubtermFields = [&](std::vector<std::string>& fields, const std::string& prefix, Kernel::Clause* clause, const Kernel::Substitution* substitution) {
-    std::vector<std::pair<std::string, std::string>> lambdas;
+    struct RenderedLambda {
+      std::string text;
+      std::string sort;
+      std::string binderSort;
+      std::string body;
+      std::string bodySort;
+    };
+    std::vector<RenderedLambda> lambdas;
     std::set<std::string> seen;
     auto addLambda = [&](Kernel::TermList term) {
       if (lambdas.size() >= 32) {
@@ -407,12 +414,33 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       }
       std::string text;
       if (renderTermForExtra(term, text) && seen.insert(text).second) {
+        RenderedLambda rendered;
+        rendered.text = text;
         std::string sortText;
         Kernel::TermList sort;
         if (Kernel::SortHelper::tryGetResultSort(term, sort)) {
           sortToMegalodon(sort, sortText);
         }
-        lambdas.push_back({text, sortText});
+        rendered.sort = sortText;
+        if (term.isLambdaTerm()) {
+          std::string binderSortText;
+          if (sortToMegalodon(*term.term()->nthArgument(0), binderSortText)) {
+            rendered.binderSort = binderSortText;
+          }
+          Kernel::TermList body = term.lambdaBody();
+          std::string bodyText;
+          if (renderTermForExtra(body, bodyText)) {
+            rendered.body = bodyText;
+          }
+          Kernel::TermList bodySort;
+          if (Kernel::SortHelper::tryGetResultSort(body, bodySort)) {
+            std::string bodySortText;
+            if (sortToMegalodon(bodySort, bodySortText)) {
+              rendered.bodySort = bodySortText;
+            }
+          }
+        }
+        lambdas.push_back(rendered);
       }
     };
     std::function<void(Kernel::TermList)> visitTerm = [&](Kernel::TermList term) {
@@ -448,9 +476,18 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     fields.push_back(prefix + "_lambda_count=" + std::to_string(lambdas.size()));
     for (std::size_t i = 0; i < lambdas.size(); ++i) {
-      fields.push_back(prefix + "_lambda_" + std::to_string(i) + "=" + lambdas[i].first);
-      if (!lambdas[i].second.empty()) {
-        fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_sort=" + lambdas[i].second);
+      fields.push_back(prefix + "_lambda_" + std::to_string(i) + "=" + lambdas[i].text);
+      if (!lambdas[i].sort.empty()) {
+        fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_sort=" + lambdas[i].sort);
+      }
+      if (!lambdas[i].binderSort.empty()) {
+        fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_binder_sort=" + lambdas[i].binderSort);
+      }
+      if (!lambdas[i].body.empty()) {
+        fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_body=" + lambdas[i].body);
+      }
+      if (!lambdas[i].bodySort.empty()) {
+        fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_body_sort=" + lambdas[i].bodySort);
       }
     }
   };
