@@ -751,7 +751,20 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         };
 
         std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned, std::string)> collectPairs;
+        std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned, std::string)> collectEnnfPairs;
         std::function<void(const std::vector<Kernel::Formula*>&, std::size_t, std::size_t, const std::vector<Kernel::Formula*>&, std::size_t, std::size_t, Kernel::Connective, unsigned, std::string)> collectSlicePairs;
+        auto negatedFormula = [](Kernel::Formula* formula) -> Kernel::Formula* {
+          return new Kernel::BinaryFormula(Kernel::IMP, formula, Kernel::Formula::falseFormula());
+        };
+        auto negatedBody = [](Kernel::Formula* formula) -> Kernel::Formula* {
+          if (formula->connective() == Kernel::NOT) {
+            return formula->uarg();
+          }
+          if (formula->connective() == Kernel::IMP && formula->right()->connective() == Kernel::FALSE) {
+            return formula->left();
+          }
+          return nullptr;
+        };
         collectPairs =
           [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth, std::string path) {
             if (left == nullptr || right == nullptr || depth > 16 || pairCount >= pairLimit || totalPairText >= textLimit) {
@@ -764,6 +777,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             }
             emitPair(leftText, rightText, path);
             if (left->connective() != right->connective()) {
+              if (u->inference().rule() == Kernel::InferenceRule::ENNF) {
+                collectEnnfPairs(left, right, depth + 1, path);
+              }
               return;
             }
             switch (left->connective()) {
@@ -792,6 +808,44 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                 return;
               default:
                 return;
+            }
+          };
+        collectEnnfPairs =
+          [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth, std::string path) {
+            if (left == nullptr || right == nullptr || depth > 16 || pairCount >= pairLimit || totalPairText >= textLimit) {
+              return;
+            }
+            std::vector<Kernel::Formula*> rightArgs;
+            if (right->connective() == Kernel::AND || right->connective() == Kernel::OR) {
+              rightArgs = formulaArgs(right);
+            }
+            if (left->connective() == Kernel::IMP && right->connective() == Kernel::OR && rightArgs.size() == 2) {
+              collectPairs(negatedFormula(left->left()), rightArgs[0], depth + 1, path + ".ennf_imp_left");
+              collectPairs(left->right(), rightArgs[1], depth + 1, path + ".ennf_imp_right");
+              return;
+            }
+            Kernel::Formula* negated = negatedBody(left);
+            if (negated == nullptr) {
+              return;
+            }
+            if (negated->connective() == Kernel::IMP && right->connective() == Kernel::AND && rightArgs.size() == 2) {
+              collectPairs(negated->left(), rightArgs[0], depth + 1, path + ".ennf_neg_imp_left");
+              collectPairs(negatedFormula(negated->right()), rightArgs[1], depth + 1, path + ".ennf_neg_imp_right");
+              return;
+            }
+            if ((negated->connective() == Kernel::AND || negated->connective() == Kernel::OR)
+              && right->connective() == (negated->connective() == Kernel::AND ? Kernel::OR : Kernel::AND)) {
+              std::vector<Kernel::Formula*> leftArgs = formulaArgs(negated);
+              if (leftArgs.size() != rightArgs.size() || leftArgs.size() < 2) {
+                return;
+              }
+              for (std::size_t index = 0; index < leftArgs.size() && index < 2; ++index) {
+                collectPairs(
+                  negatedFormula(leftArgs[index]),
+                  rightArgs[index],
+                  depth + 1,
+                  path + ".ennf_neg_junction[" + std::to_string(index) + "]");
+              }
             }
           };
         collectSlicePairs =
