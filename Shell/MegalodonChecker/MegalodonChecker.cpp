@@ -7,6 +7,7 @@
 #include "Kernel/FormulaUnit.hpp"
 #include "Kernel/HOL/HOL.hpp"
 #include "Kernel/Inference.hpp"
+#include "Kernel/MLVariant.hpp"
 #include "Kernel/Signature.hpp"
 #include "Kernel/SortHelper.hpp"
 #include "Kernel/SubstHelper.hpp"
@@ -484,6 +485,172 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     return renderFormulaForExtra(unit->getFormula(), text);
   };
+
+  if (u->inference().rule() == Kernel::InferenceRule::AVATAR_SPLIT_CLAUSE) {
+    UnitIterator parents = u->getParents();
+    if (parents.hasNext()) {
+      Kernel::Unit* mainParentUnit = parents.next();
+      if (mainParentUnit->isClause()) {
+        Kernel::Clause* mainParent = mainParentUnit->asClause();
+        std::vector<std::string> fields;
+        fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
+        std::string sourceText;
+        if (renderClauseForExtra(mainParent, sourceText)) {
+          fields.push_back("source=" + sourceText);
+        }
+        std::string targetText;
+        if (renderUnitForExtra(u, targetText)) {
+          fields.push_back("target=" + targetText);
+        }
+
+        std::set<unsigned> previousSplitVars;
+        if (!mainParent->noSplits()) {
+          unsigned previousIndex = 0;
+          for (unsigned split : iterTraits(mainParent->splits()->iter())) {
+            SATLiteral splitLiteral = Splitter::getLiteralFromName(split);
+            previousSplitVars.insert(splitLiteral.var());
+            fields.push_back("previous_split_" + std::to_string(previousIndex) + "_level=" + std::to_string(split));
+            fields.push_back("previous_split_" + std::to_string(previousIndex) + "_var=" + std::to_string(splitLiteral.var()));
+            fields.push_back("previous_split_" + std::to_string(previousIndex) + "_positive=" + (splitLiteral.positive() ? "1" : "0"));
+            ++previousIndex;
+          }
+          fields.push_back("previous_split_count=" + std::to_string(previousIndex));
+        } else {
+          fields.push_back("previous_split_count=0");
+        }
+
+        const auto* satExtra = env.proofExtra.find(u);
+        if (satExtra != nullptr) {
+          const auto* avatarClause = static_cast<const Indexing::SATClauseExtra*>(satExtra);
+          unsigned satIndex = 0;
+          for (SATLiteral literal : avatarClause->clause->iter()) {
+            fields.push_back("sat_literal_" + std::to_string(satIndex) + "_var=" + std::to_string(literal.var()));
+            fields.push_back("sat_literal_" + std::to_string(satIndex) + "_positive=" + (literal.positive() ? "1" : "0"));
+            ++satIndex;
+          }
+          fields.push_back("sat_literal_count=" + std::to_string(satIndex));
+        }
+
+        std::map<unsigned, Kernel::Clause*> components;
+        std::map<unsigned, std::pair<unsigned, Kernel::Clause*>> splitToParentMap;
+        unsigned parentIndex = 1;
+        for (Kernel::Unit* splitParent : iterTraits(u->getParents())) {
+          if (parentIndex == 1) {
+            ++parentIndex;
+            continue;
+          }
+          const auto* splitExtraRaw = env.proofExtra.find(splitParent);
+          if (splitExtraRaw == nullptr) {
+            ++parentIndex;
+            continue;
+          }
+          const auto* splitExtra = static_cast<const SplitDefinitionExtra*>(splitExtraRaw);
+          if (splitExtra->component == nullptr || !splitExtra->component->isComponent() || splitExtra->component->noSplits()) {
+            ++parentIndex;
+            continue;
+          }
+          unsigned componentLevel = splitExtra->component->splits()->sval();
+          SATLiteral componentLiteral = Splitter::getLiteralFromName(componentLevel);
+          components.insert({componentLevel, splitExtra->component});
+          if (previousSplitVars.find(componentLiteral.var()) == previousSplitVars.end()) {
+            splitToParentMap.insert({componentLiteral.var(), {parentIndex - 1, splitExtra->component}});
+          }
+          std::string prefix = "component_parent_" + std::to_string(parentIndex - 1);
+          fields.push_back(prefix + "_unit=" + std::to_string(splitParent->number()));
+          fields.push_back(prefix + "_split_level=" + std::to_string(componentLevel));
+          fields.push_back(prefix + "_split_var=" + std::to_string(componentLiteral.var()));
+          fields.push_back(prefix + "_split_positive=" + (componentLiteral.positive() ? "1" : "0"));
+          std::string componentText;
+          if (renderClauseForExtra(splitExtra->component, componentText)) {
+            fields.push_back(prefix + "_clause=" + componentText);
+          }
+          ++parentIndex;
+        }
+        fields.push_back("component_parent_count=" + std::to_string(parentIndex > 1 ? parentIndex - 2 : 0));
+
+        Stack<LiteralStack> disjointLiterals;
+        if (!Splitter::getComponents(mainParent, disjointLiterals)) {
+          disjointLiterals.reset();
+          LiteralStack component;
+          for (Kernel::Literal* literal : mainParent->iterLits()) {
+            component.push(literal);
+          }
+          disjointLiterals.push(std::move(component));
+        }
+        unsigned classIndex = 0;
+        Substitution fullSubst;
+        std::map<unsigned, unsigned> varToSplitMap;
+        decltype(disjointLiterals)::Iterator classes(disjointLiterals);
+        while (classes.hasNext()) {
+          LiteralStack klass = classes.next();
+          std::string classPrefix = "literal_class_" + std::to_string(classIndex);
+          fields.push_back(classPrefix + "_literal_count=" + std::to_string(klass.size()));
+          for (unsigned literalIndex = 0; literalIndex < klass.size(); ++literalIndex) {
+            std::string literalText;
+            if (skeletonLiteralToMegalodon(klass[literalIndex], literalText)) {
+              fields.push_back(classPrefix + "_literal_" + std::to_string(literalIndex) + "=" + literalText);
+            }
+          }
+          Substitution subst;
+          for (auto [splitLevel, component] : components) {
+            if (klass.size() != component->length()) {
+              continue;
+            }
+            subst.reset();
+            if (klass.size() == 1 && klass[0]->ground() && Kernel::Literal::positiveLiteral(klass[0]) == Kernel::Literal::positiveLiteral((*component)[0])) {
+              Lib::DHMap<unsigned, Kernel::TermList> variableSorts;
+              Kernel::SortHelper::collectVariableSorts(klass[0], variableSorts);
+              auto variableDomain = variableSorts.domain();
+              while (variableDomain.hasNext()) {
+                unsigned var = variableDomain.next();
+                varToSplitMap.insert({var, Splitter::getLiteralFromName(splitLevel).var()});
+              }
+              fields.push_back(classPrefix + "_matched_split_level=" + std::to_string(splitLevel));
+              break;
+            }
+            if (Kernel::MLVariant::isVariant(klass.begin(), component, /*complementary=*/false, &subst)) {
+              for (auto [var, term] : iterTraits(subst.items())) {
+                if (term.isVar()) {
+                  fullSubst.bind(term.var(), Kernel::TermList::var(var));
+                  varToSplitMap.insert({term.var(), Splitter::getLiteralFromName(splitLevel).var()});
+                }
+              }
+              fields.push_back(classPrefix + "_matched_split_level=" + std::to_string(splitLevel));
+              break;
+            }
+          }
+          ++classIndex;
+        }
+        fields.push_back("literal_class_count=" + std::to_string(classIndex));
+
+        Lib::DHMap<unsigned, Kernel::TermList> mainParentSorts;
+        Kernel::SortHelper::collectVariableSorts(mainParent, mainParentSorts);
+        std::set<unsigned> sortedParentVars;
+        for (unsigned var : iterTraits(mainParentSorts.domain())) {
+          sortedParentVars.insert(var);
+        }
+        unsigned bindingIndex = 0;
+        for (unsigned var : sortedParentVars) {
+          Kernel::TermList substituted = fullSubst.apply(var);
+          auto splitVar = varToSplitMap.find(var);
+          if (!substituted.isVar() && splitVar == varToSplitMap.end()) {
+            continue;
+          }
+          std::string prefix = "parent_var_binding_" + std::to_string(bindingIndex);
+          fields.push_back(prefix + "_parent_var=" + variableName(var));
+          if (substituted.isVar()) {
+            fields.push_back(prefix + "_component_var=" + variableName(substituted.var()));
+          }
+          if (splitVar != varToSplitMap.end()) {
+            fields.push_back(prefix + "_split_var=" + std::to_string(splitVar->second));
+          }
+          ++bindingIndex;
+        }
+        fields.push_back("parent_var_binding_count=" + std::to_string(bindingIndex));
+        emit("avatar_split", fields);
+      }
+    }
+  }
 
   auto isNormalFormRule = [](Kernel::InferenceRule rule) {
     switch (rule) {
