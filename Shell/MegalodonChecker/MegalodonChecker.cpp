@@ -17,6 +17,7 @@
 #include "Lib/DHMap.hpp"
 #include "Lib/Environment.hpp"
 #include "Lib/SharedSet.hpp"
+#include "SATSubsumption/SATSubsumptionAndResolution.hpp"
 #include "Saturation/Splitter.hpp"
 #include "Shell/InferenceRecorder.hpp"
 #include "Shell/Options.hpp"
@@ -56,6 +57,8 @@ bool MegalodonChecker::inferenceNeedsReplayInformation(const Kernel::InferenceRu
     case Kernel::InferenceRule::SUPERPOSITION:
     case Kernel::InferenceRule::FORWARD_DEMODULATION:
     case Kernel::InferenceRule::BACKWARD_DEMODULATION:
+    case Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION:
+    case Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION:
     case Kernel::InferenceRule::RECTIFY:
       return true;
     default:
@@ -201,6 +204,41 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
   auto literalText = [](Kernel::Literal* literal) {
     return literal == nullptr ? std::string() : literal->toString();
   };
+  auto substitutionText = [](const Kernel::Substitution& substitution) {
+    std::ostringstream text;
+    text << substitution;
+    return text.str();
+  };
+  auto addSubstitutedLiteralFields = [&](std::vector<std::string>& fields, const std::string& prefix, Kernel::Literal* literal) {
+    fields.push_back(prefix + "_substituted=" + literalText(literal));
+    if (literal == nullptr) {
+      return;
+    }
+    std::string substitutedProposition;
+    if (skeletonLiteralToMegalodon(literal, substitutedProposition)) {
+      fields.push_back(prefix + "_substituted_proposition=" + substitutedProposition);
+    } else if (literal->isEquality()) {
+      Kernel::TermList equalityArgumentSort = Kernel::SortHelper::getEqualityArgumentSort(literal);
+      std::string equalitySort;
+      std::string lhs;
+      std::string rhs;
+      if (sortToMegalodon(equalityArgumentSort, equalitySort)
+        && termToMegalodon(*literal->nthArgument(0), lhs)
+        && termToMegalodon(*literal->nthArgument(1), rhs)) {
+        if (equalitySort == "prop") {
+          _usesPropEquality = true;
+          substitutedProposition = "vampire_eq_prop " + parenthesize(lhs) + " " + parenthesize(rhs);
+        } else {
+          substitutedProposition = lhs + " = " + rhs;
+        }
+        if (literal->isNegative()) {
+          _usesFalse = true;
+          substitutedProposition = parenthesize(substitutedProposition) + " -> vampire_false";
+        }
+        fields.push_back(prefix + "_substituted_proposition=" + substitutedProposition);
+      }
+    }
+  };
   std::vector<Kernel::Clause*> parentClauses;
   for (Kernel::Unit* parent : iterTraits(u->getParents())) {
     if (parent->isClause()) {
@@ -254,31 +292,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       && static_cast<std::size_t>(parentIndex) < info->premises.size()
     ) {
       Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, info->substitutionForBanksSub[parentIndex]);
-      fields.push_back(prefix + "_substituted=" + literalText(substituted));
-      std::string substitutedProposition;
-      if (skeletonLiteralToMegalodon(substituted, substitutedProposition)) {
-        fields.push_back(prefix + "_substituted_proposition=" + substitutedProposition);
-      } else if (substituted->isEquality()) {
-        Kernel::TermList equalityArgumentSort = Kernel::SortHelper::getEqualityArgumentSort(substituted);
-        std::string equalitySort;
-        std::string lhs;
-        std::string rhs;
-        if (sortToMegalodon(equalityArgumentSort, equalitySort)
-          && termToMegalodon(*substituted->nthArgument(0), lhs)
-          && termToMegalodon(*substituted->nthArgument(1), rhs)) {
-          if (equalitySort == "prop") {
-            _usesPropEquality = true;
-            substitutedProposition = "vampire_eq_prop " + parenthesize(lhs) + " " + parenthesize(rhs);
-          } else {
-            substitutedProposition = lhs + " = " + rhs;
-          }
-          if (substituted->isNegative()) {
-            _usesFalse = true;
-            substitutedProposition = parenthesize(substitutedProposition) + " -> vampire_false";
-          }
-          fields.push_back(prefix + "_substituted_proposition=" + substitutedProposition);
-        }
-      }
+      addSubstitutedLiteralFields(fields, prefix, substituted);
     }
   };
   auto emit = [&](const std::string& kind, const std::vector<std::string>& fields) {
@@ -1088,6 +1102,24 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(selected->selectedLiteral));
       addLiteralPositionFields(fields, "selected", selected->selectedLiteral, 0);
+      if (parentClauses.size() == 2) {
+        auto [selectedParentIndex, selectedLiteralIndex] = literalPosition(selected->selectedLiteral, 0);
+        if (selectedParentIndex >= 0 && selectedLiteralIndex >= 0) {
+          std::size_t mainParentIndex = static_cast<std::size_t>(selectedParentIndex);
+          std::size_t sideParentIndex = mainParentIndex == 0 ? 1 : 0;
+          SATSubsumption::SATSubsumptionAndResolution satSR;
+          if (satSR.checkSubsumptionResolutionWithLiteral(
+                parentClauses[sideParentIndex],
+                parentClauses[mainParentIndex],
+                static_cast<unsigned>(selectedLiteralIndex))) {
+            Kernel::Substitution substitution = satSR.getBindingsForSubsumptionResolutionWithLiteral();
+            fields.push_back("selected_substitution_source=sat_subsumption");
+            fields.push_back("selected_substitution=" + substitutionText(substitution));
+            Kernel::Literal* substituted = Kernel::SubstHelper::apply(selected->selectedLiteral, substitution);
+            addSubstitutedLiteralFields(fields, "selected", substituted);
+          }
+        }
+      }
       emit("literal", fields);
       return;
     }
