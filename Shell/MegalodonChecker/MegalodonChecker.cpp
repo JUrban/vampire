@@ -959,6 +959,23 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       addLiteralPositionFields(fields, "other", rewrite->selected.otherLiteral, 1);
       fields.push_back(std::string("lhs=") + termText(rewrite->rewrite.lhs));
       fields.push_back(std::string("target=") + termText(rewrite->rewrite.rewritten));
+      std::string renderedRewriteTerm;
+      if (renderTermForExtra(rewrite->rewrite.lhs, renderedRewriteTerm)) {
+        fields.push_back("lhs_term=" + renderedRewriteTerm);
+      }
+      if (renderTermForExtra(rewrite->rewrite.rewritten, renderedRewriteTerm)) {
+        fields.push_back("target_term=" + renderedRewriteTerm);
+      }
+      Kernel::TermList rewriteSort;
+      std::string rewriteSortText;
+      if (Kernel::SortHelper::tryGetResultSort(rewrite->rewrite.lhs, rewriteSort)
+        && sortToMegalodon(rewriteSort, rewriteSortText)) {
+        fields.push_back("lhs_sort=" + rewriteSortText);
+      }
+      if (Kernel::SortHelper::tryGetResultSort(rewrite->rewrite.rewritten, rewriteSort)
+        && sortToMegalodon(rewriteSort, rewriteSortText)) {
+        fields.push_back("target_sort=" + rewriteSortText);
+      }
       if (rewrite->selected.synthesisExtra.condition != nullptr) {
         fields.push_back(std::string("condition=") + literalText(rewrite->selected.synthesisExtra.condition));
       }
