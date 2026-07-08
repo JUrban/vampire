@@ -121,6 +121,8 @@ std::string MegalodonChecker::replayKind(const Kernel::InferenceRule& rule) cons
       return "avatar_contradiction";
     case Kernel::InferenceRule::AVATAR_SPLIT_CLAUSE:
       return "avatar_split";
+    case Kernel::InferenceRule::UNIT_RESULTING_RESOLUTION:
+      return "unit_resulting_resolution";
     default:
       return "generic";
   }
@@ -967,6 +969,23 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     if (!fields.empty()) {
       emit("lambda_sorts", fields);
     }
+  }
+
+  if (u->inference().rule() == Kernel::InferenceRule::UNIT_RESULTING_RESOLUTION && u->isClause()) {
+    std::vector<std::string> fields;
+    fields.push_back("conclusion_clause=" + substitutedClauseText(u->asClause(), Kernel::Substitution()));
+    std::string proposition;
+    if (skeletonClauseToMegalodon(u->asClause(), proposition)) {
+      fields.push_back("conclusion_proposition=" + proposition);
+    }
+    for (std::size_t i = 0; i < parentClauses.size(); ++i) {
+      fields.push_back("parent_" + std::to_string(i) + "_unit=" + std::to_string(parentClauses[i]->number()));
+      fields.push_back("parent_" + std::to_string(i) + "_clause=" + substitutedClauseText(parentClauses[i], Kernel::Substitution()));
+      if (skeletonClauseToMegalodon(parentClauses[i], proposition)) {
+        fields.push_back("parent_" + std::to_string(i) + "_proposition=" + proposition);
+      }
+    }
+    emit("unit_resulting_resolution", fields);
   }
 
   if (extra == nullptr) {
