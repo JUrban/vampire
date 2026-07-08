@@ -22,6 +22,9 @@
 #include "Kernel/Term.hpp"
 #include "Lib/ProofExtra.hpp"
 
+#include <vector>
+#include <utility>
+
 namespace Inferences {
 
 // inferences that use one literal from their main premise
@@ -95,6 +98,37 @@ struct TwoLiteralRewriteInferenceExtra : public InferenceExtra {
   TwoLiteralInferenceExtra selected;
   // rewrite information
   RewriteInferenceExtra rewrite;
+};
+
+struct UnitResultingResolutionExtra : public InferenceExtra {
+  struct Step {
+    Step(
+      Kernel::Literal* selected,
+      Kernel::Literal* selectedSubstituted,
+      Kernel::Clause* unitParent,
+      Kernel::Literal* unitSubstituted)
+      : selected(selected),
+        selectedSubstituted(selectedSubstituted),
+        unitParent(unitParent),
+        unitSubstituted(unitSubstituted) {}
+
+    Kernel::Literal* selected;
+    Kernel::Literal* selectedSubstituted;
+    Kernel::Clause* unitParent;
+    Kernel::Literal* unitSubstituted;
+  };
+
+  UnitResultingResolutionExtra(
+    Kernel::Clause* mainParent,
+    std::vector<Step> steps,
+    std::vector<Kernel::Literal*> remaining)
+    : mainParent(mainParent), steps(std::move(steps)), remaining(std::move(remaining)) {}
+
+  void output(std::ostream &out) const override;
+
+  Kernel::Clause* mainParent;
+  std::vector<Step> steps;
+  std::vector<Kernel::Literal*> remaining;
 };
 } // namespace Inferences
 

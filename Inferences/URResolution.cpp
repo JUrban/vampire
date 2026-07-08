@@ -20,9 +20,11 @@
 #include "Kernel/ColorHelper.hpp"
 #include "Kernel/Renaming.hpp"
 #include "Kernel/Inference.hpp"
+#include "Lib/Environment.hpp"
 
 #include "Indexing/Index.hpp"
 
+#include "Inferences/ProofExtra.hpp"
 #include "Saturation/SaturationAlgorithm.hpp"
 
 #include "Shell/AnswerLiteralManager.hpp"
@@ -87,6 +89,13 @@ struct URResolution<synthesis>::Item
   void resolveLiteral(unsigned idx, QueryRes<ResultSubstitutionSP, LiteralClause>& unif, Clause* premise, bool useQuerySubstitution)
   {
     Literal* rlit = _lits[idx];
+    Literal* selectedSubstituted = unif.unifier->apply(rlit, !useQuerySubstitution);
+    Literal* premiseLiteral = (*premise)[0];
+    if (premiseLiteral->isAnswerLiteral() && premise->length() > 1) {
+      premiseLiteral = (*premise)[1];
+    }
+    Literal* unitSubstituted = unif.unifier->apply(premiseLiteral, useQuerySubstitution);
+    _steps.emplace_back(rlit, selectedSubstituted, premise, unitSubstituted);
     _lits[idx] = 0;
     _premises[idx] = premise;
     _color = static_cast<Color>(_color | premise->color());
@@ -164,6 +173,15 @@ struct URResolution<synthesis>::Item
     else {
       res = Clause::fromIterator(std::move(it), inf);
     }
+    if (env.options->proofExtra() == Shell::Options::ProofExtra::FULL || env.options->proofExtra() == Shell::Options::ProofExtra::LEAN) {
+      std::vector<Literal*> remaining;
+      for (Literal* lit : _lits) {
+        if (lit != nullptr) {
+          remaining.push_back(lit);
+        }
+      }
+      env.proofExtra.insert(res, new UnitResultingResolutionExtra(_orig, _steps, std::move(remaining)));
+    }
     return res;
   }
 
@@ -225,6 +243,8 @@ struct URResolution<synthesis>::Item
   Stack<Literal*> _lits;
 
   Literal* _ansLit;
+
+  std::vector<UnitResultingResolutionExtra::Step> _steps;
 
   unsigned _activeLength;
   URResolution& _parent;

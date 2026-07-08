@@ -17,6 +17,8 @@
 
 #include "ProofExtra.hpp"
 
+#include "Kernel/Clause.hpp"
+
 namespace Inferences {
 
 void LiteralInferenceExtra::output(std::ostream &out) const {
@@ -49,6 +51,18 @@ void TwoLiteralRewriteInferenceExtra::output(std::ostream &out) const {
   selected.output(out);
   out << ',';
   rewrite.output(out);
+}
+
+void UnitResultingResolutionExtra::output(std::ostream &out) const {
+  out << "main=(" << mainParent->toString() << ')';
+  for (std::size_t i = 0; i < steps.size(); ++i) {
+    out << ",step_" << i
+        << "=(" << steps[i].selected->toString()
+        << ',' << steps[i].selectedSubstituted->toString()
+        << ',' << steps[i].unitParent->number()
+        << ',' << steps[i].unitSubstituted->toString()
+        << ')';
+  }
 }
  
 }// namespace Inferences

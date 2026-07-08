@@ -60,6 +60,7 @@ bool MegalodonChecker::inferenceNeedsReplayInformation(const Kernel::InferenceRu
     case Kernel::InferenceRule::BACKWARD_DEMODULATION:
     case Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION:
     case Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION:
+    case Kernel::InferenceRule::UNIT_RESULTING_RESOLUTION:
     case Kernel::InferenceRule::RECTIFY:
       return true;
     default:
@@ -318,6 +319,19 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         "parent_" + std::to_string(i) + "_substituted_clause="
         + substitutedClauseText(info->premises[i], info->substitutionForBanksSub[i]));
     }
+  };
+  auto substitutedClauseToMegalodon = [&](Kernel::Clause* clause, const Kernel::Substitution& substitution, std::string& result) {
+    std::vector<std::string> literals;
+    literals.reserve(clause->length());
+    for (Kernel::Literal* literal : clause->iterLits()) {
+      Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
+      std::string proposition;
+      if (!skeletonLiteralToMegalodon(substituted, proposition)) {
+        return false;
+      }
+      literals.push_back(proposition);
+    }
+    return skeletonDisjunctionToMegalodon(literals, result);
   };
   auto renderFormulaForExtra = [&](Kernel::Formula* formula, std::string& text) {
     bool usesEquality = _usesEquality;
@@ -1329,11 +1343,50 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     if (skeletonClauseToMegalodon(u->asClause(), proposition)) {
       fields.push_back("conclusion_proposition=" + proposition);
     }
+    if (extra != nullptr) {
+      const auto* urr = static_cast<const Inferences::UnitResultingResolutionExtra*>(extra);
+      fields.push_back("trace_main_parent_unit=" + std::to_string(urr->mainParent->number()));
+      fields.push_back("trace_step_count=" + std::to_string(urr->steps.size()));
+      for (std::size_t traceIndex = 0; traceIndex < urr->steps.size(); ++traceIndex) {
+        const auto& trace = urr->steps[traceIndex];
+        std::string prefix = "trace_step_" + std::to_string(traceIndex);
+        fields.push_back(prefix + "_unit_parent=" + std::to_string(trace.unitParent->number()));
+        fields.push_back(prefix + "_selected=" + literalText(trace.selected));
+        if (skeletonLiteralToMegalodon(trace.selected, proposition)) {
+          fields.push_back(prefix + "_selected_proposition=" + proposition);
+        }
+        fields.push_back(prefix + "_selected_substituted=" + literalText(trace.selectedSubstituted));
+        if (skeletonLiteralToMegalodon(trace.selectedSubstituted, proposition)) {
+          fields.push_back(prefix + "_selected_substituted_proposition=" + proposition);
+        }
+        fields.push_back(prefix + "_unit_substituted=" + literalText(trace.unitSubstituted));
+        if (skeletonLiteralToMegalodon(trace.unitSubstituted, proposition)) {
+          fields.push_back(prefix + "_unit_substituted_proposition=" + proposition);
+        }
+      }
+      fields.push_back("trace_remaining_count=" + std::to_string(urr->remaining.size()));
+      for (std::size_t remainingIndex = 0; remainingIndex < urr->remaining.size(); ++remainingIndex) {
+        std::string prefix = "trace_remaining_" + std::to_string(remainingIndex);
+        fields.push_back(prefix + "=" + literalText(urr->remaining[remainingIndex]));
+        if (skeletonLiteralToMegalodon(urr->remaining[remainingIndex], proposition)) {
+          fields.push_back(prefix + "_proposition=" + proposition);
+        }
+      }
+    }
+    addParentSubstitutionFields(fields);
     for (std::size_t i = 0; i < parentClauses.size(); ++i) {
       fields.push_back("parent_" + std::to_string(i) + "_unit=" + std::to_string(parentClauses[i]->number()));
       fields.push_back("parent_" + std::to_string(i) + "_clause=" + substitutedClauseText(parentClauses[i], Kernel::Substitution()));
       if (skeletonClauseToMegalodon(parentClauses[i], proposition)) {
         fields.push_back("parent_" + std::to_string(i) + "_proposition=" + proposition);
+      }
+      if (
+        info != nullptr
+        && i < info->premises.size()
+        && i < info->substitutionForBanksSub.size()
+        && substitutedClauseToMegalodon(info->premises[i], info->substitutionForBanksSub[i], proposition)
+      ) {
+        fields.push_back("parent_" + std::to_string(i) + "_substituted_proposition=" + proposition);
       }
     }
     emit("unit_resulting_resolution", fields);

@@ -7,6 +7,7 @@
 #include "Inferences/ForwardDemodulation.hpp"
 #include "Inferences/InferenceEngine.hpp"
 #include "Inferences/Superposition.hpp"
+#include "Inferences/URResolution.hpp"
 #include "Kernel/FormulaUnit.hpp"
 #include "Kernel/Inference.hpp"
 #include "Shell/EqResWithDeletion.hpp"
@@ -65,6 +66,9 @@ void InferenceReplayer::replayInference(Kernel::Unit *u)
     Inferences::Factoring fact(*alg);
     runGenerating(&fact,
                          stack, u->asClause());
+  } else if (u->inference().rule() == InferenceRule::UNIT_RESULTING_RESOLUTION) {
+    Inferences::URResolution<false> urr(*alg);
+    runGenerating(&urr, stack, u->asClause());
   } else if (u->inference().rule() == InferenceRule::RECTIFY) {
     FormulaUnit *fu = static_cast<FormulaUnit *>(u->getParents().next());
     Rectify::rectify(fu);
