@@ -696,43 +696,85 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         std::size_t totalPairText = 0;
         const unsigned pairLimit = 32;
         const std::size_t textLimit = 120000;
-        std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned, std::string)> collectPairs =
+        std::function<bool(const std::vector<Kernel::Formula*>&, std::size_t, std::size_t, Kernel::Connective, std::string&)> renderFormulaSliceForExtra;
+        renderFormulaSliceForExtra =
+          [&](const std::vector<Kernel::Formula*>& formulas, std::size_t begin, std::size_t end, Kernel::Connective connective, std::string& result) {
+            if (begin >= end || end > formulas.size()) {
+              return false;
+            }
+            if (begin + 1 == end) {
+              return renderFormulaForExtra(formulas[begin], result);
+            }
+            std::string lhs;
+            std::string rhs;
+            if (connective == Kernel::AND) {
+              if (!renderFormulaForExtra(formulas[begin], lhs)
+                || !renderFormulaSliceForExtra(formulas, begin + 1, end, connective, rhs)) {
+                return false;
+              }
+              result = "vampire_and " + parenthesize(lhs) + " " + parenthesize(rhs);
+              return true;
+            }
+            if (connective == Kernel::OR) {
+              if (!renderFormulaSliceForExtra(formulas, begin, end - 1, connective, lhs)
+                || !renderFormulaForExtra(formulas[end - 1], rhs)) {
+                return false;
+              }
+              result = "vampire_or " + parenthesize(lhs) + " " + parenthesize(rhs);
+              return true;
+            }
+            return false;
+          };
+
+        auto formulaArgs = [](Kernel::Formula* formula) {
+          std::vector<Kernel::Formula*> result;
+          Kernel::FormulaList::Iterator args(formula->args());
+          while (args.hasNext()) {
+            result.push_back(args.next());
+          }
+          return result;
+        };
+
+        auto emitPair = [&](const std::string& leftText, const std::string& rightText, const std::string& path) {
+          if (leftText == rightText || pairCount >= pairLimit || totalPairText >= textLimit) {
+            return false;
+          }
+          totalPairText += leftText.size() + rightText.size();
+          if (totalPairText > textLimit) {
+            return false;
+          }
+          unsigned index = pairCount++;
+          fields.push_back("pair_" + std::to_string(index) + "_source=" + leftText);
+          fields.push_back("pair_" + std::to_string(index) + "_target=" + rightText);
+          fields.push_back("pair_" + std::to_string(index) + "_path=" + path);
+          return true;
+        };
+
+        std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned, std::string)> collectPairs;
+        std::function<void(const std::vector<Kernel::Formula*>&, std::size_t, std::size_t, const std::vector<Kernel::Formula*>&, std::size_t, std::size_t, Kernel::Connective, unsigned, std::string)> collectSlicePairs;
+        collectPairs =
           [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth, std::string path) {
             if (left == nullptr || right == nullptr || depth > 16 || pairCount >= pairLimit || totalPairText >= textLimit) {
               return;
             }
-            if (left->toString() == right->toString()) {
-              return;
-            }
             std::string leftText;
             std::string rightText;
-            if (renderFormulaForExtra(left, leftText) && renderFormulaForExtra(right, rightText)) {
-              totalPairText += leftText.size() + rightText.size();
-              if (totalPairText <= textLimit) {
-                unsigned index = pairCount++;
-                fields.push_back("pair_" + std::to_string(index) + "_source=" + leftText);
-                fields.push_back("pair_" + std::to_string(index) + "_target=" + rightText);
-                fields.push_back("pair_" + std::to_string(index) + "_path=" + path);
-              }
+            if (!renderFormulaForExtra(left, leftText) || !renderFormulaForExtra(right, rightText)) {
+              return;
             }
+            emitPair(leftText, rightText, path);
             if (left->connective() != right->connective()) {
               return;
             }
             switch (left->connective()) {
               case Kernel::AND:
               case Kernel::OR: {
-                Kernel::FormulaList::Iterator leftIt(left->args());
-                Kernel::FormulaList::Iterator rightIt(right->args());
-                unsigned argIndex = 0;
-                while (leftIt.hasNext() && rightIt.hasNext()) {
-                  collectPairs(
-                    leftIt.next(),
-                    rightIt.next(),
-                    depth + 1,
-                    path + "." + (left->connective() == Kernel::AND ? "and" : "or") + "[" + std::to_string(argIndex) + "]"
-                  );
-                  ++argIndex;
+                std::vector<Kernel::Formula*> leftArgs = formulaArgs(left);
+                std::vector<Kernel::Formula*> rightArgs = formulaArgs(right);
+                if (leftArgs.size() != rightArgs.size() || leftArgs.size() < 2) {
+                  return;
                 }
+                collectSlicePairs(leftArgs, 0, leftArgs.size(), rightArgs, 0, rightArgs.size(), left->connective(), depth + 1, path);
                 return;
               }
               case Kernel::IMP:
@@ -750,6 +792,49 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                 return;
               default:
                 return;
+            }
+          };
+        collectSlicePairs =
+          [&](const std::vector<Kernel::Formula*>& leftArgs, std::size_t leftBegin, std::size_t leftEnd,
+              const std::vector<Kernel::Formula*>& rightArgs, std::size_t rightBegin, std::size_t rightEnd,
+              Kernel::Connective connective, unsigned depth, std::string path) {
+            if (depth > 16 || pairCount >= pairLimit || totalPairText >= textLimit) {
+              return;
+            }
+            std::size_t leftSize = leftEnd - leftBegin;
+            std::size_t rightSize = rightEnd - rightBegin;
+            if (leftSize != rightSize || leftSize < 2) {
+              return;
+            }
+            if (connective == Kernel::AND) {
+              collectPairs(leftArgs[leftBegin], rightArgs[rightBegin], depth + 1, path + ".and[0]");
+              if (leftSize == 2) {
+                collectPairs(leftArgs[leftBegin + 1], rightArgs[rightBegin + 1], depth + 1, path + ".and[1]");
+              } else {
+                std::string leftText;
+                std::string rightText;
+                if (renderFormulaSliceForExtra(leftArgs, leftBegin + 1, leftEnd, connective, leftText)
+                  && renderFormulaSliceForExtra(rightArgs, rightBegin + 1, rightEnd, connective, rightText)) {
+                  emitPair(leftText, rightText, path + ".and[1]");
+                }
+                collectSlicePairs(leftArgs, leftBegin + 1, leftEnd, rightArgs, rightBegin + 1, rightEnd, connective, depth + 1, path + ".and[1]");
+              }
+              return;
+            }
+            if (connective == Kernel::OR) {
+              if (leftSize == 2) {
+                collectPairs(leftArgs[leftBegin], rightArgs[rightBegin], depth + 1, path + ".or[0]");
+                collectPairs(leftArgs[leftBegin + 1], rightArgs[rightBegin + 1], depth + 1, path + ".or[1]");
+                return;
+              }
+              std::string leftText;
+              std::string rightText;
+              if (renderFormulaSliceForExtra(leftArgs, leftBegin, leftEnd - 1, connective, leftText)
+                && renderFormulaSliceForExtra(rightArgs, rightBegin, rightEnd - 1, connective, rightText)) {
+                emitPair(leftText, rightText, path + ".or[0]");
+              }
+              collectSlicePairs(leftArgs, leftBegin, leftEnd - 1, rightArgs, rightBegin, rightEnd - 1, connective, depth + 1, path + ".or[0]");
+              collectPairs(leftArgs[leftEnd - 1], rightArgs[rightEnd - 1], depth + 1, path + ".or[1]");
             }
           };
         collectPairs(source, target, 0, "root");
