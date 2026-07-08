@@ -696,8 +696,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         std::size_t totalPairText = 0;
         const unsigned pairLimit = 32;
         const std::size_t textLimit = 120000;
-        std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned)> collectPairs =
-          [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth) {
+        std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned, std::string)> collectPairs =
+          [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth, std::string path) {
             if (left == nullptr || right == nullptr || depth > 16 || pairCount >= pairLimit || totalPairText >= textLimit) {
               return;
             }
@@ -712,6 +712,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                 unsigned index = pairCount++;
                 fields.push_back("pair_" + std::to_string(index) + "_source=" + leftText);
                 fields.push_back("pair_" + std::to_string(index) + "_target=" + rightText);
+                fields.push_back("pair_" + std::to_string(index) + "_path=" + path);
               }
             }
             if (left->connective() != right->connective()) {
@@ -722,29 +723,36 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               case Kernel::OR: {
                 Kernel::FormulaList::Iterator leftIt(left->args());
                 Kernel::FormulaList::Iterator rightIt(right->args());
+                unsigned argIndex = 0;
                 while (leftIt.hasNext() && rightIt.hasNext()) {
-                  collectPairs(leftIt.next(), rightIt.next(), depth + 1);
+                  collectPairs(
+                    leftIt.next(),
+                    rightIt.next(),
+                    depth + 1,
+                    path + "." + (left->connective() == Kernel::AND ? "and" : "or") + "[" + std::to_string(argIndex) + "]"
+                  );
+                  ++argIndex;
                 }
                 return;
               }
               case Kernel::IMP:
               case Kernel::IFF:
               case Kernel::XOR:
-                collectPairs(left->left(), right->left(), depth + 1);
-                collectPairs(left->right(), right->right(), depth + 1);
+                collectPairs(left->left(), right->left(), depth + 1, path + ".left");
+                collectPairs(left->right(), right->right(), depth + 1, path + ".right");
                 return;
               case Kernel::NOT:
-                collectPairs(left->uarg(), right->uarg(), depth + 1);
+                collectPairs(left->uarg(), right->uarg(), depth + 1, path + ".not");
                 return;
               case Kernel::FORALL:
               case Kernel::EXISTS:
-                collectPairs(left->qarg(), right->qarg(), depth + 1);
+                collectPairs(left->qarg(), right->qarg(), depth + 1, path + ".body");
                 return;
               default:
                 return;
             }
           };
-        collectPairs(source, target, 0);
+        collectPairs(source, target, 0, "root");
         emit("normal_form", fields);
       }
     }
