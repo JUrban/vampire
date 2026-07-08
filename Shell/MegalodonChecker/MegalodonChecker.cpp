@@ -305,6 +305,17 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     out << "]).\n";
   };
+  auto addParentSubstitutionFields = [&](std::vector<std::string>& fields) {
+    if (info == nullptr || info->premises.size() != info->substitutionForBanksSub.size()) {
+      return;
+    }
+    for (std::size_t i = 0; i < info->premises.size(); ++i) {
+      fields.push_back("parent_" + std::to_string(i) + "_substitution=" + substitutionText(info->substitutionForBanksSub[i]));
+      fields.push_back(
+        "parent_" + std::to_string(i) + "_substituted_clause="
+        + substitutedClauseText(info->premises[i], info->substitutionForBanksSub[i]));
+    }
+  };
   auto renderFormulaForExtra = [&](Kernel::Formula* formula, std::string& text) {
     bool usesEquality = _usesEquality;
     std::string equalitySort = _equalitySort;
@@ -1006,6 +1017,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       if (u->isClause()) {
         addLambdaSubtermFields(fields, "conclusion", u->asClause(), nullptr);
       }
+      addParentSubstitutionFields(fields);
       emit("two_literal_rewrite", fields);
       return;
     }
@@ -1026,6 +1038,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       if (selected->synthesisExtra.elseLit != nullptr) {
         fields.push_back(std::string("else=") + literalText(selected->synthesisExtra.elseLit));
       }
+      addParentSubstitutionFields(fields);
       emit("two_literal", fields);
       return;
     }
@@ -1092,6 +1105,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       if ((info == nullptr || !info->hasDemodulationRewrite) && u->isClause()) {
         addLambdaSubtermFields(fields, "conclusion", u->asClause(), nullptr);
       }
+      addParentSubstitutionFields(fields);
       emit("rewrite", fields);
       return;
     }
@@ -1102,6 +1116,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(selected->selectedLiteral));
       addLiteralPositionFields(fields, "selected", selected->selectedLiteral, 0);
+      addParentSubstitutionFields(fields);
       if (parentClauses.size() == 2) {
         auto [selectedParentIndex, selectedLiteralIndex] = literalPosition(selected->selectedLiteral, 0);
         if (selectedParentIndex >= 0 && selectedLiteralIndex >= 0) {
