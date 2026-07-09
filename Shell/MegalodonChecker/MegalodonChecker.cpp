@@ -208,6 +208,48 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
   auto literalText = [](Kernel::Literal* literal) {
     return literal == nullptr ? std::string() : literal->toString();
   };
+  auto withHolPrinting = [&](Options::HPrinting printing, const std::function<std::string()>& render) {
+    Options::HPrinting previous = env.options->holPrinting();
+    env.options->setHolPrinting(printing);
+    std::string text = render();
+    env.options->setHolPrinting(previous);
+    return text;
+  };
+  auto termTextWithHolPrinting = [&](Kernel::TermList term, Options::HPrinting printing) {
+    return withHolPrinting(printing, [&]() {
+      std::ostringstream text;
+      text << term;
+      return text.str();
+    });
+  };
+  auto literalTextWithHolPrinting = [&](Kernel::Literal* literal, Options::HPrinting printing) {
+    if (literal == nullptr) {
+      return std::string();
+    }
+    return withHolPrinting(printing, [&]() {
+      return literal->toString();
+    });
+  };
+  auto substitutedClauseTextWithHolPrinting = [&](Kernel::Clause* clause, const Kernel::Substitution& substitution, Options::HPrinting printing) {
+    return withHolPrinting(printing, [&]() {
+      std::ostringstream out;
+      out << "cnf(u" << clause->number() << "_subst,axiom,\n    ";
+      if (clause->isEmpty()) {
+        out << "$false";
+      } else {
+        bool first = true;
+        for (Kernel::Literal* literal : *clause) {
+          if (!first) {
+            out << " | ";
+          }
+          first = false;
+          out << Kernel::SubstHelper::apply(literal, substitution)->toString();
+        }
+      }
+      out << ").\n";
+      return out.str();
+    });
+  };
   auto substitutionText = [](const Kernel::Substitution& substitution) {
     std::ostringstream text;
     text << substitution;
@@ -218,6 +260,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     if (literal == nullptr) {
       return;
     }
+    fields.push_back(prefix + "_substituted_db_indices=" + literalTextWithHolPrinting(literal, Options::HPrinting::DB_INDICES));
     std::string substitutedProposition;
     if (skeletonLiteralToMegalodon(literal, substitutedProposition)) {
       fields.push_back(prefix + "_substituted_proposition=" + substitutedProposition);
@@ -318,6 +361,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       fields.push_back(
         "parent_" + std::to_string(i) + "_substituted_clause="
         + substitutedClauseText(info->premises[i], info->substitutionForBanksSub[i]));
+      fields.push_back(
+        "parent_" + std::to_string(i) + "_substituted_clause_db_indices="
+        + substitutedClauseTextWithHolPrinting(info->premises[i], info->substitutionForBanksSub[i], Options::HPrinting::DB_INDICES));
     }
   };
   auto substitutedClauseToMegalodon = [&](Kernel::Clause* clause, const Kernel::Substitution& substitution, std::string& result) {
@@ -420,6 +466,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       std::string binderDb;
       std::string body;
       std::string bodySort;
+      std::string dbIndices;
+      std::string bodyDbIndices;
       bool bodyHasDb = false;
     };
     std::vector<RenderedLambda> lambdas;
@@ -432,6 +480,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       if (renderTermForExtra(term, text) && seen.insert(text).second) {
         RenderedLambda rendered;
         rendered.text = text;
+        rendered.dbIndices = termTextWithHolPrinting(term, Options::HPrinting::DB_INDICES);
         std::string sortText;
         Kernel::TermList sort;
         if (Kernel::SortHelper::tryGetResultSort(term, sort)) {
@@ -450,6 +499,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             rendered.body = bodyText;
             rendered.bodyHasDb = bodyText.find("db") != std::string::npos;
           }
+          rendered.bodyDbIndices = termTextWithHolPrinting(body, Options::HPrinting::DB_INDICES);
           Kernel::TermList bodySort;
           if (Kernel::SortHelper::tryGetResultSort(body, bodySort)) {
             std::string bodySortText;
@@ -495,6 +545,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     fields.push_back(prefix + "_lambda_count=" + std::to_string(lambdas.size()));
     for (std::size_t i = 0; i < lambdas.size(); ++i) {
       fields.push_back(prefix + "_lambda_" + std::to_string(i) + "=" + lambdas[i].text);
+      if (!lambdas[i].dbIndices.empty()) {
+        fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_db_indices=" + lambdas[i].dbIndices);
+      }
       if (!lambdas[i].sort.empty()) {
         fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_sort=" + lambdas[i].sort);
       }
@@ -506,6 +559,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       }
       if (!lambdas[i].body.empty()) {
         fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_body=" + lambdas[i].body);
+      }
+      if (!lambdas[i].bodyDbIndices.empty()) {
+        fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_body_db_indices=" + lambdas[i].bodyDbIndices);
       }
       if (lambdas[i].bodyHasDb) {
         fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_body_has_db=true");
