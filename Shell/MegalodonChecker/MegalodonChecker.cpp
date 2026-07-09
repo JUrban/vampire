@@ -417,8 +417,10 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       std::string text;
       std::string sort;
       std::string binderSort;
+      std::string binderDb;
       std::string body;
       std::string bodySort;
+      bool bodyHasDb = false;
     };
     std::vector<RenderedLambda> lambdas;
     std::set<std::string> seen;
@@ -441,10 +443,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           if (sortToMegalodon(*term.term()->nthArgument(0), binderSortText)) {
             rendered.binderSort = binderSortText;
           }
+          rendered.binderDb = "db0";
           Kernel::TermList body = term.lambdaBody();
           std::string bodyText;
           if (renderTermForExtra(body, bodyText)) {
             rendered.body = bodyText;
+            rendered.bodyHasDb = bodyText.find("db") != std::string::npos;
           }
           Kernel::TermList bodySort;
           if (Kernel::SortHelper::tryGetResultSort(body, bodySort)) {
@@ -497,8 +501,14 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       if (!lambdas[i].binderSort.empty()) {
         fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_binder_sort=" + lambdas[i].binderSort);
       }
+      if (!lambdas[i].binderDb.empty()) {
+        fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_binder_db=" + lambdas[i].binderDb);
+      }
       if (!lambdas[i].body.empty()) {
         fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_body=" + lambdas[i].body);
+      }
+      if (lambdas[i].bodyHasDb) {
+        fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_body_has_db=true");
       }
       if (!lambdas[i].bodySort.empty()) {
         fields.push_back(prefix + "_lambda_" + std::to_string(i) + "_body_sort=" + lambdas[i].bodySort);
