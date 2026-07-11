@@ -1929,7 +1929,7 @@ std::string MegalodonChecker::equalityDefinition() const
 {
   std::string sortText = _equalitySort.empty() ? "set" : _equalitySort;
   std::string argumentSort = sortText.find("->") == std::string::npos ? sortText : parenthesize(sortText);
-  return "Definition vampire_eq : " + argumentSort + "->" + argumentSort
+  return "Definition vampire_eq_set : " + argumentSort + "->" + argumentSort
     + "->prop := fun x y:" + sortText
     + " => forall Q:" + argumentSort + "->prop, Q x -> Q y.";
 }
@@ -4156,7 +4156,6 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
 
   if (_usesEquality) {
     lines.push_back(equalityDefinition());
-    lines.push_back("Infix = 502 := vampire_eq.");
   }
   if (_usesPropEquality) {
     lines.push_back(propEqualityDefinition());
@@ -4311,7 +4310,6 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
   }
   if (_usesEquality) {
     lines.push_back(equalityDefinition());
-    lines.push_back("Infix = 502 := vampire_eq.");
   }
   if (_usesPropEquality) {
     lines.push_back(propEqualityDefinition());
