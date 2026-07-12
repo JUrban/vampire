@@ -3130,6 +3130,199 @@ bool MegalodonChecker::certificateParamodulateStepJson(Kernel::Unit* unit, std::
   return false;
 }
 
+bool MegalodonChecker::certificateParamodulateThenSymmetryStepsJson(Kernel::Unit* unit, std::string& result)
+{
+  const Kernel::InferenceRule& rule = unit->inference().rule();
+  if (!unit->isClause()
+    || (
+      rule != Kernel::InferenceRule::FORWARD_DEMODULATION
+      && rule != Kernel::InferenceRule::BACKWARD_DEMODULATION
+      && rule != Kernel::InferenceRule::DEFINITION_FOLDING_TWEE
+      && rule != Kernel::InferenceRule::DEFINITION_FOLDING_PRED
+    )) {
+    return false;
+  }
+
+  std::vector<Kernel::Clause*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    if (parent->isClause()) {
+      parents.push_back(parent->asClause());
+    }
+  }
+  if (parents.size() != 2) {
+    return false;
+  }
+
+  auto jsonArray = [](const std::vector<std::string>& items) {
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << items[i];
+    }
+    out << ']';
+    return out.str();
+  };
+  auto normalizedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
+    for (Kernel::Literal* literal : clause->iterLits()) {
+      std::string rendered;
+      if (!certificateLiteralJson(literal, rendered)) {
+        return false;
+      }
+      literals.push_back(rendered);
+    }
+    std::sort(literals.begin(), literals.end());
+    literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
+    return true;
+  };
+  auto appendClauseExcept = [&](std::vector<std::string>& literals, Kernel::Clause* clause, Kernel::Literal* excluded) {
+    bool excludedOne = false;
+    for (Kernel::Literal* literal : clause->iterLits()) {
+      if (!excludedOne && literal == excluded) {
+        excludedOne = true;
+        continue;
+      }
+      std::string rendered;
+      if (!certificateLiteralJson(literal, rendered)) {
+        return false;
+      }
+      literals.push_back(rendered);
+    }
+    return excludedOne;
+  };
+  auto renderEqualityAtom = [&](Kernel::Literal* literal, Kernel::TermList lhsTerm, Kernel::TermList rhsTerm, std::string& atom) {
+    Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
+    if (!positive->isEquality()) {
+      return false;
+    }
+    Kernel::TermList equalityArgumentSort = Kernel::SortHelper::getEqualityArgumentSort(positive);
+    std::string equalitySort;
+    if (!sortToMegalodon(equalityArgumentSort, equalitySort)) {
+      return false;
+    }
+    std::string lhs;
+    std::string rhs;
+    if (!certificateTermJson(lhsTerm, lhs) || !certificateTermJson(rhsTerm, rhs)) {
+      return false;
+    }
+    if (equalitySort == "set") {
+      atom = "{\"eq\":[" + lhs + "," + rhs + "]}";
+    } else {
+      atom = "{\"eq\":[" + lhs + "," + rhs + "],\"sort\":" + quote(equalitySort) + "}";
+    }
+    return true;
+  };
+  auto renderEqualityLiteral = [&](Kernel::Literal* literal, Kernel::TermList lhsTerm, Kernel::TermList rhsTerm, std::string& rendered) {
+    std::string atom;
+    if (!renderEqualityAtom(literal, lhsTerm, rhsTerm, atom)) {
+      return false;
+    }
+    rendered = "{\"polarity\":";
+    rendered += literal->isPositive() ? "true" : "false";
+    rendered += ",\"atom\":" + atom + "}";
+    return true;
+  };
+
+  std::vector<std::string> actual;
+  if (!normalizedClause(unit->asClause(), actual)) {
+    return false;
+  }
+
+  for (std::size_t equalityParentIndex = 0; equalityParentIndex < parents.size(); ++equalityParentIndex) {
+    Kernel::Clause* equalityParent = parents[equalityParentIndex];
+    std::size_t targetParentIndex = equalityParentIndex == 0 ? 1 : 0;
+    Kernel::Clause* targetParent = parents[targetParentIndex];
+    for (Kernel::Literal* equality : equalityParent->iterLits()) {
+      if (!equality->isEquality() || !equality->isPositive()) {
+        continue;
+      }
+      Kernel::TermList from = *equality->nthArgument(0);
+      Kernel::TermList to = *equality->nthArgument(1);
+      std::string fromJson;
+      std::string toJson;
+      std::string equalityJson;
+      if (!certificateTermJson(from, fromJson)
+        || !certificateTermJson(to, toJson)
+        || !certificateLiteralJson(equality, equalityJson)) {
+        continue;
+      }
+      for (Kernel::Literal* target : targetParent->iterLits()) {
+        Kernel::Literal* positiveTarget = target->isPositive() ? target : Kernel::Literal::complementaryLiteral(target);
+        if (!positiveTarget->isEquality()) {
+          continue;
+        }
+        for (unsigned position = 0; position < 2; ++position) {
+          std::string targetTermJson;
+          if (!certificateTermJson(*positiveTarget->nthArgument(position), targetTermJson)
+            || targetTermJson != fromJson) {
+            continue;
+          }
+
+          Kernel::TermList rewrittenLhs = position == 0 ? to : *positiveTarget->nthArgument(0);
+          Kernel::TermList rewrittenRhs = position == 1 ? to : *positiveTarget->nthArgument(1);
+          std::string rewrittenTarget;
+          std::string swappedTarget;
+          if (!renderEqualityLiteral(target, rewrittenLhs, rewrittenRhs, rewrittenTarget)
+            || !renderEqualityLiteral(target, rewrittenRhs, rewrittenLhs, swappedTarget)) {
+            continue;
+          }
+
+          std::vector<std::string> paramClause;
+          if (!appendClauseExcept(paramClause, equalityParent, equality)
+            || !appendClauseExcept(paramClause, targetParent, target)) {
+            continue;
+          }
+          paramClause.push_back(rewrittenTarget);
+          std::sort(paramClause.begin(), paramClause.end());
+          paramClause.erase(std::unique(paramClause.begin(), paramClause.end()), paramClause.end());
+
+          std::vector<std::string> symmetricClause = paramClause;
+          auto rewrittenIt = std::find(symmetricClause.begin(), symmetricClause.end(), rewrittenTarget);
+          if (rewrittenIt == symmetricClause.end()) {
+            continue;
+          }
+          symmetricClause.erase(rewrittenIt);
+          symmetricClause.push_back(swappedTarget);
+          std::sort(symmetricClause.begin(), symmetricClause.end());
+          symmetricClause.erase(std::unique(symmetricClause.begin(), symmetricClause.end()), symmetricClause.end());
+          if (symmetricClause != actual) {
+            continue;
+          }
+
+          std::string targetJson;
+          if (!certificateLiteralJson(target, targetJson)) {
+            continue;
+          }
+          std::string stepId = "u" + std::to_string(unit->number());
+          std::string paramStepId = stepId + "_paramodulate";
+          result = "["
+            "{\"id\":" + quote(paramStepId) + ","
+            "\"rule\":\"paramodulate\","
+            "\"parents\":["
+            + quote("u" + std::to_string(equalityParent->number())) + ","
+            + quote("u" + std::to_string(targetParent->number())) + "],"
+            "\"equality\":" + equalityJson + ","
+            "\"from\":" + fromJson + ","
+            "\"to\":" + toJson + ","
+            "\"target\":" + targetJson + ","
+            "\"position\":[" + std::to_string(position) + "],"
+            "\"substitution\":{},"
+            "\"clause\":" + jsonArray(paramClause) + "},"
+            "{\"id\":" + quote(stepId) + ","
+            "\"rule\":\"equality_symmetry\","
+            "\"parents\":[" + quote(paramStepId) + "],"
+            "\"literal\":" + rewrittenTarget + "}"
+            "]";
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, std::string& result)
 {
   std::map<unsigned, Kernel::TermList> substitution;
@@ -5406,6 +5599,11 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
           << ").\n";
     } else if (certificateParamodulateStepJson(u, certificateStep)) {
       out << "megalodon_certificate_step("
+          << u->number() << ','
+          << certificateStep
+          << ").\n";
+    } else if (certificateParamodulateThenSymmetryStepsJson(u, certificateStep)) {
+      out << "megalodon_certificate_steps("
           << u->number() << ','
           << certificateStep
           << ").\n";
