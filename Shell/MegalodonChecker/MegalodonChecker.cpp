@@ -3994,6 +3994,203 @@ bool MegalodonChecker::certificateDefinitionRewriteChainStepJson(Kernel::Unit* u
   return true;
 }
 
+bool MegalodonChecker::certificateInequalitySplittingStepJson(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause()
+    || unit->inference().rule() != Kernel::InferenceRule::INEQUALITY_SPLITTING) {
+    return false;
+  }
+
+  std::vector<Kernel::Unit*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    parents.push_back(parent);
+  }
+  if (parents.size() < 2 || !parents[0]->isClause()) {
+    return false;
+  }
+  for (std::size_t i = 1; i < parents.size(); ++i) {
+    if (!parents[i]->isClause()
+      || parents[i]->inference().rule() != Kernel::InferenceRule::INEQUALITY_SPLITTING_NAME_INTRODUCTION
+      || parents[i]->asClause()->length() != 1) {
+      return false;
+    }
+  }
+
+  auto jsonArray = [](const std::vector<std::string>& items) {
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << items[i];
+    }
+    out << ']';
+    return out.str();
+  };
+  auto isFoolConstant = [](Kernel::TermList term, bool value) {
+    return term.isTerm()
+      && !term.term()->isSpecial()
+      && env.signature->isFoolConstantSymbol(value, term.term()->functor());
+  };
+  auto boolNameLiteralTerm = [&](Kernel::Literal* literal, bool value, Kernel::TermList& namedTerm) {
+    if (literal == nullptr
+      || !literal->isEquality()
+      || !literal->isPositive()
+      || Kernel::SortHelper::getEqualityArgumentSort(literal) != Kernel::AtomicSort::boolSort()) {
+      return false;
+    }
+    Kernel::TermList left = *literal->nthArgument(0);
+    Kernel::TermList right = *literal->nthArgument(1);
+    if (isFoolConstant(left, value)) {
+      namedTerm = right;
+      return true;
+    }
+    if (isFoolConstant(right, value)) {
+      namedTerm = left;
+      return true;
+    }
+    return false;
+  };
+  auto applicationHeadAndArg = [](Kernel::TermList term, Kernel::TermList& head, Kernel::TermList& arg) {
+    if (!term.isApplication()) {
+      return false;
+    }
+    head = term.lhs();
+    arg = term.rhs();
+    return true;
+  };
+  auto replacementInConclusion = [&](Kernel::TermList head, Kernel::TermList argument, Kernel::Literal*& replacement) {
+    for (Kernel::Literal* literal : unit->asClause()->iterLits()) {
+      Kernel::TermList namedTerm;
+      Kernel::TermList candidateHead;
+      Kernel::TermList candidateArg;
+      if (boolNameLiteralTerm(literal, true, namedTerm)
+        && applicationHeadAndArg(namedTerm, candidateHead, candidateArg)
+        && candidateHead == head
+        && candidateArg == argument) {
+        replacement = literal;
+        return true;
+      }
+    }
+    return false;
+  };
+
+  Kernel::Clause* sourceClause = parents[0]->asClause();
+  std::set<Kernel::Literal*> usedSourceLiterals;
+  std::set<Kernel::Literal*> usedReplacementLiterals;
+  std::vector<std::string> splitItems;
+  for (std::size_t parentIndex = 1; parentIndex < parents.size(); ++parentIndex) {
+    Kernel::Literal* nameLiteral = (*parents[parentIndex]->asClause())[0];
+    Kernel::TermList namedTerm;
+    Kernel::TermList nameHead;
+    Kernel::TermList splitTerm;
+    if (!boolNameLiteralTerm(nameLiteral, false, namedTerm)
+      || !applicationHeadAndArg(namedTerm, nameHead, splitTerm)) {
+      return false;
+    }
+
+    Kernel::Literal* selected = nullptr;
+    Kernel::Literal* replacement = nullptr;
+    for (Kernel::Literal* sourceLiteral : sourceClause->iterLits()) {
+      if (usedSourceLiterals.find(sourceLiteral) != usedSourceLiterals.end()
+        || !sourceLiteral->isEquality()
+        || sourceLiteral->isPositive()) {
+        continue;
+      }
+      Kernel::TermList left = *sourceLiteral->nthArgument(0);
+      Kernel::TermList right = *sourceLiteral->nthArgument(1);
+      Kernel::TermList otherSide;
+      if (left == splitTerm) {
+        otherSide = right;
+      } else if (right == splitTerm) {
+        otherSide = left;
+      } else {
+        continue;
+      }
+      Kernel::Literal* candidateReplacement = nullptr;
+      if (!replacementInConclusion(nameHead, otherSide, candidateReplacement)
+        || usedReplacementLiterals.find(candidateReplacement) != usedReplacementLiterals.end()) {
+        continue;
+      }
+      selected = sourceLiteral;
+      replacement = candidateReplacement;
+      break;
+    }
+    if (selected == nullptr || replacement == nullptr) {
+      return false;
+    }
+    usedSourceLiterals.insert(selected);
+    usedReplacementLiterals.insert(replacement);
+
+    std::string selectedJson;
+    std::string nameLiteralJson;
+    std::string replacementJson;
+    if (!certificateLiteralJson(selected, selectedJson)
+      || !certificateLiteralJson(nameLiteral, nameLiteralJson)
+      || !certificateLiteralJson(replacement, replacementJson)) {
+      return false;
+    }
+    splitItems.push_back(
+      "{\"name_parent\":" + quote("u" + std::to_string(parents[parentIndex]->number())) + ","
+      "\"source\":" + selectedJson + ","
+      "\"name_literal\":" + nameLiteralJson + ","
+      "\"replacement\":" + replacementJson + "}");
+  }
+
+  std::vector<std::string> expectedLiterals;
+  for (Kernel::Literal* literal : sourceClause->iterLits()) {
+    if (usedSourceLiterals.find(literal) != usedSourceLiterals.end()) {
+      continue;
+    }
+    std::string literalJson;
+    if (!certificateLiteralJson(literal, literalJson)) {
+      return false;
+    }
+    expectedLiterals.push_back(literalJson);
+  }
+  for (Kernel::Literal* literal : usedReplacementLiterals) {
+    std::string literalJson;
+    if (!certificateLiteralJson(literal, literalJson)) {
+      return false;
+    }
+    expectedLiterals.push_back(literalJson);
+  }
+  std::sort(expectedLiterals.begin(), expectedLiterals.end());
+  expectedLiterals.erase(std::unique(expectedLiterals.begin(), expectedLiterals.end()), expectedLiterals.end());
+  std::vector<std::string> actualLiterals;
+  for (Kernel::Literal* literal : unit->asClause()->iterLits()) {
+    std::string literalJson;
+    if (!certificateLiteralJson(literal, literalJson)) {
+      return false;
+    }
+    actualLiterals.push_back(literalJson);
+  }
+  std::sort(actualLiterals.begin(), actualLiterals.end());
+  actualLiterals.erase(std::unique(actualLiterals.begin(), actualLiterals.end()), actualLiterals.end());
+  if (expectedLiterals != actualLiterals) {
+    return false;
+  }
+
+  std::vector<std::string> parentIds;
+  for (Kernel::Unit* parent : parents) {
+    parentIds.push_back(quote("u" + std::to_string(parent->number())));
+  }
+  std::string sourceClauseJson;
+  std::string conclusionClauseJson;
+  if (!certificateClauseJson(sourceClause, sourceClauseJson)
+    || !certificateClauseJson(unit->asClause(), conclusionClauseJson)) {
+    return false;
+  }
+  result =
+    "{\"rule\":\"inequality_split\","
+    "\"parents\":" + jsonArray(parentIds) + ","
+    "\"source_clause\":" + sourceClauseJson + ","
+    "\"splits\":" + jsonArray(splitItems) + ","
+    "\"clause\":" + conclusionClauseJson + "}";
+  return true;
+}
+
 bool MegalodonChecker::certificateEqualityFactoringStepJson(
   Kernel::Unit* unit,
   const InferenceRecorder::InferenceInformation* replayInfo,
@@ -9604,6 +9801,11 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
           << certificateStep
           << ").\n";
     } else if (certificateDefinitionRewriteChainStepJson(u, certificateStep)) {
+      out << "megalodon_certificate_step("
+          << u->number() << ','
+          << certificateStep
+          << ").\n";
+    } else if (certificateInequalitySplittingStepJson(u, certificateStep)) {
       out << "megalodon_certificate_step("
           << u->number() << ','
           << certificateStep
