@@ -1585,6 +1585,17 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           addLambdaSubtermFields(fields, "conclusion", u->asClause(), nullptr);
         }
       }
+      if (info == nullptr || !info->hasDemodulationRewrite) {
+        bool emittedMainParent = false;
+        for (Kernel::Unit* parent : iterTraits(u->getParents())) {
+          if (!parent->isClause()) {
+            continue;
+          }
+          std::string prefix = emittedMainParent ? "rewrite_parent" : "main_parent";
+          addLambdaSubtermFields(fields, prefix, parent->asClause(), nullptr);
+          emittedMainParent = true;
+        }
+      }
       if ((info == nullptr || !info->hasDemodulationRewrite) && u->isClause()) {
         addLambdaSubtermFields(fields, "conclusion", u->asClause(), nullptr);
       }
