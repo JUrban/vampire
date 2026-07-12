@@ -4717,18 +4717,6 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
       "\"db_index\":" + std::to_string(dbIndex.unwrap()) + "},";
     return true;
   };
-  auto positionsJson = [&](const std::vector<std::vector<unsigned>>& positions) {
-    std::ostringstream out;
-    out << '[';
-    for (std::size_t i = 0; i < positions.size(); ++i) {
-      if (i != 0) {
-        out << ',';
-      }
-      out << positionJson(positions[i]);
-    }
-    out << ']';
-    return out.str();
-  };
   auto replacedSubstitutedLiteralJson = [&](Kernel::Literal* literal, const Kernel::Substitution& substitution, Kernel::TermList what, Kernel::TermList by, std::string& rendered) {
     if (literal->isEquality()) {
       Kernel::TermList equalityArgumentSort = Kernel::SortHelper::getEqualityArgumentSort(literal);
@@ -4788,6 +4776,9 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
         std::vector<std::vector<unsigned>> positions;
         collectSubstitutedLiteralAtomPositions(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], redex, positions);
         if (positions.empty()) {
+          continue;
+        }
+        if (positions.size() != 1) {
           continue;
         }
 
@@ -4860,17 +4851,12 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
           equalityParentId = symmetryStepId;
         }
 
-        std::string ruleName = positions.size() == 1 ? "paramodulate" : "paramodulate_all";
-        std::string positionField = positions.size() == 1
-          ? "\"position\":" + positionJson(positions.front()) + ","
-          : "\"positions\":" + positionsJson(positions) + ",";
+        std::string positionField = "\"position\":" + positionJson(positions.front()) + ",";
         std::string rewriteScopeField;
-        if (positions.size() == 1) {
-          rewriteScopeJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], positions.front(), rewriteScopeField);
-        }
+        rewriteScopeJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], positions.front(), rewriteScopeField);
         steps.push_back(
           "{\"id\":" + quote(stepBase) + ","
-          "\"rule\":\"" + ruleName + "\","
+          "\"rule\":\"paramodulate\","
           "\"parents\":["
           + quote(equalityParentId) + ","
           + quote(parentIds[targetParentIndex]) + "],"
