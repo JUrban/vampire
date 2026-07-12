@@ -3927,6 +3927,73 @@ bool MegalodonChecker::certificateAvatarRefutationStepJson(Kernel::Unit* unit, s
   return true;
 }
 
+bool MegalodonChecker::certificateDefinitionRewriteChainStepJson(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause()
+    || unit->inference().rule() != Kernel::InferenceRule::DEFINITION_FOLDING_TWEE) {
+    return false;
+  }
+  const auto* extra = env.proofExtra.find(unit);
+  if (extra == nullptr) {
+    return false;
+  }
+  const auto* foldingExtra = static_cast<const TweeDefinitionFoldingExtra*>(extra);
+  if (foldingExtra->steps.empty()) {
+    return false;
+  }
+
+  std::vector<Kernel::Unit*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    parents.push_back(parent);
+  }
+  if (parents.empty() || !parents[0]->isClause()) {
+    return false;
+  }
+
+  auto jsonArray = [](const std::vector<std::string>& items) {
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << items[i];
+    }
+    out << ']';
+    return out.str();
+  };
+
+  std::vector<std::string> parentIds;
+  for (Kernel::Unit* parent : parents) {
+    parentIds.push_back(quote("u" + std::to_string(parent->number())));
+  }
+
+  std::vector<std::string> rewrites;
+  for (const auto& step : foldingExtra->steps) {
+    std::string lhs;
+    std::string rhs;
+    if (!certificateTermJson(step.first, lhs) || !certificateTermJson(step.second, rhs)) {
+      return false;
+    }
+    rewrites.push_back("{\"from\":" + lhs + ",\"to\":" + rhs + "}");
+  }
+
+  std::string sourceClause;
+  std::string conclusionClause;
+  if (!certificateClauseJson(parents[0]->asClause(), sourceClause)
+    || !certificateClauseJson(unit->asClause(), conclusionClause)) {
+    return false;
+  }
+
+  result =
+    "{\"rule\":\"definition_rewrite_chain\","
+    "\"parents\":" + jsonArray(parentIds) + ","
+    "\"source_clause\":" + sourceClause + ","
+    "\"rewrites\":" + jsonArray(rewrites) + ","
+    "\"clause\":" + conclusionClause + "}";
+  return true;
+}
+
 bool MegalodonChecker::certificateEqualityFactoringStepJson(
   Kernel::Unit* unit,
   const InferenceRecorder::InferenceInformation* replayInfo,
@@ -9460,6 +9527,11 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
           << certificateStep
           << ").\n";
     } else if (certificateAvatarRefutationStepJson(u, certificateStep)) {
+      out << "megalodon_certificate_step("
+          << u->number() << ','
+          << certificateStep
+          << ").\n";
+    } else if (certificateDefinitionRewriteChainStepJson(u, certificateStep)) {
       out << "megalodon_certificate_step("
           << u->number() << ','
           << certificateStep
