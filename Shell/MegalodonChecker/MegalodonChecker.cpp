@@ -2606,6 +2606,62 @@ bool MegalodonChecker::certificateClauseJson(Kernel::Clause* clause, std::string
   return true;
 }
 
+bool MegalodonChecker::certificateDefinitionInputStepJson(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::FUNCTION_DEFINITION) {
+    return false;
+  }
+  if (!_is->hasIntroducedSymbols(unit)) {
+    return false;
+  }
+  auto& symbols = _is->getIntroducedSymbols(unit);
+  if (symbols.size() != 1 || symbols.top().first != SymbolType::FUNC) {
+    return false;
+  }
+  Kernel::Clause* clause = unit->asClause();
+  if (clause->length() != 1) {
+    return false;
+  }
+  Kernel::Literal* literal = (*clause)[0];
+  if (!literal->isEquality() || !literal->isPositive()) {
+    return false;
+  }
+
+  const std::string symbolName = functionName(symbols.top().second);
+  const std::string symbolJson = "{\"const\":" + quote(symbolName) + "}";
+
+  std::string lhs;
+  std::string rhs;
+  if (!certificateTermJson(*literal->nthArgument(0), lhs)
+    || !certificateTermJson(*literal->nthArgument(1), rhs)) {
+    return false;
+  }
+
+  std::string value;
+  if (lhs == symbolJson) {
+    value = rhs;
+  } else if (rhs == symbolJson) {
+    value = lhs;
+  } else {
+    return false;
+  }
+
+  std::string equalitySort;
+  if (!sortToMegalodon(Kernel::SortHelper::getEqualityArgumentSort(literal), equalitySort)) {
+    return false;
+  }
+
+  std::ostringstream out;
+  out << "{\"rule\":\"definition_input\","
+      << "\"symbol\":" << quote(symbolName) << ','
+      << "\"sort\":" << quote(equalitySort) << ','
+      << "\"value\":" << value << ','
+      << "\"source\":{\"kind\":\"vampire_function_definition\","
+      << "\"name\":" << quote("u" + std::to_string(unit->number())) << "}}";
+  result = out.str();
+  return true;
+}
+
 bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, std::string& result)
 {
   std::map<unsigned, Kernel::TermList> substitution;
@@ -4858,6 +4914,13 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
           << quote("certificate_clause") << ",["
           << quote("conversion_failed=1")
           << "]).\n";
+    }
+    std::string certificateStep;
+    if (certificateDefinitionInputStepJson(u, certificateStep)) {
+      out << "megalodon_certificate_step("
+          << u->number() << ','
+          << certificateStep
+          << ").\n";
     }
   }
   out << "megalodon_step_replay_kind("
