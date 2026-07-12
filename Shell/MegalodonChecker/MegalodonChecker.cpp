@@ -2955,6 +2955,181 @@ bool MegalodonChecker::certificateFactorStepJson(Kernel::Unit* unit, std::string
   return true;
 }
 
+bool MegalodonChecker::certificateParamodulateStepJson(Kernel::Unit* unit, std::string& result)
+{
+  const Kernel::InferenceRule& rule = unit->inference().rule();
+  if (!unit->isClause()
+    || (
+      rule != Kernel::InferenceRule::FORWARD_DEMODULATION
+      && rule != Kernel::InferenceRule::BACKWARD_DEMODULATION
+      && rule != Kernel::InferenceRule::DEFINITION_FOLDING_TWEE
+      && rule != Kernel::InferenceRule::DEFINITION_FOLDING_PRED
+    )) {
+    return false;
+  }
+
+  std::vector<Kernel::Clause*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    if (parent->isClause()) {
+      parents.push_back(parent->asClause());
+    }
+  }
+  if (parents.size() != 2) {
+    return false;
+  }
+
+  auto normalizedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
+    for (Kernel::Literal* literal : clause->iterLits()) {
+      std::string rendered;
+      if (!certificateLiteralJson(literal, rendered)) {
+        return false;
+      }
+      literals.push_back(rendered);
+    }
+    std::sort(literals.begin(), literals.end());
+    literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
+    return true;
+  };
+  auto appendClauseExcept = [&](std::vector<std::string>& literals, Kernel::Clause* clause, Kernel::Literal* excluded) {
+    bool excludedOne = false;
+    for (Kernel::Literal* literal : clause->iterLits()) {
+      if (!excludedOne && literal == excluded) {
+        excludedOne = true;
+        continue;
+      }
+      std::string rendered;
+      if (!certificateLiteralJson(literal, rendered)) {
+        return false;
+      }
+      literals.push_back(rendered);
+    }
+    return excludedOne;
+  };
+  auto renderAtomWithTopLevelReplacement = [&](Kernel::Literal* literal, unsigned position, Kernel::TermList replacement, std::string& atom) {
+    Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
+    if (positive->isEquality()) {
+      if (position > 1) {
+        return false;
+      }
+      Kernel::TermList equalityArgumentSort = Kernel::SortHelper::getEqualityArgumentSort(positive);
+      std::string equalitySort;
+      if (!sortToMegalodon(equalityArgumentSort, equalitySort)) {
+        return false;
+      }
+      std::string lhs;
+      std::string rhs;
+      if (!certificateTermJson(position == 0 ? replacement : *positive->nthArgument(0), lhs)
+        || !certificateTermJson(position == 1 ? replacement : *positive->nthArgument(1), rhs)) {
+        return false;
+      }
+      if (equalitySort == "set") {
+        atom = "{\"eq\":[" + lhs + "," + rhs + "]}";
+      } else {
+        atom = "{\"eq\":[" + lhs + "," + rhs + "],\"sort\":" + quote(equalitySort) + "}";
+      }
+      return true;
+    }
+
+    if (position >= positive->arity()) {
+      return false;
+    }
+    std::ostringstream out;
+    out << "{\"pred\":" << quote(predicateName(positive->functor())) << ",\"args\":[";
+    for (unsigned i = 0; i < positive->arity(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      std::string arg;
+      if (!certificateTermJson(i == position ? replacement : *positive->nthArgument(i), arg)) {
+        return false;
+      }
+      out << arg;
+    }
+    out << "]}";
+    atom = out.str();
+    return true;
+  };
+  auto renderLiteralWithTopLevelReplacement = [&](Kernel::Literal* literal, unsigned position, Kernel::TermList replacement, std::string& rendered) {
+    std::string atom;
+    if (!renderAtomWithTopLevelReplacement(literal, position, replacement, atom)) {
+      return false;
+    }
+    rendered = "{\"polarity\":";
+    rendered += literal->isPositive() ? "true" : "false";
+    rendered += ",\"atom\":" + atom + "}";
+    return true;
+  };
+
+  std::vector<std::string> actual;
+  if (!normalizedClause(unit->asClause(), actual)) {
+    return false;
+  }
+
+  for (std::size_t equalityParentIndex = 0; equalityParentIndex < parents.size(); ++equalityParentIndex) {
+    Kernel::Clause* equalityParent = parents[equalityParentIndex];
+    std::size_t targetParentIndex = equalityParentIndex == 0 ? 1 : 0;
+    Kernel::Clause* targetParent = parents[targetParentIndex];
+    for (Kernel::Literal* equality : equalityParent->iterLits()) {
+      if (!equality->isEquality() || !equality->isPositive()) {
+        continue;
+      }
+      Kernel::TermList from = *equality->nthArgument(0);
+      Kernel::TermList to = *equality->nthArgument(1);
+      std::string fromJson;
+      std::string toJson;
+      std::string equalityJson;
+      if (!certificateTermJson(from, fromJson)
+        || !certificateTermJson(to, toJson)
+        || !certificateLiteralJson(equality, equalityJson)) {
+        continue;
+      }
+      for (Kernel::Literal* target : targetParent->iterLits()) {
+        Kernel::Literal* positiveTarget = target->isPositive() ? target : Kernel::Literal::complementaryLiteral(target);
+        unsigned topLevelTerms = positiveTarget->isEquality() ? 2 : positiveTarget->arity();
+        for (unsigned position = 0; position < topLevelTerms; ++position) {
+          std::string targetTermJson;
+          if (!certificateTermJson(*positiveTarget->nthArgument(position), targetTermJson)
+            || targetTermJson != fromJson) {
+            continue;
+          }
+          std::vector<std::string> expected;
+          if (!appendClauseExcept(expected, equalityParent, equality)
+            || !appendClauseExcept(expected, targetParent, target)) {
+            continue;
+          }
+          std::string rewrittenTarget;
+          if (!renderLiteralWithTopLevelReplacement(target, position, to, rewrittenTarget)) {
+            continue;
+          }
+          expected.push_back(rewrittenTarget);
+          std::sort(expected.begin(), expected.end());
+          expected.erase(std::unique(expected.begin(), expected.end()), expected.end());
+          if (expected != actual) {
+            continue;
+          }
+
+          std::string targetJson;
+          if (!certificateLiteralJson(target, targetJson)) {
+            continue;
+          }
+          result = "{\"rule\":\"paramodulate\","
+            "\"parents\":["
+            + quote("u" + std::to_string(equalityParent->number())) + ","
+            + quote("u" + std::to_string(targetParent->number())) + "],"
+            "\"equality\":" + equalityJson + ","
+            "\"from\":" + fromJson + ","
+            "\"to\":" + toJson + ","
+            "\"target\":" + targetJson + ","
+            "\"position\":[" + std::to_string(position) + "],"
+            "\"substitution\":{}}";
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, std::string& result)
 {
   std::map<unsigned, Kernel::TermList> substitution;
@@ -5225,6 +5400,11 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
           << certificateStep
           << ").\n";
     } else if (certificateFactorStepJson(u, certificateStep)) {
+      out << "megalodon_certificate_step("
+          << u->number() << ','
+          << certificateStep
+          << ").\n";
+    } else if (certificateParamodulateStepJson(u, certificateStep)) {
       out << "megalodon_certificate_step("
           << u->number() << ','
           << certificateStep
