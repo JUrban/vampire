@@ -4822,6 +4822,13 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
     out << ']';
     return out.str();
   };
+  auto positionsJson = [&](const std::vector<std::vector<unsigned>>& positions) {
+    std::vector<std::string> renderedPositions;
+    for (const auto& position : positions) {
+      renderedPositions.push_back(positionJson(position));
+    }
+    return jsonArray(renderedPositions);
+  };
   auto rewriteScopeJson = [&](Kernel::Literal* literal, const Kernel::Substitution& substitution, const std::vector<unsigned>& position, std::string& rendered) {
     if (position.empty()) {
       return false;
@@ -4894,6 +4901,32 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
     Kernel::Literal* replaced = Kernel::EqHelper::replace(substituted, what, by);
     return certificateLiteralJson(replaced, rendered);
   };
+  auto swappedReplacedSubstitutedEqualityLiteralJson = [&](Kernel::Literal* literal, const Kernel::Substitution& substitution, Kernel::TermList what, Kernel::TermList by, std::string& rendered) {
+    if (!literal->isEquality()) {
+      return false;
+    }
+    Kernel::TermList equalityArgumentSort = Kernel::SortHelper::getEqualityArgumentSort(literal);
+    std::string equalitySort;
+    std::string lhs;
+    std::string rhs;
+    Kernel::TermList lhsTerm = Kernel::EqHelper::replace(Kernel::SubstHelper::apply(*literal->nthArgument(0), substitution), what, by);
+    Kernel::TermList rhsTerm = Kernel::EqHelper::replace(Kernel::SubstHelper::apply(*literal->nthArgument(1), substitution), what, by);
+    if (!sortToMegalodon(equalityArgumentSort, equalitySort)
+      || !certificateTermJson(lhsTerm, lhs)
+      || !certificateTermJson(rhsTerm, rhs)) {
+      return false;
+    }
+    std::string atom;
+    if (equalitySort == "set") {
+      atom = "{\"eq\":[" + rhs + "," + lhs + "]}";
+    } else {
+      atom = "{\"eq\":[" + rhs + "," + lhs + "],\"sort\":" + quote(equalitySort) + "}";
+    }
+    rendered = "{\"polarity\":";
+    rendered += literal->isPositive() ? "true" : "false";
+    rendered += ",\"atom\":" + atom + "}";
+    return true;
+  };
 
   std::vector<std::string> actual;
   if (!normalizedClause(unit->asClause(), actual)) {
@@ -4927,9 +4960,6 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
         if (positions.empty()) {
           continue;
         }
-        if (positions.size() != 1) {
-          continue;
-        }
 
         std::vector<std::string> paramClause;
         if (!appendSubstitutedClauseExcept(paramClause, targetParent, replayInfo->substitutionForBanksSub[targetParentIndex], targetLiteral)
@@ -4942,8 +4972,23 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
         }
         paramClause.push_back(rewrittenTargetJson);
         normalize(paramClause);
+        bool needsConclusionSymmetry = false;
         if (paramClause != actual) {
-          continue;
+          std::string swappedRewrittenTargetJson;
+          if (!swappedReplacedSubstitutedEqualityLiteralJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], redex, replacement, swappedRewrittenTargetJson)) {
+            continue;
+          }
+          std::vector<std::string> symmetryClause = paramClause;
+          auto rewritten = std::find(symmetryClause.begin(), symmetryClause.end(), rewrittenTargetJson);
+          if (rewritten == symmetryClause.end()) {
+            continue;
+          }
+          *rewritten = swappedRewrittenTargetJson;
+          normalize(symmetryClause);
+          if (symmetryClause != actual) {
+            continue;
+          }
+          needsConclusionSymmetry = true;
         }
 
         std::string stepBase = "u" + std::to_string(unit->number());
@@ -4975,6 +5020,7 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
         std::string toJson;
         std::string targetJson;
         std::string conclusionJson;
+        std::string paramodulationConclusionJson = jsonArray(paramClause);
         if (!certificateSubstitutedLiteralPreservingEqualityJson(equalityLiteral, replayInfo->substitutionForBanksSub[equalityParentIndex], equalityParentLiteralJson)
           || !positiveEqualityLiteralJson(equalityLiteral, redex, replacement, equalityJson)
           || !certificateTermJson(redex, fromJson)
@@ -5000,24 +5046,50 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
           equalityParentId = symmetryStepId;
         }
 
-        std::string positionField = "\"position\":" + positionJson(positions.front()) + ",";
-        std::string rewriteScopeField;
-        rewriteScopeJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], positions.front(), rewriteScopeField);
-        steps.push_back(
-          "{\"id\":" + quote(stepBase) + ","
-          "\"rule\":\"paramodulate\","
-          "\"parents\":["
-          + quote(equalityParentId) + ","
-          + quote(parentIds[targetParentIndex]) + "],"
-          "\"equality\":" + equalityJson + ","
-          "\"from\":" + fromJson + ","
-          "\"to\":" + toJson + ","
-          "\"target\":" + targetJson + ","
-          "\"rewritten_target\":" + rewrittenTargetJson + ","
-          + positionField
-          + rewriteScopeField
-          + "\"substitution\":{},"
-          "\"clause\":" + conclusionJson + "}");
+        std::string paramodulationStepId = needsConclusionSymmetry ? stepBase + "_paramodulate" : stepBase;
+        if (positions.size() == 1) {
+          std::string positionField = "\"position\":" + positionJson(positions.front()) + ",";
+          std::string rewriteScopeField;
+          rewriteScopeJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], positions.front(), rewriteScopeField);
+          steps.push_back(
+            "{\"id\":" + quote(paramodulationStepId) + ","
+            "\"rule\":\"paramodulate\","
+            "\"parents\":["
+            + quote(equalityParentId) + ","
+            + quote(parentIds[targetParentIndex]) + "],"
+            "\"equality\":" + equalityJson + ","
+            "\"from\":" + fromJson + ","
+            "\"to\":" + toJson + ","
+            "\"target\":" + targetJson + ","
+            "\"rewritten_target\":" + rewrittenTargetJson + ","
+            + positionField
+            + rewriteScopeField
+            + "\"substitution\":{},"
+            "\"clause\":" + paramodulationConclusionJson + "}");
+        } else {
+          steps.push_back(
+            "{\"id\":" + quote(paramodulationStepId) + ","
+            "\"rule\":\"paramodulate_all\","
+            "\"parents\":["
+            + quote(equalityParentId) + ","
+            + quote(parentIds[targetParentIndex]) + "],"
+            "\"equality\":" + equalityJson + ","
+            "\"from\":" + fromJson + ","
+            "\"to\":" + toJson + ","
+            "\"target\":" + targetJson + ","
+            "\"rewritten_target\":" + rewrittenTargetJson + ","
+            "\"positions\":" + positionsJson(positions) + ","
+            "\"substitution\":{},"
+            "\"clause\":" + paramodulationConclusionJson + "}");
+        }
+        if (needsConclusionSymmetry) {
+          steps.push_back(
+            "{\"id\":" + quote(stepBase) + ","
+            "\"rule\":\"equality_symmetry\","
+            "\"parents\":[" + quote(paramodulationStepId) + "],"
+            "\"literal\":" + rewrittenTargetJson + ","
+            "\"clause\":" + conclusionJson + "}");
+        }
         result = jsonArray(steps);
         return true;
       }
