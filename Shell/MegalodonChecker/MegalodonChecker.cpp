@@ -5500,6 +5500,66 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     rendered = "{\"polarity\":true,\"atom\":" + atom + "}";
     return true;
   };
+  auto replaceTermAtPrintedPosition = [&](auto&& self, Kernel::TermList term, const std::vector<unsigned>& rewritePosition, std::size_t depth, Kernel::TermList replacement, Kernel::TermList& result) -> bool {
+    if (depth == rewritePosition.size()) {
+      result = replacement;
+      return true;
+    }
+    if (!term.isTerm()) {
+      return false;
+    }
+    Kernel::Term* source = term.term();
+    std::vector<Kernel::TermList> args;
+    args.reserve(source->arity());
+    for (unsigned i = 0; i < source->arity(); ++i) {
+      args.push_back(*source->nthArgument(i));
+    }
+    unsigned printedIndex = rewritePosition[depth];
+    unsigned argumentIndex;
+    if (term.isApplication()) {
+      if (printedIndex > 1) {
+        return false;
+      }
+      argumentIndex = printedIndex == 0 ? 2 : 3;
+    } else {
+      unsigned typeArgs = source->numTypeArguments();
+      if (printedIndex >= source->numTermArguments()) {
+        return false;
+      }
+      argumentIndex = typeArgs + printedIndex;
+    }
+    Kernel::TermList rewrittenChild;
+    if (!self(self, args[argumentIndex], rewritePosition, depth + 1, replacement, rewrittenChild)) {
+      return false;
+    }
+    args[argumentIndex] = rewrittenChild;
+    result = Kernel::TermList(Kernel::Term::create(source, args.data()));
+    return true;
+  };
+  auto equalityLiteralFromTermsJson = [&](Kernel::Literal* literal, Kernel::TermList lhsTerm, Kernel::TermList rhsTerm, std::string& rendered) {
+    if (!literal->isEquality()) {
+      return false;
+    }
+    Kernel::TermList equalityArgumentSort = Kernel::SortHelper::getEqualityArgumentSort(literal);
+    std::string equalitySort;
+    std::string lhs;
+    std::string rhs;
+    if (!sortToMegalodon(equalityArgumentSort, equalitySort)
+      || !certificateTermJson(lhsTerm, lhs)
+      || !certificateTermJson(rhsTerm, rhs)) {
+      return false;
+    }
+    std::string atom;
+    if (equalitySort == "set") {
+      atom = "{\"eq\":[" + lhs + "," + rhs + "]}";
+    } else {
+      atom = "{\"eq\":[" + lhs + "," + rhs + "],\"sort\":" + quote(equalitySort) + "}";
+    }
+    rendered = "{\"polarity\":";
+    rendered += literal->isPositive() ? "true" : "false";
+    rendered += ",\"atom\":" + atom + "}";
+    return true;
+  };
   auto replacedSubstitutedLiteralPreservingEqualityJson = [&](Kernel::Literal* literal, const Kernel::Substitution& substitution, Kernel::TermList what, Kernel::TermList by, bool swapEquality, std::string& rendered) {
     if (literal->isEquality()) {
       Kernel::TermList equalityArgumentSort = Kernel::SortHelper::getEqualityArgumentSort(literal);
@@ -5862,21 +5922,91 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     paramClause = currentClause;
     paramodulateStepId = currentTargetId;
   } else {
-    rewriteFields += simultaneousParamodulation
-      ? "\"positions\":" + positionsJson(redexPositions) + ","
-      : "\"position\":" + positionJson(position) + ",";
-    steps.push_back(
-      "{\"id\":" + quote(paramodulateStepId) + ","
-      "\"rule\":\"" + ruleName + "\","
-      "\"parents\":["
-      + quote(equalityParentId) + ","
-      + quote(parentIds[targetParentIndex]) + "],"
-      "\"equality\":" + equalityJson + ","
-      "\"from\":" + fromJson + ","
-      "\"to\":" + toJson + ","
-      + rewriteFields
-      + "\"substitution\":{},"
-      "\"clause\":" + paramodulateClauseJson + "}");
+    if (simultaneousParamodulation && targetLiteral->isEquality()) {
+      std::vector<std::string> currentParamClause;
+      std::vector<std::string> equalityRemainder;
+      if (!substitutedClauseLiterals(targetParent, replayInfo->substitutionForBanksSub[targetParentIndex], currentParamClause)
+        || !substitutedClauseExceptLiterals(equalityParent, replayInfo->substitutionForBanksSub[equalityParentIndex], equalityLiteral, equalityRemainder)) {
+        return false;
+      }
+      std::string currentTargetId = parentIds[targetParentIndex];
+      std::string currentTargetJson = targetJson;
+      Kernel::TermList currentLhs = Kernel::SubstHelper::apply(*targetLiteral->nthArgument(0), replayInfo->substitutionForBanksSub[targetParentIndex]);
+      Kernel::TermList currentRhs = Kernel::SubstHelper::apply(*targetLiteral->nthArgument(1), replayInfo->substitutionForBanksSub[targetParentIndex]);
+      for (std::size_t rewriteIndex = 0; rewriteIndex < redexPositions.size(); ++rewriteIndex) {
+        const std::vector<unsigned>& rewritePosition = redexPositions[rewriteIndex];
+        if (rewritePosition.empty() || rewritePosition[0] > 1) {
+          return false;
+        }
+        std::vector<unsigned> sidePosition(rewritePosition.begin() + 1, rewritePosition.end());
+        Kernel::TermList rewrittenSide;
+        if (rewritePosition[0] == 0) {
+          if (!replaceTermAtPrintedPosition(replaceTermAtPrintedPosition, currentLhs, sidePosition, 0, to, rewrittenSide)) {
+            return false;
+          }
+          currentLhs = rewrittenSide;
+        } else {
+          if (!replaceTermAtPrintedPosition(replaceTermAtPrintedPosition, currentRhs, sidePosition, 0, to, rewrittenSide)) {
+            return false;
+          }
+          currentRhs = rewrittenSide;
+        }
+        std::string nextTargetJson;
+        if (!equalityLiteralFromTermsJson(targetLiteral, currentLhs, currentRhs, nextTargetJson)) {
+          return false;
+        }
+        auto literalIt = std::find(currentParamClause.begin(), currentParamClause.end(), currentTargetJson);
+        if (literalIt == currentParamClause.end()) {
+          return false;
+        }
+        currentParamClause.erase(literalIt);
+        currentParamClause.push_back(nextTargetJson);
+        currentParamClause.insert(currentParamClause.end(), equalityRemainder.begin(), equalityRemainder.end());
+        std::sort(currentParamClause.begin(), currentParamClause.end());
+        currentParamClause.erase(std::unique(currentParamClause.begin(), currentParamClause.end()), currentParamClause.end());
+
+        bool lastRewrite = rewriteIndex + 1 == redexPositions.size();
+        std::string rewriteStepId = lastRewrite && finalSymmetryFlips.empty()
+          ? stepBase
+          : stepBase + "_paramodulate" + std::to_string(rewriteIndex);
+        std::string rewriteClauseJson = lastRewrite && finalSymmetryFlips.empty()
+          ? conclusionJson
+          : jsonArray(currentParamClause);
+        steps.push_back(
+          "{\"id\":" + quote(rewriteStepId) + ","
+          "\"rule\":\"paramodulate\","
+          "\"parents\":["
+          + quote(equalityParentId) + ","
+          + quote(currentTargetId) + "],"
+          "\"equality\":" + equalityJson + ","
+          "\"from\":" + fromJson + ","
+          "\"to\":" + toJson + ","
+          "\"target\":" + currentTargetJson + ","
+          "\"position\":" + positionJson(redexPositions[rewriteIndex]) + ","
+          "\"substitution\":{},"
+          "\"clause\":" + rewriteClauseJson + "}");
+        currentTargetId = rewriteStepId;
+        currentTargetJson = nextTargetJson;
+      }
+      paramClause = currentParamClause;
+      paramodulateStepId = currentTargetId;
+    } else {
+      rewriteFields += simultaneousParamodulation
+        ? "\"positions\":" + positionsJson(redexPositions) + ","
+        : "\"position\":" + positionJson(position) + ",";
+      steps.push_back(
+        "{\"id\":" + quote(paramodulateStepId) + ","
+        "\"rule\":\"" + ruleName + "\","
+        "\"parents\":["
+        + quote(equalityParentId) + ","
+        + quote(parentIds[targetParentIndex]) + "],"
+        "\"equality\":" + equalityJson + ","
+        "\"from\":" + fromJson + ","
+        "\"to\":" + toJson + ","
+        + rewriteFields
+        + "\"substitution\":{},"
+        "\"clause\":" + paramodulateClauseJson + "}");
+    }
   }
   std::string currentStepId = paramodulateStepId;
   std::vector<std::string> currentClause = paramClause;
