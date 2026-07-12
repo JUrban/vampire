@@ -46,6 +46,7 @@ private:
   bool certificateAtomJson(Kernel::Literal* literal, std::string& result);
   bool certificateLiteralJson(Kernel::Literal* literal, std::string& result);
   bool certificateClauseJson(Kernel::Clause* clause, std::string& result);
+  bool certificateSubstitutedEqualityLiteralJson(Kernel::Literal* literal, const Kernel::Substitution& substitution, bool swapEquality, std::string& result);
   bool certificateSubstitutedLiteralPreservingEqualityJson(Kernel::Literal* literal, const Kernel::Substitution& substitution, std::string& result);
   bool certificateSubstitutedClausePreservingEqualityJson(Kernel::Clause* clause, const Kernel::Substitution& substitution, std::string& result);
   bool certificateDefinitionInputStepJson(Kernel::Unit* unit, std::string& result);
