@@ -2936,6 +2936,18 @@ bool MegalodonChecker::certificateEqualityResolutionStepJson(
     rendered = out.str();
     return true;
   };
+  auto jsonArray = [](const std::vector<std::string>& items) {
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << items[i];
+    }
+    out << ']';
+    return out.str();
+  };
 
   auto isNegativeReflexiveEquality = [&](Kernel::Literal* literal) {
     if (literal == nullptr
@@ -2950,9 +2962,8 @@ bool MegalodonChecker::certificateEqualityResolutionStepJson(
       && certificateTermJson(*substituted->nthArgument(1), rhs)
       && lhs == rhs;
   };
-  auto conclusionMatchesParentWithout = [&](Kernel::Literal* selectedLiteral) {
+  auto substitutedConclusionWithout = [&](Kernel::Literal* selectedLiteral, std::vector<std::string>& expected, std::vector<std::pair<std::string, std::string>>& symmetryCandidates) {
     bool foundSelected = false;
-    std::vector<std::string> expected;
     for (Kernel::Literal* literal : parent->iterLits()) {
       if (!foundSelected && literal == selectedLiteral) {
         foundSelected = true;
@@ -2963,11 +2974,24 @@ bool MegalodonChecker::certificateEqualityResolutionStepJson(
         return false;
       }
       expected.push_back(rendered);
+      if (literal->isEquality()) {
+        std::string swapped;
+        if (!certificateSubstitutedEqualityLiteralJson(literal, *selectedSubstitution, true, swapped)) {
+          return false;
+        }
+        if (rendered != swapped) {
+          symmetryCandidates.push_back({rendered, swapped});
+        }
+      }
     }
     if (!foundSelected) {
       return false;
     }
-    std::vector<std::string> actual;
+    std::sort(expected.begin(), expected.end());
+    expected.erase(std::unique(expected.begin(), expected.end()), expected.end());
+    return true;
+  };
+  auto normalizedActualClause = [&](std::vector<std::string>& actual) {
     for (Kernel::Literal* literal : unit->asClause()->iterLits()) {
       std::string rendered;
       if (!certificateLiteralJson(literal, rendered)) {
@@ -2975,16 +2999,45 @@ bool MegalodonChecker::certificateEqualityResolutionStepJson(
       }
       actual.push_back(rendered);
     }
-    std::sort(expected.begin(), expected.end());
-    expected.erase(std::unique(expected.begin(), expected.end()), expected.end());
     std::sort(actual.begin(), actual.end());
     actual.erase(std::unique(actual.begin(), actual.end()), actual.end());
-    return expected == actual;
+    return true;
+  };
+  auto canNormalizeBySymmetry = [&](const std::vector<std::string>& source, const std::vector<std::string>& actual, const std::vector<std::pair<std::string, std::string>>& symmetryCandidates, std::vector<std::pair<std::string, std::string>>& flips) {
+    std::vector<std::string> current = source;
+    flips.clear();
+    for (std::size_t guard = 0; current != actual && guard < symmetryCandidates.size(); ++guard) {
+      bool changed = false;
+      for (const auto& candidate : symmetryCandidates) {
+        if (std::find(actual.begin(), actual.end(), candidate.second) == actual.end()) {
+          continue;
+        }
+        auto currentIt = std::find(current.begin(), current.end(), candidate.first);
+        if (currentIt == current.end()) {
+          continue;
+        }
+        *currentIt = candidate.second;
+        std::sort(current.begin(), current.end());
+        current.erase(std::unique(current.begin(), current.end()), current.end());
+        flips.push_back(candidate);
+        changed = true;
+        break;
+      }
+      if (!changed) {
+        break;
+      }
+    }
+    return current == actual;
   };
   auto emitStep = [&](Kernel::Literal* selectedLiteral) {
-    bool reflexive = isNegativeReflexiveEquality(selectedLiteral);
-    bool conclusion = reflexive && conclusionMatchesParentWithout(selectedLiteral);
-    if (!reflexive || !conclusion) {
+    if (!isNegativeReflexiveEquality(selectedLiteral)) {
+      return false;
+    }
+    std::vector<std::string> expected;
+    std::vector<std::pair<std::string, std::string>> symmetryCandidates;
+    std::vector<std::string> actual;
+    if (!substitutedConclusionWithout(selectedLiteral, expected, symmetryCandidates)
+      || !normalizedActualClause(actual)) {
       return false;
     }
 
@@ -2997,11 +3050,54 @@ bool MegalodonChecker::certificateEqualityResolutionStepJson(
       return false;
     }
 
-    result = "{\"rule\":\"equality_resolution\","
+    std::string stepBase = "u" + std::to_string(unit->number());
+    std::string equalityResolutionStep =
+      "{\"rule\":\"equality_resolution\","
       "\"parents\":["
       + quote("u" + std::to_string(parent->number())) + "],"
       "\"literal\":" + literal + ","
       "\"substitution\":" + substitution + "}";
+    if (expected == actual) {
+      result = equalityResolutionStep;
+      return true;
+    }
+
+    std::vector<std::pair<std::string, std::string>> flips;
+    if (!canNormalizeBySymmetry(expected, actual, symmetryCandidates, flips)) {
+      return false;
+    }
+
+    std::vector<std::string> steps;
+    std::string currentStepId = stepBase + "_eqres";
+    steps.push_back(
+      "{\"id\":" + quote(currentStepId) + ","
+      "\"rule\":\"equality_resolution\","
+      "\"parents\":[" + quote("u" + std::to_string(parent->number())) + "],"
+      "\"literal\":" + literal + ","
+      "\"substitution\":" + substitution + ","
+      "\"clause\":" + jsonArray(expected) + "}");
+    std::vector<std::string> currentClause = expected;
+    for (std::size_t index = 0; index < flips.size(); ++index) {
+      const auto& flip = flips[index];
+      auto literalIt = std::find(currentClause.begin(), currentClause.end(), flip.first);
+      if (literalIt == currentClause.end()) {
+        return false;
+      }
+      *literalIt = flip.second;
+      std::sort(currentClause.begin(), currentClause.end());
+      currentClause.erase(std::unique(currentClause.begin(), currentClause.end()), currentClause.end());
+      std::string normalizeStepId = index + 1 == flips.size()
+        ? stepBase
+        : stepBase + "_normalize" + std::to_string(index);
+      steps.push_back(
+        "{\"id\":" + quote(normalizeStepId) + ","
+        "\"rule\":\"equality_symmetry\","
+        "\"parents\":[" + quote(currentStepId) + "],"
+        "\"literal\":" + flip.first + ","
+        "\"clause\":" + jsonArray(currentClause) + "}");
+      currentStepId = normalizeStepId;
+    }
+    result = jsonArray(steps);
     return true;
   };
 
@@ -6352,10 +6448,17 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
           << certificateStep
           << ").\n";
     } else if (certificateEqualityResolutionStepJson(u, replayInfo, certificateStep)) {
-      out << "megalodon_certificate_step("
-          << u->number() << ','
-          << certificateStep
-          << ").\n";
+      if (!certificateStep.empty() && certificateStep.front() == '[') {
+        out << "megalodon_certificate_steps("
+            << u->number() << ','
+            << certificateStep
+            << ").\n";
+      } else {
+        out << "megalodon_certificate_step("
+            << u->number() << ','
+            << certificateStep
+            << ").\n";
+      }
     } else if (certificateFactorStepJson(u, certificateStep)) {
       out << "megalodon_certificate_step("
           << u->number() << ','
