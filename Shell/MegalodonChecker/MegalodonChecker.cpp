@@ -5186,6 +5186,12 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepsJson(Kernel::Unit
         std::string stepBase = "u" + std::to_string(unit->number());
 
         std::vector<std::string> sideCurrent;
+        struct SideSymmetryOperation {
+          std::size_t literalIndex;
+          std::string literal;
+          std::string swapped;
+        };
+        std::vector<SideSymmetryOperation> sideSymmetries;
         std::vector<std::string> resolvedExpected;
         bool skippedSidePivot = false;
         bool canExpandAsPrimitiveSteps = true;
@@ -5203,18 +5209,30 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepsJson(Kernel::Unit
         if (canExpandAsPrimitiveSteps) {
           for (Kernel::Literal* literal : sideParent->iterLits()) {
             std::string rendered;
-            if (literal == sideLiteral && needsSideSymmetry) {
-              rendered = swappedSideLiteralJson;
-            } else if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, sideSubstitution, rendered)) {
+            if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, sideSubstitution, rendered)) {
               canExpandAsPrimitiveSteps = false;
               break;
+            }
+            std::string current = rendered;
+            if (literal == sideLiteral && needsSideSymmetry) {
+              current = swappedSideLiteralJson;
+              sideSymmetries.push_back({sideCurrent.size(), rendered, swappedSideLiteralJson});
+            } else if (literal != sideLiteral
+              && !std::binary_search(actual.begin(), actual.end(), rendered)
+              && literal->isEquality()) {
+              std::string swapped;
+              if (certificateSubstitutedEqualityLiteralJson(literal, sideSubstitution, true, swapped)
+                && std::binary_search(actual.begin(), actual.end(), swapped)) {
+                current = swapped;
+                sideSymmetries.push_back({sideCurrent.size(), rendered, swapped});
+              }
             }
             sideCurrent.push_back(rendered);
             if (!skippedSidePivot && literal == sideLiteral) {
               skippedSidePivot = true;
               continue;
             }
-            resolvedExpected.push_back(rendered);
+            resolvedExpected.push_back(current);
           }
         }
         if (canExpandAsPrimitiveSteps && skippedSidePivot) {
@@ -5236,14 +5254,17 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepsJson(Kernel::Unit
                 "\"clause\":" + substitutedClauseJson + "}");
               currentSideParentId = substituteId;
             }
-            if (needsSideSymmetry) {
-              std::string sideSymmetryClauseJson = jsonArray(sideCurrent);
-              std::string symmetryId = stepBase + "_side_symmetry";
+            std::vector<std::string> sideSymmetryState = sideCurrent;
+            for (std::size_t symmetryIndex = 0; symmetryIndex < sideSymmetries.size(); ++symmetryIndex) {
+              const SideSymmetryOperation& operation = sideSymmetries[symmetryIndex];
+              sideSymmetryState[operation.literalIndex] = operation.swapped;
+              std::string sideSymmetryClauseJson = jsonArray(sideSymmetryState);
+              std::string symmetryId = stepBase + "_side_symmetry" + std::to_string(symmetryIndex);
               steps.push_back(
                 "{\"id\":" + quote(symmetryId) + ","
                 "\"rule\":\"equality_symmetry\","
                 "\"parents\":[" + quote(currentSideParentId) + "],"
-                "\"literal\":" + sideLiteralJson + ","
+                "\"literal\":" + operation.literal + ","
                 "\"clause\":" + sideSymmetryClauseJson + "}");
               currentSideParentId = symmetryId;
             }
