@@ -1148,6 +1148,52 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
   }
 
+  if (isNormalFormRule(u->inference().rule()) && u->isClause()) {
+    UnitIterator parentIterator = u->getParents();
+    if (parentIterator.hasNext()) {
+      Kernel::Unit* parent = parentIterator.next();
+      if (parent->isClause()) {
+        std::vector<std::string> fields;
+        fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
+        fields.push_back("parent_unit=" + std::to_string(parent->number()));
+
+        std::string sourceClause;
+        if (certificateClauseJson(parent->asClause(), sourceClause)) {
+          fields.push_back("source_clause=" + sourceClause);
+        } else {
+          fields.push_back("source_clause_conversion_failed=1");
+        }
+
+        std::string targetClause;
+        if (certificateClauseJson(u->asClause(), targetClause)) {
+          fields.push_back("target_clause=" + targetClause);
+        } else {
+          fields.push_back("target_clause_conversion_failed=1");
+        }
+
+        std::string sourceProposition;
+        if (renderClauseForExtra(parent->asClause(), sourceProposition)) {
+          fields.push_back("source_proposition=" + sourceProposition);
+        } else {
+          fields.push_back("source_proposition_conversion_failed=1");
+        }
+
+        std::string targetProposition;
+        if (renderClauseForExtra(u->asClause(), targetProposition)) {
+          fields.push_back("target_proposition=" + targetProposition);
+        } else {
+          fields.push_back("target_proposition_conversion_failed=1");
+        }
+
+        addClauseVariableSortFields(fields, "source", parent->asClause());
+        addClauseVariableSortFields(fields, "target", u->asClause());
+        addLambdaSubtermFields(fields, "source", parent->asClause(), nullptr);
+        addLambdaSubtermFields(fields, "target", u->asClause(), nullptr);
+        emit("normal_form_clause", fields);
+      }
+    }
+  }
+
   if (u->inference().rule() == Kernel::InferenceRule::RECTIFY && !u->isClause()) {
     const auto* genericInfo = InferenceRecorder::instance()->getGenericLastInferenceInformation();
     const auto* rectifyInfo = static_cast<const InferenceRecorder::RectifyInferenceExtra*>(genericInfo);
