@@ -49,23 +49,11 @@ MegalodonChecker::~MegalodonChecker()
 
 bool MegalodonChecker::inferenceNeedsReplayInformation(const Kernel::InferenceRule& rule) const
 {
-  switch (rule) {
-    case Kernel::InferenceRule::RESOLUTION:
-    case Kernel::InferenceRule::FACTORING:
-    case Kernel::InferenceRule::EQUALITY_RESOLUTION:
-    case Kernel::InferenceRule::EQUALITY_RESOLUTION_WITH_DELETION:
-    case Kernel::InferenceRule::EQUALITY_FACTORING:
-    case Kernel::InferenceRule::SUPERPOSITION:
-    case Kernel::InferenceRule::FORWARD_DEMODULATION:
-    case Kernel::InferenceRule::BACKWARD_DEMODULATION:
-    case Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION:
-    case Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION:
-    case Kernel::InferenceRule::UNIT_RESULTING_RESOLUTION:
-    case Kernel::InferenceRule::RECTIFY:
-      return true;
-    default:
-      return false;
-  }
+  (void)rule;
+  // The Megalodon proof outline is consumed by an external checker and should not
+  // mutate Vampire's active-clause indexes while printing. Direct ProofExtra
+  // records still provide the rule-specific source/target/rewrite metadata.
+  return false;
 }
 
 std::string MegalodonChecker::replayKind(const Kernel::InferenceRule& rule) const
