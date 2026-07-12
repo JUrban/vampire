@@ -1380,13 +1380,23 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       Kernel::Unit* parent = parentIterator.next();
       std::vector<std::string> fields;
       fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
+      fields.push_back("parent_unit=" + std::to_string(parent->number()));
+      fields.push_back(std::string("parent_kind=") + (parent->isClause() ? "clause" : "formula"));
       std::string sourceText;
       if (renderUnitForExtra(parent, sourceText)) {
         fields.push_back("source=" + sourceText);
+        fields.push_back("source_proposition=" + sourceText);
       }
       std::string targetText;
       if (renderUnitForExtra(u, targetText)) {
         fields.push_back("target=" + targetText);
+        fields.push_back("target_proposition=" + targetText);
+      }
+      std::string targetClause;
+      if (certificateClauseJson(u->asClause(), targetClause)) {
+        fields.push_back("target_clause=" + targetClause);
+      } else {
+        fields.push_back("target_clause_conversion_failed=1");
       }
       if (!u->asClause()->isEmpty()) {
         fields.push_back("target_literal_count=" + std::to_string(u->asClause()->length()));
@@ -1404,6 +1414,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const auto* cnfExtra = static_cast<const Inferences::CNFTransformationInferenceExtra*>(parentExtra);
         fields.push_back("parent_clause_count=" + std::to_string(cnfExtra->number));
       }
+      addClauseVariableSortFields(fields, "target", u->asClause());
+      addLambdaSubtermFields(fields, "target", u->asClause(), nullptr);
       emit("cnf", fields);
     }
   }
