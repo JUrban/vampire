@@ -5566,6 +5566,118 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepsJson(Kernel::Unit
     return false;
   }
 
+  auto matchTerm = [&](auto&& self, Kernel::TermList pattern, Kernel::TermList target, std::map<unsigned, Kernel::TermList>& bindings) -> bool {
+    if (pattern.isVar()) {
+      auto existing = bindings.find(pattern.var());
+      if (existing == bindings.end()) {
+        bindings.emplace(pattern.var(), target);
+        return true;
+      }
+      return existing->second == target;
+    }
+    if (!pattern.isTerm() || !target.isTerm()) {
+      return pattern == target;
+    }
+    Kernel::Term* patternTerm = pattern.term();
+    Kernel::Term* targetTerm = target.term();
+    if (patternTerm->functor() != targetTerm->functor()
+      || patternTerm->arity() != targetTerm->arity()) {
+      return false;
+    }
+    for (unsigned index = 0; index < patternTerm->arity(); ++index) {
+      if (!self(self, *patternTerm->nthArgument(index), *targetTerm->nthArgument(index), bindings)) {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto matchLiteralOriented = [&](Kernel::Literal* pattern, Kernel::Literal* target, bool samePolarity, bool reverseEquality, std::map<unsigned, Kernel::TermList>& bindings) {
+    if ((pattern->polarity() == target->polarity()) != samePolarity) {
+      return false;
+    }
+    if (pattern->isEquality() != target->isEquality()) {
+      return false;
+    }
+    if (pattern->isEquality()) {
+      if (!matchTerm(matchTerm,
+          Kernel::SortHelper::getEqualityArgumentSort(pattern),
+          Kernel::SortHelper::getEqualityArgumentSort(target),
+          bindings)) {
+        return false;
+      }
+      Kernel::TermList targetLeft = *target->nthArgument(reverseEquality ? 1 : 0);
+      Kernel::TermList targetRight = *target->nthArgument(reverseEquality ? 0 : 1);
+      return matchTerm(matchTerm, *pattern->nthArgument(0), targetLeft, bindings)
+        && matchTerm(matchTerm, *pattern->nthArgument(1), targetRight, bindings);
+    }
+    if (pattern->functor() != target->functor()
+      || pattern->arity() != target->arity()) {
+      return false;
+    }
+    for (unsigned index = 0; index < pattern->arity(); ++index) {
+      if (!matchTerm(matchTerm, *pattern->nthArgument(index), *target->nthArgument(index), bindings)) {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto matchLiteral = [&](Kernel::Literal* pattern, Kernel::Literal* target, bool samePolarity, std::map<unsigned, Kernel::TermList>& bindings) {
+    std::map<unsigned, Kernel::TermList> trial = bindings;
+    if (matchLiteralOriented(pattern, target, samePolarity, false, trial)) {
+      bindings = std::move(trial);
+      return true;
+    }
+    if (pattern->isEquality()) {
+      trial = bindings;
+      if (matchLiteralOriented(pattern, target, samePolarity, true, trial)) {
+        bindings = std::move(trial);
+        return true;
+      }
+    }
+    return false;
+  };
+  auto fallbackSideSubstitution = [&](Kernel::Clause* sideParent, Kernel::Literal* selectedLiteral, Kernel::Substitution& sideSubstitution) {
+    for (unsigned pivotIndex = 0; pivotIndex < sideParent->length(); ++pivotIndex) {
+      Kernel::Literal* sidePivot = (*sideParent)[pivotIndex];
+      std::map<unsigned, Kernel::TermList> pivotBindings;
+      if (!matchLiteral(sidePivot, selectedLiteral, false, pivotBindings)) {
+        continue;
+      }
+
+      std::function<bool(unsigned, std::map<unsigned, Kernel::TermList>&)> matchRemainder =
+        [&](unsigned sideIndex, std::map<unsigned, Kernel::TermList>& bindings) {
+          if (sideIndex == sideParent->length()) {
+            return true;
+          }
+          if (sideIndex == pivotIndex) {
+            return matchRemainder(sideIndex + 1, bindings);
+          }
+          Kernel::Literal* sideLiteral = (*sideParent)[sideIndex];
+          for (Kernel::Literal* conclusionLiteral : unit->asClause()->iterLits()) {
+            std::map<unsigned, Kernel::TermList> trial = bindings;
+            if (!matchLiteral(sideLiteral, conclusionLiteral, true, trial)) {
+              continue;
+            }
+            if (matchRemainder(sideIndex + 1, trial)) {
+              bindings = std::move(trial);
+              return true;
+            }
+          }
+          return false;
+        };
+
+      std::map<unsigned, Kernel::TermList> bindings = std::move(pivotBindings);
+      if (!matchRemainder(0, bindings)) {
+        continue;
+      }
+      for (const auto& binding : bindings) {
+        sideSubstitution.rebind(binding.first, binding.second);
+      }
+      return true;
+    }
+    return false;
+  };
+
   for (std::size_t mainParentIndex = 0; mainParentIndex < 2; ++mainParentIndex) {
     Kernel::Clause* mainParent = parents[mainParentIndex];
     std::size_t sideParentIndex = mainParentIndex == 0 ? 1 : 0;
@@ -5578,10 +5690,15 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepsJson(Kernel::Unit
       unsigned selectedLiteralIndex = i;
 
       SATSubsumption::SATSubsumptionAndResolution satSR;
-      if (!satSR.checkSubsumptionResolutionWithLiteral(sideParent, mainParent, selectedLiteralIndex)) {
+      Kernel::Substitution sideSubstitution;
+      bool foundSideSubstitution = fallbackSideSubstitution(sideParent, selectedLiteral, sideSubstitution);
+      if (!foundSideSubstitution && satSR.checkSubsumptionResolutionWithLiteral(sideParent, mainParent, selectedLiteralIndex)) {
+        sideSubstitution = satSR.getBindingsForSubsumptionResolutionWithLiteral();
+        foundSideSubstitution = true;
+      }
+      if (!foundSideSubstitution) {
         continue;
       }
-      Kernel::Substitution sideSubstitution = satSR.getBindingsForSubsumptionResolutionWithLiteral();
       std::string sideSubstitutionJson;
       if (!certificateSubstitutionJson(sideSubstitution, sideSubstitutionJson)) {
         continue;
