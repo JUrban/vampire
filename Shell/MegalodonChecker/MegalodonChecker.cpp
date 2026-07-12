@@ -3169,9 +3169,6 @@ bool MegalodonChecker::certificateEqualityResolutionStepJson(
     return current == actual;
   };
   auto emitStep = [&](Kernel::Literal* selectedLiteral) {
-    if (!isNegativeReflexiveEquality(selectedLiteral)) {
-      return false;
-    }
     std::vector<std::string> expected;
     std::vector<std::pair<std::string, std::string>> symmetryCandidates;
     std::vector<std::string> actual;
@@ -3190,6 +3187,31 @@ bool MegalodonChecker::certificateEqualityResolutionStepJson(
     }
 
     std::string stepBase = "u" + std::to_string(unit->number());
+    if (!isNegativeReflexiveEquality(selectedLiteral)) {
+      std::vector<std::string> constraints;
+      std::vector<std::string> remainingActual = actual;
+      for (const std::string& literalJson : expected) {
+        auto literalIt = std::find(remainingActual.begin(), remainingActual.end(), literalJson);
+        if (literalIt == remainingActual.end()) {
+          return false;
+        }
+        remainingActual.erase(literalIt);
+      }
+      constraints = remainingActual;
+      if (constraints.empty()) {
+        return false;
+      }
+      result =
+        "{\"rule\":\"equality_resolution_constraints\","
+        "\"parents\":["
+        + quote("u" + std::to_string(parent->number())) + "],"
+        "\"literal\":" + literal + ","
+        "\"substitution\":" + substitution + ","
+        "\"constraints\":" + jsonArray(constraints) + ","
+        "\"clause\":" + jsonArray(actual) + "}";
+      return true;
+    }
+
     std::string equalityResolutionStep =
       "{\"rule\":\"equality_resolution\","
       "\"parents\":["
