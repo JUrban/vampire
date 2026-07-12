@@ -49,11 +49,12 @@ MegalodonChecker::~MegalodonChecker()
 
 bool MegalodonChecker::inferenceNeedsReplayInformation(const Kernel::InferenceRule& rule) const
 {
-  (void)rule;
-  // The Megalodon proof outline is consumed by an external checker and should not
-  // mutate Vampire's active-clause indexes while printing. Direct ProofExtra
-  // records still provide the rule-specific source/target/rewrite metadata.
-  return false;
+  switch (rule) {
+    case Kernel::InferenceRule::RESOLUTION:
+      return true;
+    default:
+      return false;
+  }
 }
 
 std::string MegalodonChecker::replayKind(const Kernel::InferenceRule& rule) const
@@ -3323,6 +3324,220 @@ bool MegalodonChecker::certificateParamodulateThenSymmetryStepsJson(Kernel::Unit
   return false;
 }
 
+bool MegalodonChecker::certificateSubstitutedResolutionStepsJson(
+  Kernel::Unit* unit,
+  const InferenceRecorder::InferenceInformation* replayInfo,
+  std::string& result)
+{
+  if (!unit->isClause()
+    || unit->inference().rule() != Kernel::InferenceRule::RESOLUTION
+    || replayInfo == nullptr
+    || replayInfo->premises.size() != 2
+    || replayInfo->substitutionForBanksSub.size() != 2) {
+    return false;
+  }
+  const auto* extra = env.proofExtra.find(unit);
+  if (extra == nullptr) {
+    return false;
+  }
+  const auto* selected = static_cast<const Inferences::TwoLiteralInferenceExtra*>(extra);
+
+  std::vector<Kernel::Clause*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    if (parent->isClause()) {
+      parents.push_back(parent->asClause());
+    }
+  }
+  if (parents.size() != 2 || parents[0] != replayInfo->premises[0] || parents[1] != replayInfo->premises[1]) {
+    return false;
+  }
+
+  auto containsLiteral = [](Kernel::Clause* clause, Kernel::Literal* literal) {
+    if (literal == nullptr) {
+      return false;
+    }
+    for (unsigned i = 0; i < clause->length(); ++i) {
+      if ((*clause)[i] == literal) {
+        return true;
+      }
+    }
+    return false;
+  };
+  auto jsonArray = [](const std::vector<std::string>& items) {
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << items[i];
+    }
+    out << ']';
+    return out.str();
+  };
+  auto certificateSubstitutionJson = [&](const Kernel::Substitution& substitution, std::string& rendered) {
+    std::vector<std::pair<unsigned, std::string>> items;
+    Kernel::Substitution substitutionCopy = substitution;
+    for (auto [var, term] : iterTraits(substitutionCopy.items())) {
+      if (term.isVar() && term.var() == var) {
+        continue;
+      }
+      std::string termJson;
+      if (!certificateTermJson(term, termJson)) {
+        return false;
+      }
+      items.push_back({var, quote(variableName(var)) + ":" + termJson});
+    }
+    std::sort(items.begin(), items.end(), [](const auto& left, const auto& right) {
+      return left.first < right.first;
+    });
+    std::ostringstream out;
+    out << '{';
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << items[i].second;
+    }
+    out << '}';
+    rendered = out.str();
+    return true;
+  };
+  auto substitutedClauseJson = [&](Kernel::Clause* clause, const Kernel::Substitution& substitution, std::string& rendered) {
+    std::ostringstream out;
+    out << '[';
+    for (unsigned i = 0; i < clause->length(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      std::string literalJson;
+      Kernel::Literal* literal = Kernel::SubstHelper::apply((*clause)[i], substitution);
+      if (!certificateLiteralJson(literal, literalJson)) {
+        return false;
+      }
+      out << literalJson;
+    }
+    out << ']';
+    rendered = out.str();
+    return true;
+  };
+  auto normalizedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
+    for (Kernel::Literal* literal : clause->iterLits()) {
+      std::string literalJson;
+      if (!certificateLiteralJson(literal, literalJson)) {
+        return false;
+      }
+      literals.push_back(literalJson);
+    }
+    std::sort(literals.begin(), literals.end());
+    literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
+    return true;
+  };
+  auto orientation = [&](Kernel::Literal* leftPivot, std::size_t leftIndex, Kernel::Literal* rightPivot, std::size_t rightIndex, std::string& rendered) {
+    if (!containsLiteral(parents[leftIndex], leftPivot) || !containsLiteral(parents[rightIndex], rightPivot)) {
+      return false;
+    }
+    Kernel::Literal* leftSubstituted = Kernel::SubstHelper::apply(leftPivot, replayInfo->substitutionForBanksSub[leftIndex]);
+    Kernel::Literal* rightSubstituted = Kernel::SubstHelper::apply(rightPivot, replayInfo->substitutionForBanksSub[rightIndex]);
+    if (leftSubstituted->isPositive() == rightSubstituted->isPositive()) {
+      return false;
+    }
+    std::string leftAtom;
+    std::string rightAtom;
+    if (!certificateAtomJson(leftSubstituted, leftAtom)
+      || !certificateAtomJson(rightSubstituted, rightAtom)
+      || leftAtom != rightAtom) {
+      return false;
+    }
+
+    std::vector<std::string> expected;
+    for (std::size_t parentIndex = 0; parentIndex < 2; ++parentIndex) {
+      Kernel::Literal* excluded = parentIndex == leftIndex ? leftPivot : rightPivot;
+      bool skipped = false;
+      for (unsigned i = 0; i < parents[parentIndex]->length(); ++i) {
+        Kernel::Literal* literal = (*parents[parentIndex])[i];
+        if (!skipped && literal == excluded) {
+          skipped = true;
+          continue;
+        }
+        std::string literalJson;
+        Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, replayInfo->substitutionForBanksSub[parentIndex]);
+        if (!certificateLiteralJson(substituted, literalJson)) {
+          return false;
+        }
+        expected.push_back(literalJson);
+      }
+      if (!skipped) {
+        return false;
+      }
+    }
+    std::sort(expected.begin(), expected.end());
+    expected.erase(std::unique(expected.begin(), expected.end()), expected.end());
+    std::vector<std::string> actual;
+    if (!normalizedClause(unit->asClause(), actual) || expected != actual) {
+      return false;
+    }
+
+    std::vector<std::string> steps;
+    std::string stepBase = "u" + std::to_string(unit->number());
+    std::string leftParentId;
+    std::string rightParentId;
+    for (std::size_t parentIndex = 0; parentIndex < 2; ++parentIndex) {
+      std::string substitutionJson;
+      std::string clauseJson;
+      if (!certificateSubstitutionJson(replayInfo->substitutionForBanksSub[parentIndex], substitutionJson)
+        || !substitutedClauseJson(parents[parentIndex], replayInfo->substitutionForBanksSub[parentIndex], clauseJson)) {
+        return false;
+      }
+      std::string parentId = "u" + std::to_string(parents[parentIndex]->number());
+      if (substitutionJson != "{}") {
+        std::string substituteId = stepBase + "_subst" + std::to_string(parentIndex);
+        steps.push_back(
+          "{\"id\":" + quote(substituteId) + ","
+          "\"rule\":\"substitute\","
+          "\"parents\":[" + quote(parentId) + "],"
+          "\"substitution\":" + substitutionJson + ","
+          "\"clause\":" + clauseJson + "}");
+        parentId = substituteId;
+      }
+      if (parentIndex == leftIndex) {
+        leftParentId = parentId;
+      } else {
+        rightParentId = parentId;
+      }
+    }
+
+    std::string pivotJson;
+    Kernel::Literal* leftSubstitutedPivot = Kernel::SubstHelper::apply(leftPivot, replayInfo->substitutionForBanksSub[leftIndex]);
+    if (!leftSubstitutedPivot->isPositive()) {
+      return false;
+    }
+    if (!certificateLiteralJson(leftSubstitutedPivot, pivotJson)) {
+      return false;
+    }
+    std::string conclusionJson;
+    if (!certificateClauseJson(unit->asClause(), conclusionJson)) {
+      return false;
+    }
+    steps.push_back(
+      "{\"id\":" + quote(stepBase) + ","
+      "\"rule\":\"resolve\","
+      "\"parents\":[" + quote(leftParentId) + "," + quote(rightParentId) + "],"
+      "\"pivot\":" + pivotJson + ","
+      "\"clause\":" + conclusionJson + "}");
+    rendered = jsonArray(steps);
+    return true;
+  };
+
+  if (orientation(selected->selectedLiteral.selectedLiteral, 0, selected->otherLiteral, 1, result)) {
+    return true;
+  }
+  if (orientation(selected->otherLiteral, 1, selected->selectedLiteral.selectedLiteral, 0, result)) {
+    return true;
+  }
+  return false;
+}
+
 bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, std::string& result)
 {
   std::map<unsigned, Kernel::TermList> substitution;
@@ -5584,6 +5799,11 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
           << ").\n";
     } else if (certificateResolveStepJson(u, certificateStep)) {
       out << "megalodon_certificate_step("
+          << u->number() << ','
+          << certificateStep
+          << ").\n";
+    } else if (certificateSubstitutedResolutionStepsJson(u, replayInfo, certificateStep)) {
+      out << "megalodon_certificate_steps("
           << u->number() << ','
           << certificateStep
           << ").\n";
