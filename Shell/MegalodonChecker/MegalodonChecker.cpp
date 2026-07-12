@@ -7578,9 +7578,23 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
   }
   bool hasNontrivialReplaySubstitution = false;
   if (replayInfo != nullptr) {
-    for (const auto& substitution : replayInfo->substitutionForBanksSub) {
+    for (std::size_t premiseIndex = 0;
+         premiseIndex < replayInfo->premises.size()
+           && premiseIndex < replayInfo->substitutionForBanksSub.size();
+         ++premiseIndex) {
+      std::set<unsigned> premiseVariables;
+      for (Kernel::Literal* literal : replayInfo->premises[premiseIndex]->iterLits()) {
+        Kernel::TermVarIterator variables(literal);
+        while (variables.hasNext()) {
+          premiseVariables.insert(variables.next());
+        }
+      }
+      const auto& substitution = replayInfo->substitutionForBanksSub[premiseIndex];
       Kernel::Substitution substitutionCopy = substitution;
       for (auto [var, term] : iterTraits(substitutionCopy.items())) {
+        if (premiseVariables.find(var) == premiseVariables.end()) {
+          continue;
+        }
         if (!term.isVar() || term.var() != var) {
           hasNontrivialReplaySubstitution = true;
           break;
