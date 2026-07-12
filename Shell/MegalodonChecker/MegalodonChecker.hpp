@@ -56,6 +56,7 @@ private:
   bool certificateParamodulateStepJson(Kernel::Unit* unit, std::string& result);
   bool certificateParamodulateThenSymmetryStepsJson(Kernel::Unit* unit, std::string& result);
   bool certificateSubstitutedResolutionStepsJson(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
+  bool certificateSatSubsumptionResolutionStepsJson(Kernel::Unit* unit, std::string& result);
   bool certificateSuperpositionStepsJson(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool signedNameToMegalodon(const std::string& name, std::string& result);
   std::string recoverMegalodonSymbolName(const std::string& tptpName, const std::string& fallbackPrefix);
