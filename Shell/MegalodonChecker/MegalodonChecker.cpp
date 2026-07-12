@@ -4108,49 +4108,41 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     }
     return skipped;
   };
-  auto findTermPosition = [&](auto&& self, Kernel::TermList term, Kernel::TermList needle, std::vector<unsigned>& position) -> bool {
+  auto collectTermPositions = [&](auto&& self, Kernel::TermList term, Kernel::TermList needle, std::vector<unsigned>& current, std::vector<std::vector<unsigned>>& positions) -> void {
     if (term == needle) {
-      return true;
+      positions.push_back(current);
+      return;
     }
     if (term.isApplication()) {
-      position.push_back(0);
-      if (self(self, term.lhs(), needle, position)) {
-        return true;
-      }
-      position.back() = 1;
-      if (self(self, term.rhs(), needle, position)) {
-        return true;
-      }
-      position.pop_back();
-      return false;
+      current.push_back(0);
+      self(self, term.lhs(), needle, current, positions);
+      current.back() = 1;
+      self(self, term.rhs(), needle, current, positions);
+      current.pop_back();
+      return;
     }
     if (!term.isTerm() || term.term()->isSpecial()) {
-      return false;
+      return;
     }
     Kernel::Term* t = term.term();
     for (unsigned i = 0; i < t->numTermArguments(); ++i) {
-      position.push_back(i);
-      if (self(self, t->termArg(i), needle, position)) {
-        return true;
-      }
-      position.pop_back();
+      current.push_back(i);
+      self(self, t->termArg(i), needle, current, positions);
+      current.pop_back();
     }
-    return false;
   };
-  auto findPrintedSubstitutedLiteralAtomPosition = [&](Kernel::Literal* literal, const Kernel::Substitution& substitution, Kernel::TermList needle, std::vector<unsigned>& position) {
+  auto collectPrintedSubstitutedLiteralAtomPositions = [&](Kernel::Literal* literal, const Kernel::Substitution& substitution, Kernel::TermList needle, std::vector<std::vector<unsigned>>& positions) {
     Kernel::Literal* indexed = literal->isEquality()
       ? literal
       : (literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal));
     unsigned arity = indexed->isEquality() ? 2 : indexed->arity();
     for (unsigned i = 0; i < arity; ++i) {
       Kernel::TermList argument = Kernel::SubstHelper::apply(*indexed->nthArgument(i), substitution);
+      std::vector<unsigned> position;
       position.push_back(i);
-      if (findTermPosition(findTermPosition, argument, needle, position)) {
-        return true;
-      }
-      position.pop_back();
+      collectTermPositions(collectTermPositions, argument, needle, position, positions);
     }
-    return false;
+    return !positions.empty();
   };
   auto positionJson = [](const std::vector<unsigned>& position) {
     std::ostringstream out;
@@ -4160,6 +4152,18 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
         out << ',';
       }
       out << position[i];
+    }
+    out << ']';
+    return out.str();
+  };
+  auto positionsJson = [&](const std::vector<std::vector<unsigned>>& positions) {
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t i = 0; i < positions.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << positionJson(positions[i]);
     }
     out << ']';
     return out.str();
@@ -4242,10 +4246,9 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
   };
 
   Kernel::Literal* substitutedEquality = Kernel::SubstHelper::apply(equalityLiteral, replayInfo->substitutionForBanksSub[equalityParentIndex]);
-  Kernel::Literal* substitutedTarget = Kernel::SubstHelper::apply(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex]);
   Kernel::TermList from = Kernel::SubstHelper::apply(rewrite->rewrite.lhs, replayInfo->substitutionForBanksSub[equalityParentIndex]);
   Kernel::TermList targetRedex = Kernel::SubstHelper::apply(rewrite->rewrite.rewritten, replayInfo->substitutionForBanksSub[targetParentIndex]);
-  if (from != targetRedex || substitutedTarget->countSubtermOccurrences(targetRedex) != 1) {
+  if (from != targetRedex) {
     return false;
   }
 
@@ -4258,10 +4261,12 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     return false;
   }
 
-  std::vector<unsigned> position;
-  if (!findPrintedSubstitutedLiteralAtomPosition(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], targetRedex, position)) {
+  std::vector<std::vector<unsigned>> redexPositions;
+  if (!collectPrintedSubstitutedLiteralAtomPositions(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], targetRedex, redexPositions)) {
     return false;
   }
+  std::vector<unsigned> position = redexPositions.front();
+  bool simultaneousParamodulation = redexPositions.size() != 1;
 
   std::vector<std::string> paramClause;
   if (!appendSubstitutedClauseExcept(paramClause, targetParent, replayInfo->substitutionForBanksSub[targetParentIndex], targetLiteral)
@@ -4374,9 +4379,12 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
   }
   std::string paramodulateStepId = finalSymmetryFlips.empty() ? stepBase : stepBase + "_paramodulate";
   std::string paramodulateClauseJson = finalSymmetryFlips.empty() ? conclusionJson : jsonArray(paramClause);
+  std::string positionField = simultaneousParamodulation
+    ? "\"positions\":" + positionsJson(redexPositions) + ","
+    : "\"position\":" + positionJson(position) + ",";
   steps.push_back(
     "{\"id\":" + quote(paramodulateStepId) + ","
-    "\"rule\":\"paramodulate\","
+    "\"rule\":\"" + std::string(simultaneousParamodulation ? "paramodulate_all" : "paramodulate") + "\","
     "\"parents\":["
     + quote(equalityParentId) + ","
     + quote(parentIds[targetParentIndex]) + "],"
@@ -4384,8 +4392,8 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     "\"from\":" + fromJson + ","
     "\"to\":" + toJson + ","
     "\"target\":" + targetJson + ","
-    "\"position\":" + positionJson(position) + ","
-    "\"substitution\":{},"
+    + positionField
+    + "\"substitution\":{},"
     "\"clause\":" + paramodulateClauseJson + "}");
   std::string currentStepId = paramodulateStepId;
   std::vector<std::string> currentClause = paramClause;
