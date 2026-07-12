@@ -102,6 +102,7 @@ private:
   InferenceReplayer _replayer;
   std::map<unsigned, std::string> _functions;
   std::map<unsigned, std::string> _predicates;
+  std::map<unsigned, Kernel::Clause*> _avatarComponentBySatVar;
   std::set<std::string> _usedSymbolNames;
   bool _usesEquality = false;
   std::string _equalitySort;

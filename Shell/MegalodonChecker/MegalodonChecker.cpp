@@ -590,6 +590,73 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     return renderFormulaForExtra(unit->getFormula(), text);
   };
+  auto addClauseVariableSortFields = [&](std::vector<std::string>& fields, const std::string& prefix, Kernel::Clause* clause) {
+    Lib::DHMap<unsigned, Kernel::TermList> varSorts;
+    Kernel::SortHelper::collectVariableSorts(clause, varSorts);
+    std::vector<std::pair<unsigned, std::string>> rendered;
+    Lib::DHMap<unsigned, Kernel::TermList>::Iterator it(varSorts);
+    while (it.hasNext()) {
+      unsigned var;
+      Kernel::TermList sort;
+      it.next(var, sort);
+      std::string sortText;
+      if (sortToMegalodon(sort, sortText)) {
+        rendered.push_back({var, variableName(var) + ":" + sortText});
+      }
+    }
+    std::sort(rendered.begin(), rendered.end(), [](const auto& left, const auto& right) {
+      return left.first < right.first;
+    });
+    fields.push_back(prefix + "_variable_sort_count=" + std::to_string(rendered.size()));
+    for (std::size_t i = 0; i < rendered.size(); ++i) {
+      fields.push_back(prefix + "_variable_sort_" + std::to_string(i) + "=" + rendered[i].second);
+    }
+  };
+
+  if (u->inference().rule() == Kernel::InferenceRule::AVATAR_DEFINITION) {
+    const auto* splitExtraRaw = env.proofExtra.find(u);
+    if (splitExtraRaw != nullptr) {
+      const auto* splitExtra = static_cast<const SplitDefinitionExtra*>(splitExtraRaw);
+      if (splitExtra->component != nullptr && splitExtra->component->isComponent() && !splitExtra->component->noSplits()) {
+        unsigned componentLevel = splitExtra->component->splits()->sval();
+        SATLiteral componentLiteral = Splitter::getLiteralFromName(componentLevel);
+        _avatarComponentBySatVar[componentLiteral.var()] = splitExtra->component;
+        std::vector<std::string> fields;
+        fields.push_back("component_split_level=" + std::to_string(componentLevel));
+        fields.push_back("component_split_var=" + std::to_string(componentLiteral.var()));
+        fields.push_back(std::string("component_split_positive=") + (componentLiteral.positive() ? "1" : "0"));
+        std::string componentText;
+        if (renderClauseForExtra(splitExtra->component, componentText)) {
+          fields.push_back("component_clause=" + componentText);
+        }
+        addClauseVariableSortFields(fields, "component_clause", splitExtra->component);
+        emit("avatar_definition", fields);
+      }
+    }
+  }
+
+  if (u->isClause() && u->asClause()->splits() && !u->asClause()->splits()->isEmpty()) {
+    std::vector<std::string> fields;
+    unsigned dependencyIndex = 0;
+    for (unsigned split : iterTraits(u->asClause()->splits()->iter())) {
+      SATLiteral splitLiteral = Splitter::getLiteralFromName(split);
+      std::string prefix = "dependency_" + std::to_string(dependencyIndex);
+      fields.push_back(prefix + "_split_level=" + std::to_string(split));
+      fields.push_back(prefix + "_split_var=" + std::to_string(splitLiteral.var()));
+      fields.push_back(prefix + "_split_positive=" + (splitLiteral.positive() ? "1" : "0"));
+      auto component = _avatarComponentBySatVar.find(splitLiteral.var());
+      if (component != _avatarComponentBySatVar.end() && component->second != nullptr) {
+        std::string componentText;
+        if (renderClauseForExtra(component->second, componentText)) {
+          fields.push_back(prefix + "_component_clause=" + componentText);
+        }
+        addClauseVariableSortFields(fields, prefix + "_component_clause", component->second);
+      }
+      ++dependencyIndex;
+    }
+    fields.push_back("dependency_count=" + std::to_string(dependencyIndex));
+    emit("split_dependency", fields);
+  }
 
   if (u->inference().rule() == Kernel::InferenceRule::AVATAR_SPLIT_CLAUSE) {
     UnitIterator parents = u->getParents();
