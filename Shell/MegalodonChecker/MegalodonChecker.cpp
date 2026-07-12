@@ -2400,6 +2400,12 @@ bool MegalodonChecker::formulaToMegalodonReplacing(Kernel::Formula* formula, Ker
         if (!termToMegalodonReplacing(*literal->nthArgument(i), needle, replacement, arg)) {
           return false;
         }
+        if (literal->nthArgument(i)->isApplication()
+          || (literal->nthArgument(i)->isTerm()
+            && (literal->nthArgument(i)->term()->isSpecial()
+              || literal->nthArgument(i)->term()->numTermArguments() > 0))) {
+          arg = parenthesize(arg);
+        }
         out << ' ' << arg;
       }
       result = out.str();
@@ -2453,6 +2459,12 @@ bool MegalodonChecker::literalToMegalodon(Kernel::Literal* literal, std::string&
     std::string arg;
     if (!termToMegalodon(*literal->nthArgument(i), substitution, arg)) {
       return false;
+    }
+    if (literal->nthArgument(i)->isApplication()
+      || (literal->nthArgument(i)->isTerm()
+        && (literal->nthArgument(i)->term()->isSpecial()
+          || literal->nthArgument(i)->term()->numTermArguments() > 0))) {
+      arg = parenthesize(arg);
     }
     out << ' ' << arg;
   }
