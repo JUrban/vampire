@@ -3192,6 +3192,239 @@ bool MegalodonChecker::certificateEqualityResolutionStepJson(
   return false;
 }
 
+bool MegalodonChecker::certificateTruthConflictResolutionStepJson(
+  Kernel::Unit* unit,
+  const InferenceRecorder::InferenceInformation* replayInfo,
+  std::string& result)
+{
+  const Kernel::InferenceRule& rule = unit->inference().rule();
+  if (!unit->isClause()
+    || rule != Kernel::InferenceRule::TRIVIAL_INEQUALITY_REMOVAL) {
+    return false;
+  }
+
+  std::vector<Kernel::Clause*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    if (parent->isClause()) {
+      parents.push_back(parent->asClause());
+    }
+  }
+  if (parents.size() != 1) {
+    return false;
+  }
+  Kernel::Clause* parent = parents[0];
+  Kernel::Substitution emptySubstitution;
+  const Kernel::Substitution* selectedSubstitution = &emptySubstitution;
+  if (replayInfo != nullptr
+    && replayInfo->premises.size() == 1
+    && replayInfo->substitutionForBanksSub.size() == 1) {
+    selectedSubstitution = &replayInfo->substitutionForBanksSub[0];
+  }
+
+  auto certificateSubstitutionJson = [&](const Kernel::Substitution& substitution, std::string& rendered) {
+    std::vector<std::pair<unsigned, std::string>> items;
+    Kernel::Substitution substitutionCopy = substitution;
+    for (auto [var, term] : iterTraits(substitutionCopy.items())) {
+      if (term.isVar() && term.var() == var) {
+        continue;
+      }
+      std::string termJson;
+      if (!certificateTermJson(term, termJson)) {
+        return false;
+      }
+      items.push_back({var, quote(variableName(var)) + ":" + termJson});
+    }
+    std::sort(items.begin(), items.end(), [](const auto& left, const auto& right) {
+      return left.first < right.first;
+    });
+    std::ostringstream out;
+    out << '{';
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << items[i].second;
+    }
+    out << '}';
+    rendered = out.str();
+    return true;
+  };
+  auto jsonArray = [](const std::vector<std::string>& items) {
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << items[i];
+    }
+    out << ']';
+    return out.str();
+  };
+  auto isTruthConstant = [](const std::string& rendered, const std::string& name) {
+    return rendered == "{\"const\":\"" + name + "\"}";
+  };
+  auto isPositiveTruthConflict = [&](Kernel::Literal* literal) {
+    if (literal == nullptr
+      || !literal->isEquality()
+      || !literal->isPositive()) {
+      return false;
+    }
+    Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, *selectedSubstitution);
+    std::string lhs;
+    std::string rhs;
+    if (!certificateTermJson(*substituted->nthArgument(0), lhs)
+      || !certificateTermJson(*substituted->nthArgument(1), rhs)) {
+      return false;
+    }
+    return (isTruthConstant(lhs, "f__true") && isTruthConstant(rhs, "f__false"))
+      || (isTruthConstant(lhs, "f__false") && isTruthConstant(rhs, "f__true"));
+  };
+  auto substitutedConclusionWithout = [&](Kernel::Literal* selectedLiteral, std::vector<std::string>& expected, std::vector<std::pair<std::string, std::string>>& symmetryCandidates) {
+    bool foundSelected = false;
+    for (Kernel::Literal* literal : parent->iterLits()) {
+      if (!foundSelected && literal == selectedLiteral) {
+        foundSelected = true;
+        continue;
+      }
+      std::string rendered;
+      if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, *selectedSubstitution, rendered)) {
+        return false;
+      }
+      expected.push_back(rendered);
+      if (literal->isEquality()) {
+        std::string swapped;
+        if (!certificateSubstitutedEqualityLiteralJson(literal, *selectedSubstitution, true, swapped)) {
+          return false;
+        }
+        if (rendered != swapped) {
+          symmetryCandidates.push_back({rendered, swapped});
+        }
+      }
+    }
+    if (!foundSelected) {
+      return false;
+    }
+    std::sort(expected.begin(), expected.end());
+    expected.erase(std::unique(expected.begin(), expected.end()), expected.end());
+    return true;
+  };
+  auto normalizedActualClause = [&](std::vector<std::string>& actual) {
+    for (Kernel::Literal* literal : unit->asClause()->iterLits()) {
+      std::string rendered;
+      if (!certificateLiteralJson(literal, rendered)) {
+        return false;
+      }
+      actual.push_back(rendered);
+    }
+    std::sort(actual.begin(), actual.end());
+    actual.erase(std::unique(actual.begin(), actual.end()), actual.end());
+    return true;
+  };
+  auto canNormalizeBySymmetry = [&](const std::vector<std::string>& source, const std::vector<std::string>& actual, const std::vector<std::pair<std::string, std::string>>& symmetryCandidates, std::vector<std::pair<std::string, std::string>>& flips) {
+    std::vector<std::string> current = source;
+    flips.clear();
+    for (std::size_t guard = 0; current != actual && guard < symmetryCandidates.size(); ++guard) {
+      bool changed = false;
+      for (const auto& candidate : symmetryCandidates) {
+        if (std::find(actual.begin(), actual.end(), candidate.second) == actual.end()) {
+          continue;
+        }
+        auto currentIt = std::find(current.begin(), current.end(), candidate.first);
+        if (currentIt == current.end()) {
+          continue;
+        }
+        *currentIt = candidate.second;
+        std::sort(current.begin(), current.end());
+        current.erase(std::unique(current.begin(), current.end()), current.end());
+        flips.push_back(candidate);
+        changed = true;
+        break;
+      }
+      if (!changed) {
+        break;
+      }
+    }
+    return current == actual;
+  };
+  auto emitStep = [&](Kernel::Literal* selectedLiteral) {
+    if (!isPositiveTruthConflict(selectedLiteral)) {
+      return false;
+    }
+    std::vector<std::string> expected;
+    std::vector<std::pair<std::string, std::string>> symmetryCandidates;
+    std::vector<std::string> actual;
+    if (!substitutedConclusionWithout(selectedLiteral, expected, symmetryCandidates)
+      || !normalizedActualClause(actual)) {
+      return false;
+    }
+
+    std::string literal;
+    std::string substitution;
+    if (!certificateLiteralJson(selectedLiteral, literal)
+      || !certificateSubstitutionJson(*selectedSubstitution, substitution)) {
+      return false;
+    }
+
+    std::string stepBase = "u" + std::to_string(unit->number());
+    std::string truthConflictStep =
+      "{\"rule\":\"truth_conflict_resolution\","
+      "\"parents\":["
+      + quote("u" + std::to_string(parent->number())) + "],"
+      "\"literal\":" + literal + ","
+      "\"substitution\":" + substitution + "}";
+    if (expected == actual) {
+      result = truthConflictStep;
+      return true;
+    }
+
+    std::vector<std::pair<std::string, std::string>> flips;
+    if (!canNormalizeBySymmetry(expected, actual, symmetryCandidates, flips)) {
+      return false;
+    }
+
+    std::vector<std::string> steps;
+    std::string currentStepId = stepBase + "_truth_conflict";
+    steps.push_back(
+      "{\"id\":" + quote(currentStepId) + ","
+      "\"rule\":\"truth_conflict_resolution\","
+      "\"parents\":[" + quote("u" + std::to_string(parent->number())) + "],"
+      "\"literal\":" + literal + ","
+      "\"substitution\":" + substitution + ","
+      "\"clause\":" + jsonArray(expected) + "}");
+    std::vector<std::string> currentClause = expected;
+    for (std::size_t index = 0; index < flips.size(); ++index) {
+      const auto& flip = flips[index];
+      auto literalIt = std::find(currentClause.begin(), currentClause.end(), flip.first);
+      if (literalIt == currentClause.end()) {
+        return false;
+      }
+      *literalIt = flip.second;
+      std::sort(currentClause.begin(), currentClause.end());
+      currentClause.erase(std::unique(currentClause.begin(), currentClause.end()), currentClause.end());
+      std::string normalizeStepId = index + 1 == flips.size()
+        ? stepBase
+        : stepBase + "_normalize" + std::to_string(index);
+      steps.push_back(
+        "{\"id\":" + quote(normalizeStepId) + ","
+        "\"rule\":\"equality_symmetry\","
+        "\"parents\":[" + quote(currentStepId) + "],"
+        "\"literal\":" + flip.first + ","
+        "\"clause\":" + jsonArray(currentClause) + "}");
+      currentStepId = normalizeStepId;
+    }
+    result = jsonArray(steps);
+    return true;
+  };
+
+  for (Kernel::Literal* literal : parent->iterLits()) {
+    if (emitStep(literal)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool MegalodonChecker::certificateFactorStepJson(Kernel::Unit* unit, std::string& result)
 {
   const Kernel::InferenceRule& rule = unit->inference().rule();
@@ -9004,6 +9237,18 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
           << certificateStep
           << ").\n";
     } else if (certificateSatSubsumptionResolutionStepsJson(u, certificateStep)) {
+      if (!certificateStep.empty() && certificateStep.front() == '[') {
+        out << "megalodon_certificate_steps("
+            << u->number() << ','
+            << certificateStep
+            << ").\n";
+      } else {
+        out << "megalodon_certificate_step("
+            << u->number() << ','
+            << certificateStep
+            << ").\n";
+      }
+    } else if (certificateTruthConflictResolutionStepJson(u, replayInfo, certificateStep)) {
       if (!certificateStep.empty() && certificateStep.front() == '[') {
         out << "megalodon_certificate_steps("
             << u->number() << ','
