@@ -4355,6 +4355,59 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
     }
     return residualClause == actualClause;
   };
+  auto residualMatchesActualModuloRename = [&](const std::vector<Kernel::Literal*>& selected, const Kernel::Substitution& substitution) {
+    std::vector<Kernel::Literal*> selectedInstances;
+    for (Kernel::Literal* literal : selected) {
+      selectedInstances.push_back(Kernel::SubstHelper::apply(literal, substitution));
+    }
+    std::vector<Kernel::Literal*> residualLiterals;
+    for (Kernel::Literal* literal : mainParent->iterLits()) {
+      Kernel::Literal* literalInstance = Kernel::SubstHelper::apply(literal, substitution);
+      bool isSelected = false;
+      for (Kernel::Literal* selectedInstance : selectedInstances) {
+        if (literalInstance == selectedInstance) {
+          isSelected = true;
+          break;
+        }
+        std::string literalJson;
+        std::string selectedJson;
+        if (certificateLiteralJson(literalInstance, literalJson)
+          && certificateLiteralJson(selectedInstance, selectedJson)
+          && literalJson == selectedJson) {
+          isSelected = true;
+          break;
+        }
+      }
+      if (!isSelected) {
+        residualLiterals.push_back(literalInstance);
+      }
+    }
+    if (residualLiterals.size() != unit->asClause()->length()) {
+      return false;
+    }
+    Kernel::Substitution renameSubstitution;
+    std::vector<bool> usedActual(unit->asClause()->length(), false);
+    for (Kernel::Literal* residualLiteral : residualLiterals) {
+      bool matched = false;
+      for (unsigned actualIndex = 0; actualIndex < unit->asClause()->length(); ++actualIndex) {
+        if (usedActual[actualIndex]) {
+          continue;
+        }
+        Kernel::Substitution attempt = cloneSubstitution(renameSubstitution);
+        if (!matchLiteralWithoutReset(residualLiteral, (*unit->asClause())[actualIndex], attempt)) {
+          continue;
+        }
+        renameSubstitution = cloneSubstitution(attempt);
+        usedActual[actualIndex] = true;
+        matched = true;
+        break;
+      }
+      if (!matched) {
+        return false;
+      }
+    }
+    return true;
+  };
 
   for (const auto& trace : urr->steps) {
     if (trace.selected == nullptr
@@ -4369,7 +4422,8 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
   std::function<bool(std::size_t, const Kernel::Substitution&)> selectTraceLiterals =
     [&](std::size_t traceIndex, const Kernel::Substitution& substitution) -> bool {
     if (traceIndex == urr->steps.size()) {
-      if (!residualMatchesActual(candidateSelectedMainLiterals, substitution)) {
+      if (!residualMatchesActual(candidateSelectedMainLiterals, substitution)
+        && !residualMatchesActualModuloRename(candidateSelectedMainLiterals, substitution)) {
         return false;
       }
       selectedMainLiterals = candidateSelectedMainLiterals;
