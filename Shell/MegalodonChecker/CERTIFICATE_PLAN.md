@@ -61,10 +61,30 @@ check the constructor without guessing:
 No constructor should depend on pretty-printed de-Bruijn names, hidden Vampire
 state, or library-specific Megalodon names.
 
+## Current Export Checkpoint
+
+The `vampire/megalodon1` branch now emits a transitional
+`megalodon_certificate_clause(step,[...]).` record for every first-order clause
+whose literals can be rendered in the structured JSON term format used by the
+Megalodon importer:
+
+```text
+{"var":"X0"}
+{"const":"a"}
+{"app":"f","args":[...]}
+{"polarity":true,"atom":{"pred":"p","args":[...]}}
+{"polarity":false,"atom":{"eq":[...,...]}}
+```
+
+This is not yet the full certificate object: rule constructors, pivots,
+substitutions, positions, and source-map references still have to be emitted as
+versioned JSON steps. The point of this checkpoint is to stop relying only on
+Megalodon proof-script strings and to make Vampire expose the same structured
+clause representation that the new Megalodon-side certificate checker consumes.
+
 ## Non-Goals
 
 Do not extend the existing rich `printReplayExtra` protocol for the next
 failing focused example. Any new output should be part of the versioned
 certificate format and should have a corresponding negative test in the
 Megalodon importer.
-

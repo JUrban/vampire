@@ -2487,6 +2487,107 @@ bool MegalodonChecker::skeletonClauseToMegalodon(Kernel::Clause* clause, std::st
   return true;
 }
 
+bool MegalodonChecker::certificateTermJson(Kernel::TermList term, std::string& result)
+{
+  if (term.isVar()) {
+    result = "{\"var\":" + quote(variableName(term.var())) + "}";
+    return true;
+  }
+  if (term.isApplication() || !term.isTerm() || term.term()->isSpecial()) {
+    return false;
+  }
+
+  Kernel::Term* t = term.term();
+  std::string name = functionName(t->functor());
+  if (t->numTermArguments() == 0) {
+    result = "{\"const\":" + quote(name) + "}";
+    return true;
+  }
+
+  std::ostringstream out;
+  out << "{\"app\":" << quote(name) << ",\"args\":[";
+  for (unsigned i = 0; i < t->numTermArguments(); ++i) {
+    if (i != 0) {
+      out << ',';
+    }
+    std::string arg;
+    if (!certificateTermJson(t->termArg(i), arg)) {
+      return false;
+    }
+    out << arg;
+  }
+  out << "]}";
+  result = out.str();
+  return true;
+}
+
+bool MegalodonChecker::certificateAtomJson(Kernel::Literal* literal, std::string& result)
+{
+  Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
+  if (positive->isEquality()) {
+    std::string lhs;
+    std::string rhs;
+    if (!certificateTermJson(*positive->nthArgument(0), lhs) || !certificateTermJson(*positive->nthArgument(1), rhs)) {
+      return false;
+    }
+    result = "{\"eq\":[" + lhs + "," + rhs + "]}";
+    return true;
+  }
+
+  std::ostringstream out;
+  out << "{\"pred\":" << quote(predicateName(positive->functor())) << ",\"args\":[";
+  for (unsigned i = 0; i < positive->arity(); ++i) {
+    if (i != 0) {
+      out << ',';
+    }
+    std::string arg;
+    if (!certificateTermJson(*positive->nthArgument(i), arg)) {
+      return false;
+    }
+    out << arg;
+  }
+  out << "]}";
+  result = out.str();
+  return true;
+}
+
+bool MegalodonChecker::certificateLiteralJson(Kernel::Literal* literal, std::string& result)
+{
+  std::string atom;
+  if (!certificateAtomJson(literal, atom)) {
+    return false;
+  }
+  std::ostringstream out;
+  out << "{\"polarity\":" << (literal->isPositive() ? "true" : "false") << ",\"atom\":" << atom << "}";
+  result = out.str();
+  return true;
+}
+
+bool MegalodonChecker::certificateClauseJson(Kernel::Clause* clause, std::string& result)
+{
+  if (clause->splits() && !clause->splits()->isEmpty()) {
+    return false;
+  }
+
+  std::ostringstream out;
+  out << '[';
+  bool first = true;
+  for (Kernel::Literal* literal : clause->iterLits()) {
+    std::string rendered;
+    if (!certificateLiteralJson(literal, rendered)) {
+      return false;
+    }
+    if (!first) {
+      out << ',';
+    }
+    first = false;
+    out << rendered;
+  }
+  out << ']';
+  result = out.str();
+  return true;
+}
+
 bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, std::string& result)
 {
   std::map<unsigned, Kernel::TermList> substitution;
@@ -4725,6 +4826,21 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
         << quote("connective=" + std::to_string(static_cast<int>(formula->connective()))) << ','
         << quote("raw=" + formula->toString())
         << "]).\n";
+  }
+  if (u->isClause()) {
+    std::string certificateClause;
+    if (certificateClauseJson(u->asClause(), certificateClause)) {
+      out << "megalodon_certificate_clause("
+          << u->number() << ','
+          << certificateClause
+          << ").\n";
+    } else {
+      out << "megalodon_step_extra("
+          << u->number() << ','
+          << quote("certificate_clause") << ",["
+          << quote("conversion_failed=1")
+          << "]).\n";
+    }
   }
   out << "megalodon_step_replay_kind("
       << u->number() << ','

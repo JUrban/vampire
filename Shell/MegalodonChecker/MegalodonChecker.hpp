@@ -42,6 +42,10 @@ private:
   bool skeletonSplitLiteralToMegalodon(unsigned split, std::string& result);
   bool skeletonClauseToMegalodon(Kernel::Clause* clause, std::string& result);
   bool skeletonDisjunctionToMegalodon(const std::vector<std::string>& literals, std::string& result);
+  bool certificateTermJson(Kernel::TermList term, std::string& result);
+  bool certificateAtomJson(Kernel::Literal* literal, std::string& result);
+  bool certificateLiteralJson(Kernel::Literal* literal, std::string& result);
+  bool certificateClauseJson(Kernel::Clause* clause, std::string& result);
   bool signedNameToMegalodon(const std::string& name, std::string& result);
   std::string recoverMegalodonSymbolName(const std::string& tptpName, const std::string& fallbackPrefix);
   std::string decodeMegalodonTptpName(const std::string& tptpName) const;
