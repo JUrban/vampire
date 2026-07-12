@@ -5183,8 +5183,85 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepsJson(Kernel::Unit
         if (!certificateLiteralJson(selectedLiteral, selectedLiteralJson)) {
           continue;
         }
-
         std::string stepBase = "u" + std::to_string(unit->number());
+
+        std::vector<std::string> sideCurrent;
+        std::vector<std::string> resolvedExpected;
+        bool skippedSidePivot = false;
+        bool canExpandAsPrimitiveSteps = true;
+        for (Kernel::Literal* literal : mainParent->iterLits()) {
+          if (literal == selectedLiteral) {
+            continue;
+          }
+          std::string rendered;
+          if (!certificateLiteralJson(literal, rendered)) {
+            canExpandAsPrimitiveSteps = false;
+            break;
+          }
+          resolvedExpected.push_back(rendered);
+        }
+        if (canExpandAsPrimitiveSteps) {
+          for (Kernel::Literal* literal : sideParent->iterLits()) {
+            std::string rendered;
+            if (literal == sideLiteral && needsSideSymmetry) {
+              rendered = swappedSideLiteralJson;
+            } else if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, sideSubstitution, rendered)) {
+              canExpandAsPrimitiveSteps = false;
+              break;
+            }
+            sideCurrent.push_back(rendered);
+            if (!skippedSidePivot && literal == sideLiteral) {
+              skippedSidePivot = true;
+              continue;
+            }
+            resolvedExpected.push_back(rendered);
+          }
+        }
+        if (canExpandAsPrimitiveSteps && skippedSidePivot) {
+          normalize(resolvedExpected);
+          if (resolvedExpected == actual) {
+            std::vector<std::string> steps;
+            std::string currentSideParentId = "u" + std::to_string(sideParent->number());
+            if (sideSubstitutionJson != "{}") {
+              std::string substitutedClauseJson;
+              if (!certificateSubstitutedClausePreservingEqualityJson(sideParent, sideSubstitution, substitutedClauseJson)) {
+                continue;
+              }
+              std::string substituteId = stepBase + "_side_subst";
+              steps.push_back(
+                "{\"id\":" + quote(substituteId) + ","
+                "\"rule\":\"substitute\","
+                "\"parents\":[" + quote(currentSideParentId) + "],"
+                "\"substitution\":" + sideSubstitutionJson + ","
+                "\"clause\":" + substitutedClauseJson + "}");
+              currentSideParentId = substituteId;
+            }
+            if (needsSideSymmetry) {
+              std::string sideSymmetryClauseJson = jsonArray(sideCurrent);
+              std::string symmetryId = stepBase + "_side_symmetry";
+              steps.push_back(
+                "{\"id\":" + quote(symmetryId) + ","
+                "\"rule\":\"equality_symmetry\","
+                "\"parents\":[" + quote(currentSideParentId) + "],"
+                "\"literal\":" + sideLiteralJson + ","
+                "\"clause\":" + sideSymmetryClauseJson + "}");
+              currentSideParentId = symmetryId;
+            }
+            std::string conclusionJson;
+            if (!certificateClauseJson(unit->asClause(), conclusionJson)) {
+              continue;
+            }
+            steps.push_back(
+              "{\"id\":" + quote(stepBase) + ","
+              "\"rule\":\"resolve\","
+              "\"parents\":[" + quote("u" + std::to_string(mainParent->number())) + "," + quote(currentSideParentId) + "],"
+              "\"pivot\":" + selectedLiteralJson + ","
+              "\"clause\":" + conclusionJson + "}");
+            result = jsonArray(steps);
+            return true;
+          }
+        }
+
         result =
           "{\"id\":" + quote(stepBase) + ","
           "\"rule\":\"subsumption_resolution\","
@@ -8023,6 +8100,27 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
           << u->number() << ','
           << certificateStep
           << ").\n";
+    } else if ((rule == Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION
+        || rule == Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION)
+      && certificateSubstitutedResolutionStepsJson(u, replayInfo, certificateStep)) {
+      out << "megalodon_certificate_steps("
+          << u->number() << ','
+          << certificateStep
+          << ").\n";
+    } else if ((rule == Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION
+        || rule == Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION)
+      && certificateSatSubsumptionResolutionStepsJson(u, certificateStep)) {
+      if (!certificateStep.empty() && certificateStep.front() == '[') {
+        out << "megalodon_certificate_steps("
+            << u->number() << ','
+            << certificateStep
+            << ").\n";
+      } else {
+        out << "megalodon_certificate_step("
+            << u->number() << ','
+            << certificateStep
+            << ").\n";
+      }
     } else if (certificateResolveStepJson(u, certificateStep)) {
       out << "megalodon_certificate_step("
           << u->number() << ','
@@ -8039,10 +8137,17 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
           << certificateStep
           << ").\n";
     } else if (certificateSatSubsumptionResolutionStepsJson(u, certificateStep)) {
-      out << "megalodon_certificate_step("
-          << u->number() << ','
-          << certificateStep
-          << ").\n";
+      if (!certificateStep.empty() && certificateStep.front() == '[') {
+        out << "megalodon_certificate_steps("
+            << u->number() << ','
+            << certificateStep
+            << ").\n";
+      } else {
+        out << "megalodon_certificate_step("
+            << u->number() << ','
+            << certificateStep
+            << ").\n";
+      }
     } else if (certificateEqualityResolutionStepJson(u, replayInfo, certificateStep)) {
       if (!certificateStep.empty() && certificateStep.front() == '[') {
         out << "megalodon_certificate_steps("
