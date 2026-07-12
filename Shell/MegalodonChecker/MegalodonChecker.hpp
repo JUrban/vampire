@@ -94,7 +94,9 @@ private:
   bool rewriteTermOnce(Kernel::TermList term, Kernel::TermList pattern, Kernel::TermList replacement, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution, Kernel::TermList& result);
   bool appendEqualityRewriteStep(const Hypothesis& hypothesis, const std::vector<unsigned>& variables, Kernel::TermList lhs, Kernel::TermList rhs, bool forward, const std::map<unsigned, Kernel::TermList>& substitution, unsigned& nextLabel, std::vector<std::string>& lines);
   bool recordEqualitySort(Kernel::TermList sort);
-  std::string equalityDefinition() const;
+  std::string sortSymbolSuffix(const std::string& sort) const;
+  std::string equalityNameForSort(const std::string& sort) const;
+  std::string equalityDefinition(const std::string& sort) const;
   bool matchFormula(Kernel::Formula* pattern, Kernel::Formula* target, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution);
   bool matchTerm(Kernel::TermList pattern, Kernel::TermList target, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution);
   bool matchFormula(Kernel::Formula* pattern, Kernel::Formula* target, const std::map<unsigned, Kernel::TermList>& targetSubstitution, const std::vector<unsigned>& variables, std::map<unsigned, Kernel::TermList>& substitution);
@@ -126,7 +128,7 @@ private:
   std::map<unsigned, Kernel::Clause*> _avatarComponentBySatVar;
   std::set<std::string> _usedSymbolNames;
   bool _usesEquality = false;
-  std::string _equalitySort;
+  std::set<std::string> _equalitySorts;
   bool _usesConjunction = false;
   bool _usesFalse = false;
   bool _usesDisjunction = false;

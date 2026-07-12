@@ -383,7 +383,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
   };
   auto renderFormulaForExtra = [&](Kernel::Formula* formula, std::string& text) {
     bool usesEquality = _usesEquality;
-    std::string equalitySort = _equalitySort;
+    std::set<std::string> equalitySorts = _equalitySorts;
     bool usesConjunction = _usesConjunction;
     bool usesFalse = _usesFalse;
     bool usesDisjunction = _usesDisjunction;
@@ -392,11 +392,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     bool usesPropEquality = _usesPropEquality;
     bool renderingReplayExtra = _renderingReplayExtra;
     _usesEquality = false;
-    _equalitySort.clear();
+    _equalitySorts.clear();
     _renderingReplayExtra = true;
     bool ok = formulaToMegalodon(formula, text);
     _usesEquality = usesEquality;
-    _equalitySort = equalitySort;
+    _equalitySorts = equalitySorts;
     _usesConjunction = usesConjunction;
     _usesFalse = usesFalse;
     _usesDisjunction = usesDisjunction;
@@ -408,7 +408,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
   };
   auto renderFormulaForExtraWithSubstitution = [&](Kernel::Formula* formula, Kernel::Substitution substitution, std::string& text) {
     bool usesEquality = _usesEquality;
-    std::string equalitySort = _equalitySort;
+    std::set<std::string> equalitySorts = _equalitySorts;
     bool usesConjunction = _usesConjunction;
     bool usesFalse = _usesFalse;
     bool usesDisjunction = _usesDisjunction;
@@ -417,7 +417,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     bool usesPropEquality = _usesPropEquality;
     bool renderingReplayExtra = _renderingReplayExtra;
     _usesEquality = false;
-    _equalitySort.clear();
+    _equalitySorts.clear();
     _renderingReplayExtra = true;
     std::map<unsigned, Kernel::TermList> substitutionMap;
     for (auto [variable, term] : iterTraits(substitution.items())) {
@@ -425,7 +425,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     bool ok = formulaToMegalodon(formula, substitutionMap, text);
     _usesEquality = usesEquality;
-    _equalitySort = equalitySort;
+    _equalitySorts = equalitySorts;
     _usesConjunction = usesConjunction;
     _usesFalse = usesFalse;
     _usesDisjunction = usesDisjunction;
@@ -437,7 +437,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
   };
   auto renderTermForExtra = [&](Kernel::TermList term, std::string& text) {
     bool usesEquality = _usesEquality;
-    std::string equalitySort = _equalitySort;
+    std::set<std::string> equalitySorts = _equalitySorts;
     bool usesConjunction = _usesConjunction;
     bool usesFalse = _usesFalse;
     bool usesDisjunction = _usesDisjunction;
@@ -446,11 +446,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     bool usesPropEquality = _usesPropEquality;
     bool renderingReplayExtra = _renderingReplayExtra;
     _usesEquality = false;
-    _equalitySort.clear();
+    _equalitySorts.clear();
     _renderingReplayExtra = true;
     bool ok = termToMegalodon(term, text);
     _usesEquality = usesEquality;
-    _equalitySort = equalitySort;
+    _equalitySorts = equalitySorts;
     _usesConjunction = usesConjunction;
     _usesFalse = usesFalse;
     _usesDisjunction = usesDisjunction;
@@ -575,7 +575,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
   };
   auto renderClauseForExtra = [&](Kernel::Clause* clause, std::string& text) {
     bool usesEquality = _usesEquality;
-    std::string equalitySort = _equalitySort;
+    std::set<std::string> equalitySorts = _equalitySorts;
     bool usesConjunction = _usesConjunction;
     bool usesFalse = _usesFalse;
     bool usesDisjunction = _usesDisjunction;
@@ -584,11 +584,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     bool usesPropEquality = _usesPropEquality;
     bool renderingReplayExtra = _renderingReplayExtra;
     _usesEquality = false;
-    _equalitySort.clear();
+    _equalitySorts.clear();
     _renderingReplayExtra = true;
     bool ok = skeletonClauseToMegalodon(clause, text);
     _usesEquality = usesEquality;
-    _equalitySort = equalitySort;
+    _equalitySorts = equalitySorts;
     _usesConjunction = usesConjunction;
     _usesFalse = usesFalse;
     _usesDisjunction = usesDisjunction;
@@ -2135,19 +2135,68 @@ bool MegalodonChecker::recordEqualitySort(Kernel::TermList sort)
   if (!sortToMegalodon(sort, sortText)) {
     return false;
   }
-  if (!_equalitySort.empty() && _equalitySort != sortText) {
-    return false;
-  }
   _usesEquality = true;
-  _equalitySort = sortText;
+  _equalitySorts.insert(sortText);
   return true;
 }
 
-std::string MegalodonChecker::equalityDefinition() const
+std::string MegalodonChecker::sortSymbolSuffix(const std::string& sort) const
 {
-  std::string sortText = _equalitySort.empty() ? "set" : _equalitySort;
+  std::string normalized;
+  for (std::size_t i = 0; i < sort.size(); ++i) {
+    if (i + 1 < sort.size() && sort[i] == '-' && sort[i + 1] == '>') {
+      normalized += "_to_";
+      ++i;
+    } else if (sort[i] == '(') {
+      normalized += "lp_";
+    } else if (sort[i] == ')') {
+      normalized += "_rp";
+    } else if (std::isalnum(static_cast<unsigned char>(sort[i])) || sort[i] == '_') {
+      normalized += sort[i];
+    } else if (!normalized.empty() && normalized.back() != '_') {
+      normalized += '_';
+    }
+  }
+  std::string compact;
+  bool previousUnderscore = false;
+  for (char ch : normalized) {
+    if (ch == '_') {
+      if (!previousUnderscore) {
+        compact += ch;
+      }
+      previousUnderscore = true;
+    } else {
+      compact += ch;
+      previousUnderscore = false;
+    }
+  }
+  while (!compact.empty() && compact.front() == '_') {
+    compact.erase(compact.begin());
+  }
+  while (!compact.empty() && compact.back() == '_') {
+    compact.pop_back();
+  }
+  return compact.empty() ? "set" : compact;
+}
+
+std::string MegalodonChecker::equalityNameForSort(const std::string& sort) const
+{
+  if (sort == "set") {
+    return "eq";
+  }
+  if (sort == "prop") {
+    return "vampire_eq_prop";
+  }
+  return "vampire_eq_" + sortSymbolSuffix(sort);
+}
+
+std::string MegalodonChecker::equalityDefinition(const std::string& sortText) const
+{
+  if (sortText == "set") {
+    return "Definition eq : set->set->prop := fun x y:set => forall Q:set->set->prop, Q x y -> Q y x.";
+  }
   std::string argumentSort = sortText.find("->") == std::string::npos ? sortText : parenthesize(sortText);
-  return "Definition vampire_eq_set : " + argumentSort + "->" + argumentSort
+  return "Definition " + equalityNameForSort(sortText) + " : " + argumentSort + "->" + argumentSort
     + "->prop := fun x y:" + sortText
     + " => forall Q:" + argumentSort + "->prop, Q x -> Q y.";
 }
@@ -2379,6 +2428,7 @@ bool MegalodonChecker::formulaToMegalodonReplacing(Kernel::Formula* formula, Ker
           return false;
         }
         _usesEquality = true;
+        _equalitySorts.insert("set");
         std::string lhs;
         std::string rhs;
         if (!termToMegalodonReplacing(*literal->nthArgument(0), needle, replacement, lhs)
@@ -2443,7 +2493,11 @@ bool MegalodonChecker::literalToMegalodon(Kernel::Literal* literal, std::string&
     if (!recordEqualitySort(equalityArgumentSort)) {
       return false;
     }
-    result = lhs + " = " + rhs;
+    if (equalitySort == "set") {
+      result = lhs + " = " + rhs;
+    } else {
+      result = equalityNameForSort(equalitySort) + " " + parenthesize(lhs) + " " + parenthesize(rhs);
+    }
     return true;
   }
 
@@ -7013,14 +7067,14 @@ bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::m
           result = "vampire_eq_prop " + parenthesize(lhs) + " " + parenthesize(rhs);
           return true;
         }
-        if (_renderingReplayExtra) {
-          result = lhs + " = " + rhs;
-          return true;
-        }
         if (!recordEqualitySort(equalityArgumentSort)) {
           return false;
         }
-        result = lhs + " = " + rhs;
+        if (equalitySort == "set") {
+          result = lhs + " = " + rhs;
+        } else {
+          result = equalityNameForSort(equalitySort) + " " + parenthesize(lhs) + " " + parenthesize(rhs);
+        }
         return true;
       }
       std::string name = predicateName(literal->functor());
@@ -7211,6 +7265,7 @@ bool MegalodonChecker::equalityLiteral(Kernel::Formula* formula, Kernel::TermLis
   lhs = *literal->nthArgument(0);
   rhs = *literal->nthArgument(1);
   _usesEquality = true;
+  _equalitySorts.insert("set");
   return true;
 }
 
@@ -8724,7 +8779,7 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
   _predicates.clear();
   _usedSymbolNames.clear();
   _usesEquality = false;
-  _equalitySort.clear();
+  _equalitySorts.clear();
   _usesConjunction = false;
   _usesFalse = false;
   _usesDisjunction = false;
@@ -8763,7 +8818,9 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
   }
 
   if (_usesEquality) {
-    lines.push_back(equalityDefinition());
+    for (const std::string& equalitySort : _equalitySorts) {
+      lines.push_back(equalityDefinition(equalitySort));
+    }
   }
   if (_usesPropEquality) {
     lines.push_back(propEqualityDefinition());
@@ -8807,7 +8864,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
   _predicates.clear();
   _usedSymbolNames.clear();
   _usesEquality = false;
-  _equalitySort.clear();
+  _equalitySorts.clear();
   _usesConjunction = false;
   _usesFalse = false;
   _usesDisjunction = false;
@@ -8840,7 +8897,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
     auto predicatesSnapshot = _predicates;
     auto usedSymbolNamesSnapshot = _usedSymbolNames;
     bool usesEqualitySnapshot = _usesEquality;
-    std::string equalitySortSnapshot = _equalitySort;
+    std::set<std::string> equalitySortsSnapshot = _equalitySorts;
     bool usesConjunctionSnapshot = _usesConjunction;
     bool usesFalseSnapshot = _usesFalse;
     bool usesDisjunctionSnapshot = _usesDisjunction;
@@ -8854,7 +8911,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
       _predicates = predicatesSnapshot;
       _usedSymbolNames = usedSymbolNamesSnapshot;
       _usesEquality = usesEqualitySnapshot;
-      _equalitySort = equalitySortSnapshot;
+      _equalitySorts = equalitySortsSnapshot;
       _usesConjunction = usesConjunctionSnapshot;
       _usesFalse = usesFalseSnapshot;
       _usesDisjunction = usesDisjunctionSnapshot;
@@ -8872,7 +8929,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
     auto predicatesSnapshot = _predicates;
     auto usedSymbolNamesSnapshot = _usedSymbolNames;
     bool usesEqualitySnapshot = _usesEquality;
-    std::string equalitySortSnapshot = _equalitySort;
+    std::set<std::string> equalitySortsSnapshot = _equalitySorts;
     bool usesConjunctionSnapshot = _usesConjunction;
     bool usesFalseSnapshot = _usesFalse;
     bool usesDisjunctionSnapshot = _usesDisjunction;
@@ -8896,7 +8953,7 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
       _predicates = predicatesSnapshot;
       _usedSymbolNames = usedSymbolNamesSnapshot;
       _usesEquality = usesEqualitySnapshot;
-      _equalitySort = equalitySortSnapshot;
+      _equalitySorts = equalitySortsSnapshot;
       _usesConjunction = usesConjunctionSnapshot;
       _usesFalse = usesFalseSnapshot;
       _usesDisjunction = usesDisjunctionSnapshot;
@@ -8917,7 +8974,9 @@ bool MegalodonChecker::tryMegalodonClaimSkeleton(Kernel::Formula* formula, const
     lines.push_back("Definition vampire_or : prop->prop->prop := fun A B:prop => forall P:prop, (A -> P) -> (B -> P) -> P.");
   }
   if (_usesEquality) {
-    lines.push_back(equalityDefinition());
+    for (const std::string& equalitySort : _equalitySorts) {
+      lines.push_back(equalityDefinition(equalitySort));
+    }
   }
   if (_usesPropEquality) {
     lines.push_back(propEqualityDefinition());
