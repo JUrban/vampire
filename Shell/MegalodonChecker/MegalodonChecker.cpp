@@ -7576,6 +7576,21 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
       }
     }
   }
+  bool hasNontrivialReplaySubstitution = false;
+  if (replayInfo != nullptr) {
+    for (const auto& substitution : replayInfo->substitutionForBanksSub) {
+      Kernel::Substitution substitutionCopy = substitution;
+      for (auto [var, term] : iterTraits(substitutionCopy.items())) {
+        if (!term.isVar() || term.var() != var) {
+          hasNontrivialReplaySubstitution = true;
+          break;
+        }
+      }
+      if (hasNontrivialReplaySubstitution) {
+        break;
+      }
+    }
+  }
 
   std::string propositionText;
   bool hasProposition = false;
@@ -7632,6 +7647,12 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
     std::string certificateStep;
     if (certificateDefinitionInputStepJson(u, certificateStep)) {
       out << "megalodon_certificate_step("
+          << u->number() << ','
+          << certificateStep
+          << ").\n";
+    } else if (hasNontrivialReplaySubstitution
+      && certificateSubstitutedResolutionStepsJson(u, replayInfo, certificateStep)) {
+      out << "megalodon_certificate_steps("
           << u->number() << ','
           << certificateStep
           << ").\n";
