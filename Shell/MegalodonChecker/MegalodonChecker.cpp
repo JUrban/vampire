@@ -4168,6 +4168,7 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
           "\"from\":" + fromJson + ","
           "\"to\":" + toJson + ","
           "\"target\":" + targetJson + ","
+          "\"rewritten_target\":" + rewrittenTargetJson + ","
           + positionField
           + "\"substitution\":{},"
           "\"clause\":" + conclusionJson + "}");
@@ -5968,6 +5969,7 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
         "\"from\":" + fromJson + ","
         "\"to\":" + toJson + ","
         "\"target\":" + rewrite.literalJson + ","
+        "\"rewritten_target\":" + rewrite.rewrittenJson + ","
         + rewritePositionFields
         + "\"substitution\":{},"
         "\"clause\":" + rewriteClauseJson + "}");
@@ -6036,6 +6038,7 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
           "\"from\":" + fromJson + ","
           "\"to\":" + toJson + ","
           "\"target\":" + currentTargetJson + ","
+          "\"rewritten_target\":" + nextTargetJson + ","
           "\"position\":" + positionJson(redexPositions[rewriteIndex]) + ","
           "\"substitution\":{},"
           "\"clause\":" + rewriteClauseJson + "}");
@@ -6045,6 +6048,7 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
       paramClause = currentParamClause;
       paramodulateStepId = currentTargetId;
     } else {
+      rewriteFields += "\"rewritten_target\":" + rewrittenTargetJson + ",";
       rewriteFields += simultaneousParamodulation
         ? "\"positions\":" + positionsJson(redexPositions) + ","
         : "\"position\":" + positionJson(position) + ",";
