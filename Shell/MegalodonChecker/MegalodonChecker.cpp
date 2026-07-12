@@ -3915,9 +3915,6 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
         if (currentIt == current.end()) {
           continue;
         }
-        if (std::find(current.begin(), current.end(), candidate.second) != current.end()) {
-          continue;
-        }
         *currentIt = candidate.second;
         std::sort(current.begin(), current.end());
         current.erase(std::unique(current.begin(), current.end()), current.end());
