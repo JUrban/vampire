@@ -5283,15 +5283,6 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepsJson(Kernel::Unit
           }
         }
 
-        result =
-          "{\"id\":" + quote(stepBase) + ","
-          "\"rule\":\"subsumption_resolution\","
-          "\"parents\":[" + quote("u" + std::to_string(mainParent->number())) + "," + quote("u" + std::to_string(sideParent->number())) + "],"
-          "\"selected\":" + selectedLiteralJson + ","
-          "\"side_pivot\":" + swappedSideLiteralJson + ","
-          "\"side_substitution\":" + sideSubstitutionJson + ","
-          "\"clause\":" + jsonArray(actual) + "}";
-        return true;
       }
     }
   }
