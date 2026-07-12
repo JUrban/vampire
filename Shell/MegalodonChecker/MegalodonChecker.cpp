@@ -2662,6 +2662,147 @@ bool MegalodonChecker::certificateDefinitionInputStepJson(Kernel::Unit* unit, st
   return true;
 }
 
+bool MegalodonChecker::certificateResolveStepJson(Kernel::Unit* unit, std::string& result)
+{
+  const Kernel::InferenceRule& rule = unit->inference().rule();
+  if (!unit->isClause()
+    || (
+      rule != Kernel::InferenceRule::RESOLUTION
+      && rule != Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION
+      && rule != Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION
+    )) {
+    return false;
+  }
+  const auto* extra = env.proofExtra.find(unit);
+  if (extra == nullptr) {
+    return false;
+  }
+
+  std::vector<Kernel::Clause*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    if (parent->isClause()) {
+      parents.push_back(parent->asClause());
+    }
+  }
+  if (parents.size() != 2) {
+    return false;
+  }
+
+  auto containsLiteral = [](Kernel::Clause* clause, Kernel::Literal* literal) {
+    if (literal == nullptr) {
+      return false;
+    }
+    for (unsigned i = 0; i < clause->length(); ++i) {
+      if ((*clause)[i] == literal) {
+        return true;
+      }
+    }
+    return false;
+  };
+  auto appendClauseExcept = [&](std::vector<std::string>& literals, Kernel::Clause* clause, Kernel::Literal* excluded) {
+    bool excludedOne = false;
+    for (Kernel::Literal* literal : clause->iterLits()) {
+      if (!excludedOne && literal == excluded) {
+        excludedOne = true;
+        continue;
+      }
+      std::string rendered;
+      if (!certificateLiteralJson(literal, rendered)) {
+        return false;
+      }
+      literals.push_back(rendered);
+    }
+    return excludedOne;
+  };
+  auto renderedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
+    for (Kernel::Literal* literal : clause->iterLits()) {
+      std::string rendered;
+      if (!certificateLiteralJson(literal, rendered)) {
+        return false;
+      }
+      literals.push_back(rendered);
+    }
+    return true;
+  };
+  auto complementary = [&](Kernel::Literal* left, Kernel::Literal* right) {
+    if (left == nullptr || right == nullptr || left->isPositive() == right->isPositive()) {
+      return false;
+    }
+    std::string leftAtom;
+    std::string rightAtom;
+    return certificateAtomJson(left, leftAtom)
+      && certificateAtomJson(right, rightAtom)
+      && leftAtom == rightAtom;
+  };
+  auto stepForOrientation = [&](Kernel::Literal* leftPivot, Kernel::Literal* rightPivot, std::string& stepJson) {
+    if (!containsLiteral(parents[0], leftPivot) || !containsLiteral(parents[1], rightPivot)) {
+      return false;
+    }
+    if (!complementary(leftPivot, rightPivot)) {
+      return false;
+    }
+
+    std::vector<std::string> expected;
+    if (!appendClauseExcept(expected, parents[0], leftPivot)
+      || !appendClauseExcept(expected, parents[1], rightPivot)) {
+      return false;
+    }
+    std::vector<std::string> actual;
+    if (!renderedClause(unit->asClause(), actual)) {
+      return false;
+    }
+    std::sort(expected.begin(), expected.end());
+    std::sort(actual.begin(), actual.end());
+    if (expected != actual) {
+      return false;
+    }
+
+    std::string pivot;
+    if (!certificateLiteralJson(leftPivot, pivot)) {
+      return false;
+    }
+    stepJson = "{\"rule\":\"resolve\","
+      "\"parents\":["
+      + quote("u" + std::to_string(parents[0]->number())) + ","
+      + quote("u" + std::to_string(parents[1]->number())) + "],"
+      "\"pivot\":" + pivot + "}";
+    return true;
+  };
+
+  if (rule == Kernel::InferenceRule::RESOLUTION) {
+    const auto* selected = static_cast<const Inferences::TwoLiteralInferenceExtra*>(extra);
+    if (stepForOrientation(selected->selectedLiteral.selectedLiteral, selected->otherLiteral, result)) {
+      return true;
+    }
+    return stepForOrientation(selected->otherLiteral, selected->selectedLiteral.selectedLiteral, result);
+  }
+
+  const auto* selected = static_cast<const Inferences::LiteralInferenceExtra*>(extra);
+  Kernel::Literal* selectedLiteral = selected->selectedLiteral;
+  if (selectedLiteral == nullptr) {
+    return false;
+  }
+  for (unsigned parentIndex = 0; parentIndex < 2; ++parentIndex) {
+    if (!containsLiteral(parents[parentIndex], selectedLiteral)) {
+      continue;
+    }
+    unsigned otherParentIndex = parentIndex == 0 ? 1 : 0;
+    for (Kernel::Literal* candidate : parents[otherParentIndex]->iterLits()) {
+      if (!complementary(selectedLiteral, candidate)) {
+        continue;
+      }
+      if (parentIndex == 0) {
+        if (stepForOrientation(selectedLiteral, candidate, result)) {
+          return true;
+        }
+      } else if (stepForOrientation(candidate, selectedLiteral, result)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, std::string& result)
 {
   std::map<unsigned, Kernel::TermList> substitution;
@@ -4917,6 +5058,11 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
     }
     std::string certificateStep;
     if (certificateDefinitionInputStepJson(u, certificateStep)) {
+      out << "megalodon_certificate_step("
+          << u->number() << ','
+          << certificateStep
+          << ").\n";
+    } else if (certificateResolveStepJson(u, certificateStep)) {
       out << "megalodon_certificate_step("
           << u->number() << ','
           << certificateStep
