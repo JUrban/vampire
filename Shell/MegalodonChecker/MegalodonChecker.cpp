@@ -696,6 +696,29 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         }
         addClauseVariableSortFields(fields, prefix + "_component_clause", component->second);
         addClauseDbIndexSortFields(fields, prefix + "_component_clause", component->second);
+        addLambdaSubtermFields(fields, prefix + "_component_clause", component->second, nullptr);
+        std::vector<std::string> scopedDbSorts;
+        for (const std::string& field : fields) {
+          std::string dbPrefix = prefix + "_component_clause_db_sort_";
+          if (field.rfind(dbPrefix, 0) != 0) {
+            continue;
+          }
+          if (field.size() <= dbPrefix.size() || !std::isdigit(static_cast<unsigned char>(field[dbPrefix.size()]))) {
+            continue;
+          }
+          std::size_t equals = field.find('=');
+          if (equals != std::string::npos) {
+            scopedDbSorts.push_back(field.substr(equals + 1));
+          }
+        }
+        if (!scopedDbSorts.empty()) {
+          fields.push_back(prefix + "_scoped_split_certificate=component_contains_de_bruijn");
+          fields.push_back(prefix + "_scoped_split_certificate_db_sort_count=" + std::to_string(scopedDbSorts.size()));
+          for (std::size_t sortIndex = 0; sortIndex < scopedDbSorts.size(); ++sortIndex) {
+            fields.push_back(
+              prefix + "_scoped_split_certificate_db_sort_" + std::to_string(sortIndex) + "=" + scopedDbSorts[sortIndex]);
+          }
+        }
       }
       ++dependencyIndex;
     }
