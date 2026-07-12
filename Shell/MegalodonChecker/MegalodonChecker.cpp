@@ -2803,6 +2803,106 @@ bool MegalodonChecker::certificateResolveStepJson(Kernel::Unit* unit, std::strin
   return false;
 }
 
+bool MegalodonChecker::certificateEqualityResolutionStepJson(Kernel::Unit* unit, std::string& result)
+{
+  const Kernel::InferenceRule& rule = unit->inference().rule();
+  if (!unit->isClause()
+    || (
+      rule != Kernel::InferenceRule::EQUALITY_RESOLUTION
+      && rule != Kernel::InferenceRule::EQUALITY_RESOLUTION_WITH_DELETION
+      && rule != Kernel::InferenceRule::TRIVIAL_INEQUALITY_REMOVAL
+    )) {
+    return false;
+  }
+
+  std::vector<Kernel::Clause*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    if (parent->isClause()) {
+      parents.push_back(parent->asClause());
+    }
+  }
+  if (parents.size() != 1) {
+    return false;
+  }
+  Kernel::Clause* parent = parents[0];
+
+  auto isNegativeReflexiveEquality = [&](Kernel::Literal* literal) {
+    if (literal == nullptr
+      || !literal->isEquality()
+      || !literal->isNegative()) {
+      return false;
+    }
+    std::string lhs;
+    std::string rhs;
+    return certificateTermJson(*literal->nthArgument(0), lhs)
+      && certificateTermJson(*literal->nthArgument(1), rhs)
+      && lhs == rhs;
+  };
+  auto conclusionMatchesParentWithout = [&](Kernel::Literal* selectedLiteral) {
+    bool foundSelected = false;
+    std::vector<std::string> expected;
+    for (Kernel::Literal* literal : parent->iterLits()) {
+      if (!foundSelected && literal == selectedLiteral) {
+        foundSelected = true;
+        continue;
+      }
+      std::string rendered;
+      if (!certificateLiteralJson(literal, rendered)) {
+        return false;
+      }
+      expected.push_back(rendered);
+    }
+    if (!foundSelected) {
+      return false;
+    }
+    std::vector<std::string> actual;
+    for (Kernel::Literal* literal : unit->asClause()->iterLits()) {
+      std::string rendered;
+      if (!certificateLiteralJson(literal, rendered)) {
+        return false;
+      }
+      actual.push_back(rendered);
+    }
+    std::sort(expected.begin(), expected.end());
+    std::sort(actual.begin(), actual.end());
+    return expected == actual;
+  };
+  auto emitStep = [&](Kernel::Literal* selectedLiteral) {
+    if (!isNegativeReflexiveEquality(selectedLiteral)
+      || !conclusionMatchesParentWithout(selectedLiteral)) {
+      return false;
+    }
+
+    std::string literal;
+    if (!certificateLiteralJson(selectedLiteral, literal)) {
+      return false;
+    }
+
+    result = "{\"rule\":\"equality_resolution\","
+      "\"parents\":["
+      + quote("u" + std::to_string(parent->number())) + "],"
+      "\"literal\":" + literal + ","
+      "\"substitution\":{}}";
+    return true;
+  };
+
+  if (rule == Kernel::InferenceRule::TRIVIAL_INEQUALITY_REMOVAL) {
+    for (Kernel::Literal* literal : parent->iterLits()) {
+      if (emitStep(literal)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const auto* extra = env.proofExtra.find(unit);
+  if (extra == nullptr) {
+    return false;
+  }
+  const auto* selected = static_cast<const Inferences::LiteralInferenceExtra*>(extra);
+  return emitStep(selected->selectedLiteral);
+}
+
 bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, std::string& result)
 {
   std::map<unsigned, Kernel::TermList> substitution;
@@ -5063,6 +5163,11 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
           << certificateStep
           << ").\n";
     } else if (certificateResolveStepJson(u, certificateStep)) {
+      out << "megalodon_certificate_step("
+          << u->number() << ','
+          << certificateStep
+          << ").\n";
+    } else if (certificateEqualityResolutionStepJson(u, certificateStep)) {
       out << "megalodon_certificate_step("
           << u->number() << ','
           << certificateStep
