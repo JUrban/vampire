@@ -51,7 +51,7 @@ private:
   bool certificateSubstitutedClausePreservingEqualityJson(Kernel::Clause* clause, const Kernel::Substitution& substitution, std::string& result);
   bool certificateDefinitionInputStepJson(Kernel::Unit* unit, std::string& result);
   bool certificateResolveStepJson(Kernel::Unit* unit, std::string& result);
-  bool certificateEqualityResolutionStepJson(Kernel::Unit* unit, std::string& result);
+  bool certificateEqualityResolutionStepJson(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateFactorStepJson(Kernel::Unit* unit, std::string& result);
   bool certificateParamodulateStepJson(Kernel::Unit* unit, std::string& result);
   bool certificateParamodulateThenSymmetryStepsJson(Kernel::Unit* unit, std::string& result);
