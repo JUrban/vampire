@@ -41,6 +41,12 @@ void TwoLiteralInferenceExtra::output(std::ostream &out) const {
 
 void RewriteInferenceExtra::output(std::ostream &out) const {
   out << "lhs=" << lhs << ",target=" << rewritten;
+  if (hasRhs) {
+    out << ",rhs=" << rhs;
+  }
+  if (hasReplacement) {
+    out << ",replacement=" << replacement;
+  }
 }
 
 void CNFTransformationInferenceExtra::output(std::ostream &out) const {

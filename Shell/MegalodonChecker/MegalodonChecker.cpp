@@ -1544,6 +1544,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       if (renderTermForExtra(rewrite->rewritten, renderedRewriteTerm)) {
         fields.push_back("redex=" + renderedRewriteTerm);
       }
+      if (rewrite->hasRhs && renderTermForExtra(rewrite->rhs, renderedRewriteTerm)) {
+        fields.push_back("rule_rhs=" + renderedRewriteTerm);
+      }
+      if (rewrite->hasReplacement && renderTermForExtra(rewrite->replacement, renderedRewriteTerm)) {
+        fields.push_back("replacement=" + renderedRewriteTerm);
+      }
       if (info == nullptr || !info->hasDemodulationRewrite) {
         for (Kernel::Unit* parent : iterTraits(u->getParents())) {
           if (!parent->isClause() || parent->asClause()->length() != 1) {
@@ -1947,6 +1953,15 @@ bool MegalodonChecker::termToMegalodon(Kernel::TermList term, std::string& resul
 
 bool MegalodonChecker::termToMegalodon(Kernel::TermList term, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result)
 {
+  if (_renderDepth > 512) {
+    return false;
+  }
+  struct RenderDepthGuard {
+    unsigned& depth;
+    RenderDepthGuard(unsigned& depth) : depth(depth) { ++depth; }
+    ~RenderDepthGuard() { --depth; }
+  } renderDepthGuard(_renderDepth);
+
   if (HOL::isTrue(term)) {
     _usesTrue = true;
     result = "vampire_true";
@@ -2390,6 +2405,15 @@ std::string MegalodonChecker::existentialNameForSort(const std::string& sort) co
 
 bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, const std::map<unsigned, Kernel::TermList>& substitution, std::string& result)
 {
+  if (_renderDepth > 512) {
+    return false;
+  }
+  struct RenderDepthGuard {
+    unsigned& depth;
+    RenderDepthGuard(unsigned& depth) : depth(depth) { ++depth; }
+    ~RenderDepthGuard() { --depth; }
+  } renderDepthGuard(_renderDepth);
+
   switch (formula->connective()) {
     case Kernel::LITERAL: {
       Kernel::Literal* literal = formula->literal();
@@ -3253,6 +3277,9 @@ bool MegalodonChecker::premiseProofTerm(
   std::string& result,
   unsigned depth)
 {
+  if (++_proofSearchCalls > 20000) {
+    return false;
+  }
   std::string premiseText;
   if (formulaToMegalodon(premise, substitution, premiseText)) {
     for (const Hypothesis& hypothesis : hypotheses) {
@@ -3286,6 +3313,9 @@ bool MegalodonChecker::instantiatedProofTerm(
   std::string& result,
   unsigned depth)
 {
+  if (++_proofSearchCalls > 20000) {
+    return false;
+  }
   std::string goalText;
   if (!formulaToMegalodon(goal, substitution, goalText)) {
     return false;
@@ -3838,6 +3868,9 @@ bool MegalodonChecker::equalityNormalizationScript(Kernel::Formula* goal, const 
 
 bool MegalodonChecker::hypothesisApplicationProofTerm(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::string& result)
 {
+  if (++_proofSearchCalls > 20000) {
+    return false;
+  }
   for (const Hypothesis& hypothesis : hypotheses) {
     Kernel::Formula* body = hypothesis.formula;
     std::vector<unsigned> variables;
@@ -4020,6 +4053,9 @@ bool MegalodonChecker::conjunctionProjectionProofTerm(
 
 bool MegalodonChecker::proofTerm(Kernel::Formula* goal, const std::vector<Hypothesis>& hypotheses, std::string& result, unsigned& nextHyp)
 {
+  if (++_proofSearchCalls > 20000) {
+    return false;
+  }
   std::string goalText;
   if (!formulaToMegalodon(goal, goalText)) {
     return false;
@@ -4145,6 +4181,7 @@ bool MegalodonChecker::tryMegalodonSource(Kernel::Formula* formula, const std::v
   unsigned nextHyp = 0;
   std::string proof;
   std::vector<std::string> proofLines;
+  _proofSearchCalls = 0;
   if (!equalityRewriteScript(formula, hypotheses, proofLines)
     && !equalityNormalizationScript(formula, hypotheses, proofLines)
     && proofTerm(formula, hypotheses, proof, nextHyp)) {

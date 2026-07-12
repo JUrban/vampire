@@ -64,12 +64,30 @@ struct RewriteInferenceExtra : public InferenceExtra {
   RewriteInferenceExtra(Kernel::TermList lhs, Kernel::TermList target)
     : lhs(lhs), rewritten(target) {}
 
+  RewriteInferenceExtra(
+    Kernel::TermList lhs,
+    Kernel::TermList target,
+    Kernel::TermList rhs,
+    Kernel::TermList replacement)
+    : lhs(lhs),
+      rewritten(target),
+      rhs(rhs),
+      replacement(replacement),
+      hasRhs(true),
+      hasReplacement(true) {}
+
   void output(std::ostream &out) const override;
 
   // the LHS used to rewrite with
   Kernel::TermList lhs;
   // the rewritten term
   Kernel::TermList rewritten;
+  // the RHS of the rewrite rule before instantiation, if available
+  Kernel::TermList rhs;
+  // the replacement term after instantiation, if available
+  Kernel::TermList replacement;
+  bool hasRhs = false;
+  bool hasReplacement = false;
 };
 
 struct CNFTransformationInferenceExtra : public InferenceExtra {

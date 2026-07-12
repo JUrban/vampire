@@ -112,6 +112,8 @@ private:
   bool _usesTrue = false;
   bool _usesPropEquality = false;
   bool _renderingReplayExtra = false;
+  unsigned _proofSearchCalls = 0;
+  unsigned _renderDepth = 0;
 };
 
 } // namespace Shell
