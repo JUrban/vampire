@@ -2903,6 +2903,58 @@ bool MegalodonChecker::certificateEqualityResolutionStepJson(Kernel::Unit* unit,
   return emitStep(selected->selectedLiteral);
 }
 
+bool MegalodonChecker::certificateFactorStepJson(Kernel::Unit* unit, std::string& result)
+{
+  const Kernel::InferenceRule& rule = unit->inference().rule();
+  if (!unit->isClause()
+    || (
+      rule != Kernel::InferenceRule::FACTORING
+      && rule != Kernel::InferenceRule::REMOVE_DUPLICATE_LITERALS
+    )) {
+    return false;
+  }
+
+  std::vector<Kernel::Clause*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    if (parent->isClause()) {
+      parents.push_back(parent->asClause());
+    }
+  }
+  if (parents.size() != 1) {
+    return false;
+  }
+  Kernel::Clause* parent = parents[0];
+
+  auto normalizedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
+    for (Kernel::Literal* literal : clause->iterLits()) {
+      std::string rendered;
+      if (!certificateLiteralJson(literal, rendered)) {
+        return false;
+      }
+      literals.push_back(rendered);
+    }
+    std::sort(literals.begin(), literals.end());
+    literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
+    return true;
+  };
+
+  std::vector<std::string> expected;
+  std::vector<std::string> actual;
+  if (!normalizedClause(parent, expected)
+    || !normalizedClause(unit->asClause(), actual)
+    || expected != actual) {
+    return false;
+  }
+  if (parent->length() <= unit->asClause()->length()) {
+    return false;
+  }
+
+  result = "{\"rule\":\"factor\","
+    "\"parents\":["
+    + quote("u" + std::to_string(parent->number())) + "]}";
+  return true;
+}
+
 bool MegalodonChecker::formulaToMegalodon(Kernel::Formula* formula, std::string& result)
 {
   std::map<unsigned, Kernel::TermList> substitution;
@@ -5168,6 +5220,11 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
           << certificateStep
           << ").\n";
     } else if (certificateEqualityResolutionStepJson(u, certificateStep)) {
+      out << "megalodon_certificate_step("
+          << u->number() << ','
+          << certificateStep
+          << ").\n";
+    } else if (certificateFactorStepJson(u, certificateStep)) {
       out << "megalodon_certificate_step("
           << u->number() << ','
           << certificateStep

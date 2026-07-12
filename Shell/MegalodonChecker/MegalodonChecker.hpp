@@ -49,6 +49,7 @@ private:
   bool certificateDefinitionInputStepJson(Kernel::Unit* unit, std::string& result);
   bool certificateResolveStepJson(Kernel::Unit* unit, std::string& result);
   bool certificateEqualityResolutionStepJson(Kernel::Unit* unit, std::string& result);
+  bool certificateFactorStepJson(Kernel::Unit* unit, std::string& result);
   bool signedNameToMegalodon(const std::string& name, std::string& result);
   std::string recoverMegalodonSymbolName(const std::string& tptpName, const std::string& fallbackPrefix);
   std::string decodeMegalodonTptpName(const std::string& tptpName) const;
