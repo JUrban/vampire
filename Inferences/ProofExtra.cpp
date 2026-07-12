@@ -53,6 +53,10 @@ void CNFTransformationInferenceExtra::output(std::ostream &out) const {
   out << "number=" << number;
 }
 
+void CNFClauseInferenceExtra::output(std::ostream &out) const {
+  out << "parent=" << parentNumber << ",index=" << index << ",count=" << count;
+}
+
 void TwoLiteralRewriteInferenceExtra::output(std::ostream &out) const {
   selected.output(out);
   out << ',';

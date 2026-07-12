@@ -100,6 +100,17 @@ struct CNFTransformationInferenceExtra : public InferenceExtra {
   unsigned number;
 };
 
+struct CNFClauseInferenceExtra : public InferenceExtra {
+  CNFClauseInferenceExtra(unsigned int parentNumber, unsigned int index, unsigned int count)
+    : parentNumber(parentNumber), index(index), count(count) {}
+
+  void output(std::ostream &out) const override;
+
+  unsigned parentNumber;
+  unsigned index;
+  unsigned count;
+};
+
 struct TwoLiteralRewriteInferenceExtra : public InferenceExtra {
   TwoLiteralRewriteInferenceExtra(
     Kernel::Literal *selected,

@@ -1417,6 +1417,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const auto* cnfExtra = static_cast<const Inferences::CNFTransformationInferenceExtra*>(parentExtra);
         fields.push_back("parent_clause_count=" + std::to_string(cnfExtra->number));
       }
+      if (extra != nullptr) {
+        const auto* clauseExtra = static_cast<const Inferences::CNFClauseInferenceExtra*>(extra);
+        fields.push_back("clause_parent_unit=" + std::to_string(clauseExtra->parentNumber));
+        fields.push_back("clause_index=" + std::to_string(clauseExtra->index));
+        fields.push_back("clause_count=" + std::to_string(clauseExtra->count));
+      }
       addClauseVariableSortFields(fields, "target", u->asClause());
       addLambdaSubtermFields(fields, "target", u->asClause(), nullptr);
       emit("cnf", fields);

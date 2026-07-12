@@ -47,6 +47,7 @@ void CNF::clausify (Unit* unit,Stack<Clause*>& stack)
 {
   ASS(! unit->isClause());
 
+  size_t firstResult = stack.size();
   _unit = static_cast<FormulaUnit*>(unit);
   _result = &stack;
   _literals.reset();
@@ -61,6 +62,7 @@ void CNF::clausify (Unit* unit,Stack<Clause*>& stack)
       stack.push(Clause::empty(FormulaClauseTransformation(InferenceRule::CLAUSIFY,unit)));
       if(env.options->proofExtra() == Options::ProofExtra::LEAN){
         env.proofExtra.insert(unit, new Inferences::CNFTransformationInferenceExtra(1));
+        env.proofExtra.insert(stack[firstResult], new Inferences::CNFClauseInferenceExtra(unit->number(), 0, 1));
       }
     }
     return;
@@ -68,7 +70,11 @@ void CNF::clausify (Unit* unit,Stack<Clause*>& stack)
     clausify(f);
   }
   if(env.options->proofExtra() == Options::ProofExtra::LEAN){
-    env.proofExtra.insert(unit, new Inferences::CNFTransformationInferenceExtra(_result->size()));
+    size_t count = _result->size() - firstResult;
+    env.proofExtra.insert(unit, new Inferences::CNFTransformationInferenceExtra(count));
+    for (size_t i = 0; i < count; ++i) {
+      env.proofExtra.insert((*_result)[firstResult + i], new Inferences::CNFClauseInferenceExtra(unit->number(), i, count));
+    }
   }
 } // CNF::clausify()
 
