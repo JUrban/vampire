@@ -46,6 +46,8 @@ private:
   bool certificateAtomJson(Kernel::Literal* literal, std::string& result);
   bool certificateLiteralJson(Kernel::Literal* literal, std::string& result);
   bool certificateClauseJson(Kernel::Clause* clause, std::string& result);
+  bool certificateSubstitutedLiteralPreservingEqualityJson(Kernel::Literal* literal, const Kernel::Substitution& substitution, std::string& result);
+  bool certificateSubstitutedClausePreservingEqualityJson(Kernel::Clause* clause, const Kernel::Substitution& substitution, std::string& result);
   bool certificateDefinitionInputStepJson(Kernel::Unit* unit, std::string& result);
   bool certificateResolveStepJson(Kernel::Unit* unit, std::string& result);
   bool certificateEqualityResolutionStepJson(Kernel::Unit* unit, std::string& result);
@@ -53,6 +55,7 @@ private:
   bool certificateParamodulateStepJson(Kernel::Unit* unit, std::string& result);
   bool certificateParamodulateThenSymmetryStepsJson(Kernel::Unit* unit, std::string& result);
   bool certificateSubstitutedResolutionStepsJson(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
+  bool certificateSuperpositionStepsJson(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool signedNameToMegalodon(const std::string& name, std::string& result);
   std::string recoverMegalodonSymbolName(const std::string& tptpName, const std::string& fallbackPrefix);
   std::string decodeMegalodonTptpName(const std::string& tptpName) const;
