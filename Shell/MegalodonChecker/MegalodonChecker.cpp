@@ -2493,7 +2493,16 @@ bool MegalodonChecker::certificateTermJson(Kernel::TermList term, std::string& r
     result = "{\"var\":" + quote(variableName(term.var())) + "}";
     return true;
   }
-  if (term.isApplication() || !term.isTerm() || term.term()->isSpecial()) {
+  if (term.isApplication()) {
+    std::string lhs;
+    std::string rhs;
+    if (!certificateTermJson(term.lhs(), lhs) || !certificateTermJson(term.rhs(), rhs)) {
+      return false;
+    }
+    result = "{\"apply\":[" + lhs + "," + rhs + "]}";
+    return true;
+  }
+  if (!term.isTerm() || term.term()->isSpecial()) {
     return false;
   }
 
@@ -2525,12 +2534,21 @@ bool MegalodonChecker::certificateAtomJson(Kernel::Literal* literal, std::string
 {
   Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
   if (positive->isEquality()) {
+    Kernel::TermList equalityArgumentSort = Kernel::SortHelper::getEqualityArgumentSort(positive);
+    std::string equalitySort;
+    if (!sortToMegalodon(equalityArgumentSort, equalitySort)) {
+      return false;
+    }
     std::string lhs;
     std::string rhs;
     if (!certificateTermJson(*positive->nthArgument(0), lhs) || !certificateTermJson(*positive->nthArgument(1), rhs)) {
       return false;
     }
-    result = "{\"eq\":[" + lhs + "," + rhs + "]}";
+    if (equalitySort == "set") {
+      result = "{\"eq\":[" + lhs + "," + rhs + "]}";
+    } else {
+      result = "{\"eq\":[" + lhs + "," + rhs + "],\"sort\":" + quote(equalitySort) + "}";
+    }
     return true;
   }
 
