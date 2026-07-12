@@ -4011,6 +4011,50 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
     out << ']';
     return out.str();
   };
+  auto rewriteScopeJson = [&](Kernel::Literal* literal, const Kernel::Substitution& substitution, const std::vector<unsigned>& position, std::string& rendered) {
+    if (position.empty()) {
+      return false;
+    }
+    Kernel::Literal* indexed = literal->isEquality()
+      ? literal
+      : (literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal));
+    unsigned arity = indexed->isEquality() ? 2 : indexed->arity();
+    if (position[0] >= arity) {
+      return false;
+    }
+
+    Kernel::TermList current = Kernel::SubstHelper::apply(*indexed->nthArgument(position[0]), substitution);
+    unsigned lambdaDepth = 0;
+    for (std::size_t depth = 1; depth < position.size(); ++depth) {
+      unsigned index = position[depth];
+      if (current.isLambdaTerm() && index == 0) {
+        ++lambdaDepth;
+      }
+      if (current.isApplication()) {
+        if (index > 1) {
+          return false;
+        }
+        current = index == 0 ? current.lhs() : current.rhs();
+        continue;
+      }
+      if (!current.isTerm() || current.term()->isSpecial()) {
+        return false;
+      }
+      if (index >= current.term()->numTermArguments()) {
+        return false;
+      }
+      current = current.term()->termArg(index);
+    }
+
+    auto dbIndex = current.deBruijnIndex();
+    if (dbIndex.isNone() || dbIndex.unwrap() >= lambdaDepth) {
+      return false;
+    }
+    rendered = "\"rewrite_scope\":{\"kind\":\"bound_lambda_var\","
+      "\"lambda_depth\":" + std::to_string(lambdaDepth) + ","
+      "\"db_index\":" + std::to_string(dbIndex.unwrap()) + "},";
+    return true;
+  };
   auto positionsJson = [&](const std::vector<std::vector<unsigned>>& positions) {
     std::ostringstream out;
     out << '[';
@@ -4158,6 +4202,10 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
         std::string positionField = positions.size() == 1
           ? "\"position\":" + positionJson(positions.front()) + ","
           : "\"positions\":" + positionsJson(positions) + ",";
+        std::string rewriteScopeField;
+        if (positions.size() == 1) {
+          rewriteScopeJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], positions.front(), rewriteScopeField);
+        }
         steps.push_back(
           "{\"id\":" + quote(stepBase) + ","
           "\"rule\":\"" + ruleName + "\","
@@ -4170,6 +4218,7 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
           "\"target\":" + targetJson + ","
           "\"rewritten_target\":" + rewrittenTargetJson + ","
           + positionField
+          + rewriteScopeField
           + "\"substitution\":{},"
           "\"clause\":" + conclusionJson + "}");
         result = jsonArray(steps);
@@ -5524,6 +5573,50 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     out << ']';
     return out.str();
   };
+  auto rewriteScopeJson = [&](Kernel::Literal* literal, const Kernel::Substitution& substitution, const std::vector<unsigned>& position, std::string& rendered) {
+    if (position.empty()) {
+      return false;
+    }
+    Kernel::Literal* indexed = literal->isEquality()
+      ? literal
+      : (literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal));
+    unsigned arity = indexed->isEquality() ? 2 : indexed->arity();
+    if (position[0] >= arity) {
+      return false;
+    }
+
+    Kernel::TermList current = Kernel::SubstHelper::apply(*indexed->nthArgument(position[0]), substitution);
+    unsigned lambdaDepth = 0;
+    for (std::size_t depth = 1; depth < position.size(); ++depth) {
+      unsigned index = position[depth];
+      if (current.isLambdaTerm() && index == 0) {
+        ++lambdaDepth;
+      }
+      if (current.isApplication()) {
+        if (index > 1) {
+          return false;
+        }
+        current = index == 0 ? current.lhs() : current.rhs();
+        continue;
+      }
+      if (!current.isTerm() || current.term()->isSpecial()) {
+        return false;
+      }
+      if (index >= current.term()->numTermArguments()) {
+        return false;
+      }
+      current = current.term()->termArg(index);
+    }
+
+    auto dbIndex = current.deBruijnIndex();
+    if (dbIndex.isNone() || dbIndex.unwrap() >= lambdaDepth) {
+      return false;
+    }
+    rendered = "\"rewrite_scope\":{\"kind\":\"bound_lambda_var\","
+      "\"lambda_depth\":" + std::to_string(lambdaDepth) + ","
+      "\"db_index\":" + std::to_string(dbIndex.unwrap()) + "},";
+    return true;
+  };
   auto positionsJson = [&](const std::vector<std::vector<unsigned>>& positions) {
     std::ostringstream out;
     out << '[';
@@ -5956,6 +6049,10 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
       std::string rewritePositionFields = rewrite.positions.size() == 1
         ? "\"position\":" + positionJson(rewrite.positions.front()) + ","
         : "\"positions\":" + positionsJson(rewrite.positions) + ",";
+      std::string rewriteScopeFields;
+      if (rewrite.positions.size() == 1) {
+        rewriteScopeJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], rewrite.positions.front(), rewriteScopeFields);
+      }
       std::string rewriteClauseJson = lastRewrite && finalSymmetryFlips.empty()
         ? conclusionJson
         : jsonArray(currentClause);
@@ -5971,6 +6068,7 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
         "\"target\":" + rewrite.literalJson + ","
         "\"rewritten_target\":" + rewrite.rewrittenJson + ","
         + rewritePositionFields
+        + rewriteScopeFields
         + "\"substitution\":{},"
         "\"clause\":" + rewriteClauseJson + "}");
       currentTargetId = rewriteStepId;
@@ -6028,6 +6126,8 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
         std::string rewriteClauseJson = lastRewrite && finalSymmetryFlips.empty()
           ? conclusionJson
           : jsonArray(currentParamClause);
+        std::string rewriteScopeFields;
+        rewriteScopeJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], rewritePosition, rewriteScopeFields);
         steps.push_back(
           "{\"id\":" + quote(rewriteStepId) + ","
           "\"rule\":\"paramodulate\","
@@ -6040,7 +6140,8 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
           "\"target\":" + currentTargetJson + ","
           "\"rewritten_target\":" + nextTargetJson + ","
           "\"position\":" + positionJson(redexPositions[rewriteIndex]) + ","
-          "\"substitution\":{},"
+          + rewriteScopeFields
+          + "\"substitution\":{},"
           "\"clause\":" + rewriteClauseJson + "}");
         currentTargetId = rewriteStepId;
         currentTargetJson = nextTargetJson;
@@ -6052,6 +6153,12 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
       rewriteFields += simultaneousParamodulation
         ? "\"positions\":" + positionsJson(redexPositions) + ","
         : "\"position\":" + positionJson(position) + ",";
+      if (!simultaneousParamodulation) {
+        std::string rewriteScopeFields;
+        if (rewriteScopeJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], position, rewriteScopeFields)) {
+          rewriteFields += rewriteScopeFields;
+        }
+      }
       steps.push_back(
         "{\"id\":" + quote(paramodulateStepId) + ","
         "\"rule\":\"" + ruleName + "\","
