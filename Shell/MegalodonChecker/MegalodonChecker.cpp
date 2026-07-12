@@ -3867,6 +3867,66 @@ bool MegalodonChecker::certificateCondensationStepsJson(Kernel::Unit* unit, std:
   return false;
 }
 
+bool MegalodonChecker::certificateAvatarRefutationStepJson(Kernel::Unit* unit, std::string& result)
+{
+  const Kernel::InferenceRule& rule = unit->inference().rule();
+  if (!unit->isClause()
+    || (
+      rule != Kernel::InferenceRule::AVATAR_REFUTATION
+      && rule != Kernel::InferenceRule::AVATAR_REFUTATION_SMT
+    )
+    || unit->asClause()->length() != 0) {
+    return false;
+  }
+
+  auto jsonArray = [](const std::vector<std::string>& items) {
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << items[i];
+    }
+    out << ']';
+    return out.str();
+  };
+
+  std::vector<std::string> parentIds;
+  std::vector<std::string> satClauses;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    const auto* extra = env.proofExtra.find(parent);
+    if (extra == nullptr) {
+      return false;
+    }
+    const auto* satExtra = static_cast<const Indexing::SATClauseExtra*>(extra);
+    if (satExtra->clause == nullptr) {
+      return false;
+    }
+    parentIds.push_back(quote("u" + std::to_string(parent->number())));
+
+    std::vector<std::string> literals;
+    for (SATLiteral literal : satExtra->clause->iter()) {
+      std::ostringstream lit;
+      lit << "{\"var\":" << literal.var()
+          << ",\"polarity\":" << (literal.positive() ? "true" : "false")
+          << "}";
+      literals.push_back(lit.str());
+    }
+    satClauses.push_back(jsonArray(literals));
+  }
+  if (parentIds.empty()) {
+    return false;
+  }
+
+  result =
+    "{\"rule\":\"avatar_refutation\","
+    "\"parents\":" + jsonArray(parentIds) + ","
+    "\"sat_clauses\":" + jsonArray(satClauses) + ","
+    "\"clause\":[]}";
+  return true;
+}
+
 bool MegalodonChecker::certificateEqualityFactoringStepJson(
   Kernel::Unit* unit,
   const InferenceRecorder::InferenceInformation* replayInfo,
@@ -9396,6 +9456,11 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
           << ").\n";
     } else if (certificateCondensationStepsJson(u, certificateStep)) {
       out << "megalodon_certificate_steps("
+          << u->number() << ','
+          << certificateStep
+          << ").\n";
+    } else if (certificateAvatarRefutationStepJson(u, certificateStep)) {
+      out << "megalodon_certificate_step("
           << u->number() << ','
           << certificateStep
           << ").\n";
