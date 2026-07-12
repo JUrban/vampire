@@ -57,6 +57,7 @@ bool MegalodonChecker::inferenceNeedsReplayInformation(const Kernel::InferenceRu
     case Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION:
     case Kernel::InferenceRule::EQUALITY_RESOLUTION:
     case Kernel::InferenceRule::EQUALITY_RESOLUTION_WITH_DELETION:
+    case Kernel::InferenceRule::EQUALITY_FACTORING:
     case Kernel::InferenceRule::SUPERPOSITION:
       return true;
     default:
@@ -3177,6 +3178,184 @@ bool MegalodonChecker::certificateFactorStepJson(Kernel::Unit* unit, std::string
   result = "{\"rule\":\"factor\","
     "\"parents\":["
     + quote("u" + std::to_string(parent->number())) + "]}";
+  return true;
+}
+
+bool MegalodonChecker::certificateEqualityFactoringStepJson(
+  Kernel::Unit* unit,
+  const InferenceRecorder::InferenceInformation* replayInfo,
+  std::string& result)
+{
+  if (!unit->isClause()
+    || unit->inference().rule() != Kernel::InferenceRule::EQUALITY_FACTORING
+    || replayInfo == nullptr
+    || replayInfo->premises.size() != 1
+    || replayInfo->substitutionForBanksSub.size() != 1) {
+    return false;
+  }
+  const auto* extra = env.proofExtra.find(unit);
+  if (extra == nullptr) {
+    return false;
+  }
+  const auto* rewrite = static_cast<const Inferences::TwoLiteralRewriteInferenceExtra*>(extra);
+
+  std::vector<Kernel::Clause*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    if (parent->isClause()) {
+      parents.push_back(parent->asClause());
+    }
+  }
+  if (parents.size() != 1 || parents[0] != replayInfo->premises[0]) {
+    return false;
+  }
+  Kernel::Clause* parent = parents[0];
+  const Kernel::Substitution& substitution = replayInfo->substitutionForBanksSub[0];
+  Kernel::Literal* selected = rewrite->selected.selectedLiteral.selectedLiteral;
+  Kernel::Literal* other = rewrite->selected.otherLiteral;
+  Kernel::TermList selectedLhs = rewrite->rewrite.lhs;
+  Kernel::TermList otherRhs = rewrite->rewrite.rewritten;
+
+  auto containsLiteral = [](Kernel::Clause* clause, Kernel::Literal* literal) {
+    if (literal == nullptr) {
+      return false;
+    }
+    for (unsigned i = 0; i < clause->length(); ++i) {
+      if ((*clause)[i] == literal) {
+        return true;
+      }
+    }
+    return false;
+  };
+  if (selected == nullptr
+    || other == nullptr
+    || !selected->isEquality()
+    || !other->isEquality()
+    || !selected->isPositive()
+    || !other->isPositive()
+    || !containsLiteral(parent, selected)
+    || !containsLiteral(parent, other)) {
+    return false;
+  }
+
+  bool selectedLhsIsLeft = selectedLhs == *selected->nthArgument(0);
+  bool selectedLhsIsRight = selectedLhs == *selected->nthArgument(1);
+  bool otherRhsIsLeft = otherRhs == *other->nthArgument(0);
+  bool otherRhsIsRight = otherRhs == *other->nthArgument(1);
+  if ((!selectedLhsIsLeft && !selectedLhsIsRight)
+    || (!otherRhsIsLeft && !otherRhsIsRight)) {
+    return false;
+  }
+  Kernel::TermList selectedRhs = selectedLhsIsLeft
+    ? *selected->nthArgument(1)
+    : *selected->nthArgument(0);
+  Kernel::TermList otherLhs = otherRhsIsLeft
+    ? *other->nthArgument(1)
+    : *other->nthArgument(0);
+
+  Kernel::TermList selectedLhsSubstituted = Kernel::SubstHelper::apply(selectedLhs, substitution);
+  Kernel::TermList otherLhsSubstituted = Kernel::SubstHelper::apply(otherLhs, substitution);
+  if (selectedLhsSubstituted != otherLhsSubstituted) {
+    return false;
+  }
+
+  auto certificateSubstitutionJson = [&](const Kernel::Substitution& substitution, std::string& rendered) {
+    std::vector<std::pair<unsigned, std::string>> items;
+    Kernel::Substitution substitutionCopy = substitution;
+    for (auto [var, term] : iterTraits(substitutionCopy.items())) {
+      if (term.isVar() && term.var() == var) {
+        continue;
+      }
+      std::string termJson;
+      if (!certificateTermJson(term, termJson)) {
+        return false;
+      }
+      items.push_back({var, quote(variableName(var)) + ":" + termJson});
+    }
+    std::sort(items.begin(), items.end(), [](const auto& left, const auto& right) {
+      return left.first < right.first;
+    });
+    std::ostringstream out;
+    out << '{';
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << items[i].second;
+    }
+    out << '}';
+    rendered = out.str();
+    return true;
+  };
+  auto normalizeLiterals = [](std::vector<std::string>& literals) {
+    std::sort(literals.begin(), literals.end());
+    literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
+  };
+  auto normalizedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
+    for (Kernel::Literal* literal : clause->iterLits()) {
+      std::string literalJson;
+      if (!certificateLiteralJson(literal, literalJson)) {
+        return false;
+      }
+      literals.push_back(literalJson);
+    }
+    normalizeLiterals(literals);
+    return true;
+  };
+
+  std::vector<std::string> expected;
+  bool skippedSelected = false;
+  for (unsigned i = 0; i < parent->length(); ++i) {
+    Kernel::Literal* literal = (*parent)[i];
+    if (!skippedSelected && literal == selected) {
+      skippedSelected = true;
+      continue;
+    }
+    std::string literalJson;
+    if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, substitution, literalJson)) {
+      return false;
+    }
+    expected.push_back(literalJson);
+  }
+  if (!skippedSelected) {
+    return false;
+  }
+
+  Kernel::TermList equalityArgumentSort = Kernel::SubstHelper::apply(Kernel::SortHelper::getEqualityArgumentSort(selected), substitution);
+  Kernel::TermList selectedRhsSubstituted = Kernel::SubstHelper::apply(selectedRhs, substitution);
+  Kernel::TermList otherRhsSubstituted = Kernel::SubstHelper::apply(otherRhs, substitution);
+  Kernel::Literal* introduced = Kernel::Literal::createEquality(false, selectedRhsSubstituted, otherRhsSubstituted, equalityArgumentSort);
+  std::string introducedJson;
+  if (!certificateLiteralJson(introduced, introducedJson)) {
+    return false;
+  }
+  expected.push_back(introducedJson);
+  normalizeLiterals(expected);
+
+  std::vector<std::string> actual;
+  if (!normalizedClause(unit->asClause(), actual) || expected != actual) {
+    return false;
+  }
+
+  std::string selectedJson;
+  std::string otherJson;
+  std::string selectedLhsJson;
+  std::string otherRhsJson;
+  std::string substitutionJson;
+  if (!certificateLiteralJson(selected, selectedJson)
+    || !certificateLiteralJson(other, otherJson)
+    || !certificateTermJson(selectedLhs, selectedLhsJson)
+    || !certificateTermJson(otherRhs, otherRhsJson)
+    || !certificateSubstitutionJson(substitution, substitutionJson)) {
+    return false;
+  }
+
+  result = "{\"rule\":\"equality_factoring\","
+    "\"parents\":[" + quote("u" + std::to_string(parent->number())) + "],"
+    "\"selected\":" + selectedJson + ","
+    "\"other\":" + otherJson + ","
+    "\"selected_lhs\":" + selectedLhsJson + ","
+    "\"other_rhs\":" + otherRhsJson + ","
+    "\"substitution\":" + substitutionJson + "}";
   return true;
 }
 
@@ -7210,6 +7389,11 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
             << ").\n";
       }
     } else if (certificateFactorStepJson(u, certificateStep)) {
+      out << "megalodon_certificate_step("
+          << u->number() << ','
+          << certificateStep
+          << ").\n";
+    } else if (certificateEqualityFactoringStepJson(u, replayInfo, certificateStep)) {
       out << "megalodon_certificate_step("
           << u->number() << ','
           << certificateStep
