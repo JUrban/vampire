@@ -131,6 +131,7 @@ private:
   bool appendCertificateSplitLiteralsSexpr(Kernel::Clause* clause, std::vector<std::string>& literals);
   bool appendCertificateClauseLiteralsSexpr(Kernel::Clause* clause, std::vector<std::string>& literals);
   bool certificateClauseSexpr(Kernel::Clause* clause, std::string& result);
+  bool certificateSubstitutionSexpr(const Kernel::Substitution& substitution, std::string& result);
   bool certificateRewriteTermAtMegalodonPosition(Kernel::TermList term, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::TermList& rewritten);
   bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::Literal*& rewritten);
   bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, std::string& rendered);

@@ -65,6 +65,7 @@ bool MegalodonChecker::inferenceNeedsReplayInformation(const Kernel::InferenceRu
     case Kernel::InferenceRule::SUPERPOSITION:
     case Kernel::InferenceRule::FORWARD_DEMODULATION:
     case Kernel::InferenceRule::BACKWARD_DEMODULATION:
+    case Kernel::InferenceRule::RECTIFY:
       return true;
     default:
       return false;
@@ -355,6 +356,33 @@ bool MegalodonChecker::certificateClauseSexpr(Kernel::Clause* clause, std::strin
   out << "(clause";
   for (const std::string& literal : literals) {
     out << ' ' << literal;
+  }
+  out << ')';
+  result = out.str();
+  return true;
+}
+
+bool MegalodonChecker::certificateSubstitutionSexpr(const Kernel::Substitution& substitution, std::string& result)
+{
+  std::vector<std::pair<unsigned, std::string>> items;
+  Kernel::Substitution substitutionCopy = substitution;
+  for (auto [var, term] : iterTraits(substitutionCopy.items())) {
+    if (term.isVar() && term.var() == var) {
+      continue;
+    }
+    std::string termSexpr;
+    if (!certificateTermSexpr(term, termSexpr)) {
+      return false;
+    }
+    items.push_back({var, "(" + sexprQuote(variableName(var)) + " " + termSexpr + ")"});
+  }
+  std::sort(items.begin(), items.end(), [](const auto& left, const auto& right) {
+    return left.first < right.first;
+  });
+  std::ostringstream out;
+  out << "(subst";
+  for (const auto& item : items) {
+    out << ' ' << item.second;
   }
   out << ')';
   result = out.str();
@@ -1318,8 +1346,38 @@ bool MegalodonChecker::certificateRectifyFormulaStepSexpr(Kernel::Unit* unit, st
   if (!certificateFormulaTermSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), resultFormula)) {
     return false;
   }
+  std::string renamings;
+  const auto* genericInfo = InferenceRecorder::instance()->getGenericInferenceInformation(unit->number());
+  if (genericInfo == nullptr) {
+    genericInfo = InferenceRecorder::instance()->getGenericLastInferenceInformation();
+  }
+  const auto* rectifyInfo = static_cast<const InferenceRecorder::RectifyInferenceExtra*>(genericInfo);
+  if (rectifyInfo != nullptr && !rectifyInfo->renamings.empty()) {
+    std::ostringstream out;
+    out << " (renamings";
+    for (const auto& renaming : rectifyInfo->renamings) {
+      Kernel::Formula* newFormula = renaming.first;
+      Kernel::Formula* sourceFormula = renaming.second.first;
+      const Kernel::Substitution& substitution = renaming.second.second;
+      std::string sourceSexpr;
+      std::string targetSexpr;
+      std::string substitutionSexpr;
+      if (!certificateFormulaTermSexpr(sourceFormula, sourceSexpr)
+        || !certificateFormulaTermSexpr(newFormula, targetSexpr)
+        || !certificateSubstitutionSexpr(substitution, substitutionSexpr)) {
+        return false;
+      }
+      out << " (renaming"
+          << " (source (formula " << sourceSexpr << "))"
+          << " " << substitutionSexpr
+          << " (target (formula " << targetSexpr << ")))";
+    }
+    out << ')';
+    renamings = out.str();
+  }
   result = "(rectify_formula " + sexprQuote("u" + std::to_string(unit->number()))
     + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
+    + renamings
     + " (result (formula " + resultFormula + ")))";
   return true;
 }
@@ -6826,7 +6884,7 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
   Kernel::Clause* equalityParent = parents[equalityParentIndex];
   Kernel::Literal* targetLiteral = rewrite->selected.selectedLiteral.selectedLiteral;
   Kernel::Literal* equalityLiteral = rewrite->selected.otherLiteral;
-  if (targetLiteral == nullptr || equalityLiteral == nullptr || !equalityLiteral->isEquality() || !equalityLiteral->isPositive()) {
+  if (targetLiteral == nullptr) {
     return false;
   }
 
@@ -7132,10 +7190,71 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
       }
       return false;
     };
-  unsigned equalityIndex = 0;
   unsigned targetIndex = 0;
-  if (!literalIndex(equalityParent, equalityLiteral, equalityIndex)
-    || !literalIndex(targetParent, targetLiteral, targetIndex)) {
+  if (!literalIndex(targetParent, targetLiteral, targetIndex)) {
+    return false;
+  }
+  Kernel::Literal* targetSubstitutedProbe = Kernel::SubstHelper::apply(
+    targetLiteral,
+    replayInfo->substitutionForBanksSub[targetParentIndex]);
+  std::vector<Kernel::Literal*> equalityCandidates;
+  if (equalityLiteral != nullptr && equalityLiteral->isEquality() && equalityLiteral->isPositive()) {
+    equalityCandidates.push_back(equalityLiteral);
+  }
+  for (Kernel::Literal* candidate : equalityParent->iterLits()) {
+    if (candidate->isEquality()
+      && candidate->isPositive()
+      && std::find(equalityCandidates.begin(), equalityCandidates.end(), candidate) == equalityCandidates.end()) {
+      equalityCandidates.push_back(candidate);
+    }
+  }
+  unsigned equalityIndex = 0;
+  bool foundEqualityCandidate = false;
+  unsigned bestEqualityScore = 0;
+  auto isBooleanConstant = [](Kernel::TermList term) {
+    if (term.isVar() || !term.isTerm()) {
+      return false;
+    }
+    return term.term() == Kernel::Term::foolTrue()
+      || term.term() == Kernel::Term::foolFalse();
+  };
+  auto candidateScore = [&](Kernel::TermList replacement) {
+    if (isBooleanConstant(replacement)) {
+      return 3u;
+    }
+    if (!replacement.isVar()) {
+      return 2u;
+    }
+    return 1u;
+  };
+  for (Kernel::Literal* candidate : equalityCandidates) {
+    Kernel::Literal* substituted = Kernel::SubstHelper::apply(
+      candidate,
+      replayInfo->substitutionForBanksSub[equalityParentIndex]);
+    if (!substituted->isEquality() || !substituted->isPositive()) {
+      continue;
+    }
+    Kernel::TermList left = *substituted->nthArgument(0);
+    Kernel::TermList right = *substituted->nthArgument(1);
+    std::vector<unsigned> probePosition;
+    Kernel::Literal* probeRewritten = nullptr;
+    unsigned score = 0;
+    if (certificateRewriteLiteralAtMegalodonPosition(targetSubstitutedProbe, left, right, probePosition, probeRewritten)) {
+      score = std::max(score, candidateScore(right));
+    }
+    if (certificateRewriteLiteralAtMegalodonPosition(targetSubstitutedProbe, right, left, probePosition, probeRewritten)) {
+      score = std::max(score, candidateScore(left));
+    }
+    unsigned candidateIndex = 0;
+    if (score == 0 || !literalIndex(equalityParent, candidate, candidateIndex) || score < bestEqualityScore) {
+      continue;
+    }
+    equalityLiteral = candidate;
+    equalityIndex = candidateIndex;
+    bestEqualityScore = score;
+    foundEqualityCandidate = true;
+  }
+  if (!foundEqualityCandidate) {
     return false;
   }
 

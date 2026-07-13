@@ -97,6 +97,14 @@ public:
     return nullptr;
   }
 
+  const GenericInferenceInformation *getGenericInferenceInformation(unsigned int id) const
+  {
+    auto it = _inferences.find(id);
+    if (it != _inferences.end())
+      return it->second.get();
+    return nullptr;
+  }
+
   ~InferenceRecorder();
 
   // non-copyable, non-movable
