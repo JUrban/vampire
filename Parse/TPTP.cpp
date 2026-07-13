@@ -60,6 +60,7 @@ static VSList* zipVarsSorts(VList* vars, SList* sorts) {
 #define DEBUG_SHOW_UNITS 0
 #define DEBUG_SOURCE 0
 DHMap<unsigned, std::string> TPTP::_axiomNames;
+DHMap<unsigned, std::string> TPTP::_unitRoles;
 DHMap<unsigned, Map<unsigned,std::string>> TPTP::_questionVariableNames;
 
 //Numbers chosen to avoid clashing with connectives.
@@ -90,6 +91,7 @@ Unit* TPTP::parseFormulaFromString(const std::string& str)
   std::stringstream input(str+")."); // to fake endFOF, which creates the clause
   Parse::TPTP parser(input);
   parser._lastInputType = UnitInputType::AXIOM;
+  parser._lastRole = "axiom";
   parser._bools.push(true);     // true is what fof/tff normally pushes (but we start "from the middle")
   parser._strings.push("dummy_name");
   parser._states.push(END_FOF);  // this is what does the clause building
@@ -1302,6 +1304,7 @@ void TPTP::fof(bool fo)
   consumeToken(T_COMMA);
   tok = getTok(0);
   std::string tp = name();
+  _lastRole = tp;
 
   _isQuestion = false;
   if(_modelDefinition){
@@ -1377,6 +1380,7 @@ void TPTP::tff()
   consumeToken(T_COMMA);
   tok = getTok(0);
   std::string tp = name();
+  _lastRole = tp;
   if (tp == "type") {
     // Read a TPTP type declaration.
     consumeToken(T_COMMA);
@@ -3724,6 +3728,7 @@ void TPTP::endFof()
   if (env.options->outputAxiomNames()) {
     assignAxiomName(original,nm);
   }
+  assignUnitRole(original, _lastRole);
 #if DEBUG_SHOW_UNITS
   cout << "Unit: " << unit->toString() << "\n";
 #endif
@@ -4854,6 +4859,11 @@ void TPTP::assignAxiomName(const Unit* unit, std::string& name)
   ALWAYS(_axiomNames.insert(unit->number(), name));
 } // TPTP::assignAxiomName
 
+void TPTP::assignUnitRole(const Unit* unit, const std::string& role)
+{
+  ALWAYS(_unitRoles.insert(unit->number(), role));
+} // TPTP::assignUnitRole
+
 /**
  * If @b unit has a name associated, assign it into @b result,
  * and return true; otherwise return false
@@ -4862,6 +4872,11 @@ bool TPTP::findAxiomName(const Unit* unit, std::string& result)
 {
   return _axiomNames.find(unit->number(), result);
 } // TPTP::findAxiomName
+
+bool TPTP::findUnitRole(const Unit* unit, std::string& result)
+{
+  return _unitRoles.find(unit->number(), result);
+} // TPTP::findUnitRole
 
 /**
  * Process vampire() declaration

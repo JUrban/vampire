@@ -1062,6 +1062,12 @@ bool MegalodonChecker::certificateSource(Kernel::Unit* unit, std::string& result
   } else if (unit->inputType() == Kernel::UnitInputType::CONJECTURE) {
     sourceKind = "conjecture";
   }
+  std::string sourceRole;
+  if (sourceKind == "axiom"
+    && Parse::TPTP::findUnitRole(sourceUnit, sourceRole)
+    && sourceRole == "definition") {
+    sourceKind = "definition";
+  }
 
   std::string sourceName = "u" + std::to_string(sourceUnit->number());
   std::string axiomName;

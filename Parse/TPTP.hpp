@@ -344,6 +344,8 @@ public:
   static bool findAxiomName(const Unit* unit, std::string& result);
   //this function is used also by the API
   static void assignAxiomName(const Unit* unit, std::string& name);
+  static bool findUnitRole(const Unit* unit, std::string& result);
+  static void assignUnitRole(const Unit* unit, const std::string& role);
   unsigned lineNumber(){ return currentFile.lineNumber; }
   std::string currentPath(){ return currentFile.path; }
 
@@ -553,6 +555,8 @@ private:
   Stack<State> _states;
   /** input type of the last read unit */ // it must be int since -1 can be used as a value
   UnitInputType _lastInputType;
+  /** original TPTP role of the last read unit, before mapping to UnitInputType */
+  std::string _lastRole;
   /** true if the last read unit is a question */
   bool _isQuestion = false;
   /** */
@@ -865,6 +869,9 @@ private:
    * output_axiom_names option is enabled */
   static DHMap<unsigned, std::string> _axiomNames;
 
+  /** This field stores original TPTP formula roles for source reconstruction. */
+  static DHMap<unsigned, std::string> _unitRoles;
+
   /**
    * During question parsing, we store the mapping from int variables
    * back to their original (v)string names, for nicer user reporting.
@@ -897,4 +904,3 @@ private:
 }
 
 #endif
-
