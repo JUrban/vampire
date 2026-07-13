@@ -1716,6 +1716,353 @@ bool MegalodonChecker::certificateDefinitionInputStepSexpr(Kernel::Unit* unit, s
   return true;
 }
 
+bool MegalodonChecker::certificateDefinitionRewriteStepsSexpr(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::DEFINITION_UNFOLDING) {
+    return false;
+  }
+
+  std::vector<Kernel::Unit*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    parents.push_back(parent);
+  }
+  if (parents.size() < 2 || !parents[0]->isClause()) {
+    return false;
+  }
+  for (std::size_t i = 1; i < parents.size(); ++i) {
+    if (!parents[i]->isClause()) {
+      return false;
+    }
+  }
+
+  auto sameMultiset = [](std::vector<std::string> left, std::vector<std::string> right) {
+    std::sort(left.begin(), left.end());
+    std::sort(right.begin(), right.end());
+    return left == right;
+  };
+  auto clauseSexprFromLiterals =
+    [&](const std::vector<Kernel::Literal*>& literals, Kernel::Clause* splitSource) {
+      std::ostringstream out;
+      out << "(clause";
+      for (Kernel::Literal* literal : literals) {
+        std::string rendered;
+        if (!certificateLiteralSexpr(literal, rendered)) {
+          return std::string();
+        }
+        out << ' ' << rendered;
+      }
+      std::vector<std::string> splitLiterals;
+      if (!appendCertificateSplitLiteralsSexpr(splitSource, splitLiterals)) {
+        return std::string();
+      }
+      for (const std::string& splitLiteral : splitLiterals) {
+        out << ' ' << splitLiteral;
+      }
+      out << ')';
+      return out.str();
+    };
+  auto clauseLiteralsSexpr =
+    [&](const std::vector<Kernel::Literal*>& literals, Kernel::Clause* splitSource, std::vector<std::string>& rendered) {
+      rendered.clear();
+      for (Kernel::Literal* literal : literals) {
+        std::string literalSexpr;
+        if (!certificateLiteralSexpr(literal, literalSexpr)) {
+          return false;
+        }
+        rendered.push_back(literalSexpr);
+      }
+      return appendCertificateSplitLiteralsSexpr(splitSource, rendered);
+    };
+  auto matchTerm =
+    [&](auto&& self,
+        Kernel::TermList pattern,
+        Kernel::TermList target,
+        std::map<unsigned, Kernel::TermList>& bindings) -> bool {
+      if (pattern.isVar()) {
+        auto existing = bindings.find(pattern.var());
+        if (existing == bindings.end()) {
+          bindings.emplace(pattern.var(), target);
+          return true;
+        }
+        return existing->second == target;
+      }
+      if (pattern.isApplication() || target.isApplication()) {
+        return pattern.isApplication()
+          && target.isApplication()
+          && self(self, pattern.lhs(), target.lhs(), bindings)
+          && self(self, pattern.rhs(), target.rhs(), bindings);
+      }
+      if (!pattern.isTerm() || !target.isTerm()) {
+        return pattern == target;
+      }
+      Kernel::Term* patternTerm = pattern.term();
+      Kernel::Term* targetTerm = target.term();
+      if (patternTerm->functor() != targetTerm->functor()
+        || patternTerm->arity() != targetTerm->arity()) {
+        return false;
+      }
+      for (unsigned index = 0; index < patternTerm->arity(); ++index) {
+        if (!self(self, *patternTerm->nthArgument(index), *targetTerm->nthArgument(index), bindings)) {
+          return false;
+        }
+      }
+      return true;
+    };
+  auto instantiateTerm =
+    [&](auto&& self,
+        Kernel::TermList pattern,
+        const std::map<unsigned, Kernel::TermList>& bindings,
+        Kernel::TermList& instantiated) -> bool {
+      if (pattern.isVar()) {
+        auto found = bindings.find(pattern.var());
+        instantiated = found == bindings.end() ? pattern : found->second;
+        return true;
+      }
+      if (pattern.isApplication()) {
+        Kernel::TermList lhs;
+        Kernel::TermList rhs;
+        if (!self(self, pattern.lhs(), bindings, lhs)
+          || !self(self, pattern.rhs(), bindings, rhs)) {
+          return false;
+        }
+        instantiated = HOL::create::app(*pattern.term()->nthArgument(0), *pattern.term()->nthArgument(1), lhs, rhs);
+        return true;
+      }
+      if (!pattern.isTerm()) {
+        instantiated = pattern;
+        return true;
+      }
+      Kernel::Term* patternTerm = pattern.term();
+      Stack<Kernel::TermList> args;
+      for (unsigned i = 0; i < patternTerm->arity(); ++i) {
+        Kernel::TermList arg;
+        if (!self(self, *patternTerm->nthArgument(i), bindings, arg)) {
+          return false;
+        }
+        args.push(arg);
+      }
+      instantiated = patternTerm->isSort()
+        ? Kernel::TermList(Kernel::AtomicSort::create(static_cast<Kernel::AtomicSort*>(patternTerm), args.begin()))
+        : Kernel::TermList(Kernel::Term::create(patternTerm, args.begin()));
+      return true;
+    };
+  struct DefinitionMatch {
+    std::map<unsigned, Kernel::TermList> bindings;
+  };
+  auto collectMatches =
+    [&](auto&& self,
+        Kernel::TermList term,
+        Kernel::TermList pattern,
+        std::vector<DefinitionMatch>& matches) -> void {
+      std::map<unsigned, Kernel::TermList> bindings;
+      if (matchTerm(matchTerm, pattern, term, bindings)) {
+        matches.push_back({bindings});
+      }
+      if (term.isVar()) {
+        return;
+      }
+      if (term.isApplication()) {
+        self(self, term.lhs(), pattern, matches);
+        self(self, term.rhs(), pattern, matches);
+        return;
+      }
+      Kernel::Term* termPtr = term.term();
+      for (unsigned i = 0; i < termPtr->numTermArguments(); ++i) {
+        self(self, termPtr->termArg(i), pattern, matches);
+      }
+    };
+  auto substitutionSexprFromBindings =
+    [&](const std::map<unsigned, Kernel::TermList>& bindings, std::string& rendered, bool& nonIdentity) {
+      std::vector<std::pair<unsigned, std::string>> items;
+      nonIdentity = false;
+      for (const auto& binding : bindings) {
+        if (binding.second.isVar() && binding.second.var() == binding.first) {
+          continue;
+        }
+        std::string termSexpr;
+        if (!certificateTermSexpr(binding.second, termSexpr)) {
+          return false;
+        }
+        nonIdentity = true;
+        items.push_back({binding.first, "(" + sexprQuote(variableName(binding.first)) + " " + termSexpr + ")"});
+      }
+      std::sort(items.begin(), items.end(), [](const auto& left, const auto& right) {
+        return left.first < right.first;
+      });
+      std::ostringstream out;
+      out << "(subst";
+      for (const auto& item : items) {
+        out << ' ' << item.second;
+      }
+      out << ')';
+      rendered = out.str();
+      return true;
+    };
+  auto substitutedDefinitionClauseSexpr =
+    [&](Kernel::Clause* clause, const Kernel::Substitution& substitution, std::string& rendered) {
+      std::ostringstream out;
+      out << "(clause";
+      for (Kernel::Literal* literal : clause->iterLits()) {
+        std::string literalSexpr;
+        if (literal->isEquality()) {
+          std::string lhs;
+          std::string rhs;
+          Kernel::TermList lhsTerm = Kernel::SubstHelper::apply(*literal->nthArgument(0), substitution);
+          Kernel::TermList rhsTerm = Kernel::SubstHelper::apply(*literal->nthArgument(1), substitution);
+          if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
+            return false;
+          }
+          literalSexpr = std::string("(") + (literal->isPositive() ? "pos " : "neg ")
+            + "(AP (AP (TMH \"=\") " + lhs + ") " + rhs + "))";
+        } else {
+          Kernel::Literal* substitutedLiteral = Kernel::SubstHelper::apply(literal, substitution);
+          if (!certificateLiteralSexpr(substitutedLiteral, literalSexpr)) {
+            return false;
+          }
+        }
+        out << ' ' << literalSexpr;
+      }
+      std::vector<std::string> splitLiterals;
+      if (!appendCertificateSplitLiteralsSexpr(clause, splitLiterals)) {
+        return false;
+      }
+      for (const std::string& splitLiteral : splitLiterals) {
+        out << ' ' << splitLiteral;
+      }
+      out << ')';
+      rendered = out.str();
+      return true;
+    };
+
+  Kernel::Clause* source = parents[0]->asClause();
+  std::vector<Kernel::Literal*> currentClause;
+  for (Kernel::Literal* literal : source->iterLits()) {
+    currentClause.push_back(literal);
+  }
+  std::vector<std::string> actual;
+  if (!appendCertificateClauseLiteralsSexpr(unit->asClause(), actual)) {
+    return false;
+  }
+
+  const std::string unitId = "u" + std::to_string(unit->number());
+  std::string currentParentId = "u" + std::to_string(source->number());
+  std::vector<std::string> steps;
+
+  for (std::size_t parentIndex = 1; parentIndex < parents.size(); ++parentIndex) {
+    Kernel::Clause* definitionParent = parents[parentIndex]->asClause();
+    if (definitionParent->length() != 1) {
+      return false;
+    }
+    Kernel::Literal* definitionEquality = (*definitionParent)[0];
+    if (!definitionEquality->isEquality() || !definitionEquality->isPositive()) {
+      return false;
+    }
+
+    bool foundRewrite = false;
+    for (unsigned direction = 0; direction < 2 && !foundRewrite; ++direction) {
+      Kernel::TermList patternFrom = *definitionEquality->nthArgument(direction == 0 ? 0 : 1);
+      Kernel::TermList patternTo = *definitionEquality->nthArgument(direction == 0 ? 1 : 0);
+      for (std::size_t literalIndex = 0; literalIndex < currentClause.size() && !foundRewrite; ++literalIndex) {
+        Kernel::Literal* currentLiteral = currentClause[literalIndex];
+        std::vector<DefinitionMatch> matches;
+        for (unsigned argumentIndex = 0; argumentIndex < currentLiteral->arity(); ++argumentIndex) {
+          collectMatches(collectMatches, *currentLiteral->nthArgument(argumentIndex), patternFrom, matches);
+        }
+        for (const DefinitionMatch& match : matches) {
+          Kernel::TermList from;
+          Kernel::TermList to;
+          if (!instantiateTerm(instantiateTerm, patternFrom, match.bindings, from)
+            || !instantiateTerm(instantiateTerm, patternTo, match.bindings, to)) {
+            return false;
+          }
+          Kernel::Literal* rewrittenLiteral = nullptr;
+          std::vector<unsigned> nativePosition;
+          if (!certificateRewriteLiteralAtMegalodonPosition(currentLiteral, from, to, nativePosition, rewrittenLiteral)) {
+            continue;
+          }
+          std::vector<Kernel::Literal*> nextClause = currentClause;
+          nextClause[literalIndex] = rewrittenLiteral;
+          std::vector<std::string> nextRendered;
+          if (!clauseLiteralsSexpr(nextClause, source, nextRendered)) {
+            return false;
+          }
+          const bool isLast = parentIndex + 1 == parents.size();
+          if (isLast && !sameMultiset(nextRendered, actual)) {
+            continue;
+          }
+
+          std::string definitionParentId = "u" + std::to_string(definitionParent->number());
+          std::string definitionSubst;
+          bool nonIdentityDefinitionSubstitution = false;
+          if (!substitutionSexprFromBindings(match.bindings, definitionSubst, nonIdentityDefinitionSubstitution)) {
+            return false;
+          }
+          if (nonIdentityDefinitionSubstitution) {
+            Kernel::Substitution substitution;
+            for (const auto& binding : match.bindings) {
+              substitution.rebind(binding.first, binding.second);
+            }
+            std::string substitutedDefinition;
+            if (!substitutedDefinitionClauseSexpr(definitionParent, substitution, substitutedDefinition)) {
+              return false;
+            }
+            definitionParentId = unitId + "_def_subst" + std::to_string(parentIndex - 1);
+            steps.push_back(
+              "(substitute " + sexprQuote(definitionParentId)
+              + " (parent " + sexprQuote("u" + std::to_string(definitionParent->number())) + ") "
+              + definitionSubst
+              + " (result " + substitutedDefinition + "))");
+          }
+
+          std::string fromSexpr;
+          std::string toSexpr;
+          if (!certificateTermSexpr(from, fromSexpr) || !certificateTermSexpr(to, toSexpr)) {
+            return false;
+          }
+          const std::string stepId = isLast ? unitId : unitId + "_def_rewrite" + std::to_string(parentIndex - 1);
+          std::string resultClause;
+          if (isLast) {
+            if (!certificateClauseSexpr(unit->asClause(), resultClause)) {
+              return false;
+            }
+          } else {
+            resultClause = clauseSexprFromLiterals(nextClause, source);
+          }
+          if (resultClause.empty()) {
+            return false;
+          }
+          steps.push_back(
+            "(paramodulate " + sexprQuote(stepId)
+            + " (equality " + sexprQuote(definitionParentId) + " 0)"
+            + " (target " + sexprQuote(currentParentId) + " " + std::to_string(literalIndex) + ") "
+            + certificatePositionSexpr(nativePosition)
+            + " (from " + fromSexpr + ")"
+            + " (to " + toSexpr + ")"
+            + " (result " + resultClause + "))");
+
+          currentClause = nextClause;
+          currentParentId = stepId;
+          foundRewrite = true;
+          break;
+        }
+      }
+    }
+    if (!foundRewrite) {
+      return false;
+    }
+  }
+
+  std::ostringstream out;
+  for (std::size_t i = 0; i < steps.size(); ++i) {
+    if (i != 0) {
+      out << "\n  ";
+    }
+    out << steps[i];
+  }
+  result = out.str();
+  return true;
+}
+
 bool MegalodonChecker::certificateDefinitionFoldingStepsSexpr(Kernel::Unit* unit, std::string& result)
 {
   if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::DEFINITION_FOLDING_TWEE) {
@@ -6256,6 +6603,7 @@ bool MegalodonChecker::certificateNativeStepSexpr(
     || certificateAvatarComponentStepSexpr(unit, result)
     || certificateAvatarRefutationStepSexpr(unit, result)
     || certificateCondensationStepSexpr(unit, result)
+    || certificateDefinitionRewriteStepsSexpr(unit, result)
     || certificateDefinitionFoldingStepsSexpr(unit, result)
     || certificateFoolExhaustivenessStepSexpr(unit, result)
     || certificateFoolDistinctnessStepSexpr(unit, result)
