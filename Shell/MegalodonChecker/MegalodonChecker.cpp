@@ -522,6 +522,88 @@ bool MegalodonChecker::certificateCondensationStepSexpr(Kernel::Unit* unit, std:
     literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
     return true;
   };
+  auto clauseSexprFromLiterals = [](const std::vector<std::string>& literals) {
+    std::ostringstream out;
+    out << "(clause";
+    for (const std::string& literal : literals) {
+      out << ' ' << literal;
+    }
+    out << ')';
+    return out.str();
+  };
+  auto sameMultiset = [](std::vector<std::string> left, std::vector<std::string> right) {
+    std::sort(left.begin(), left.end());
+    std::sort(right.begin(), right.end());
+    return left == right;
+  };
+  auto literalMultiplicity =
+    [](const std::vector<std::string>& literals, const std::string& literal) {
+      return static_cast<unsigned>(std::count(literals.begin(), literals.end(), literal));
+    };
+  auto removeAt = [](const std::vector<std::string>& literals, unsigned index) {
+    std::vector<std::string> result;
+    result.reserve(literals.size() == 0 ? 0 : literals.size() - 1);
+    for (unsigned i = 0; i < literals.size(); ++i) {
+      if (i != index) {
+        result.push_back(literals[i]);
+      }
+    }
+    return result;
+  };
+  auto swappedEqualityLiteral = [&](const std::string& literal, std::string& swapped) {
+    const std::string posPrefix = "(pos (AP (AP (TMH \"=\") ";
+    const std::string negPrefix = "(neg (AP (AP (TMH \"=\") ";
+    std::string prefix;
+    if (literal.rfind(posPrefix, 0) == 0) {
+      prefix = posPrefix;
+    } else if (literal.rfind(negPrefix, 0) == 0) {
+      prefix = negPrefix;
+    } else {
+      return false;
+    }
+    std::size_t leftStart = prefix.size();
+    auto termEnd = [&](std::size_t start, std::size_t& end) {
+      if (start >= literal.size()) {
+        return false;
+      }
+      if (literal[start] != '(') {
+        end = literal.find_first_of(" )", start);
+        return end != std::string::npos;
+      }
+      int depth = 0;
+      for (std::size_t i = start; i < literal.size(); ++i) {
+        if (literal[i] == '(') {
+          ++depth;
+        } else if (literal[i] == ')') {
+          --depth;
+          if (depth == 0) {
+            end = i + 1;
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+    std::size_t leftEnd = std::string::npos;
+    if (!termEnd(leftStart, leftEnd)
+      || leftEnd + 2 >= literal.size()
+      || literal[leftEnd] != ')'
+      || literal[leftEnd + 1] != ' ') {
+      return false;
+    }
+    std::string left = literal.substr(leftStart, leftEnd - leftStart);
+    std::size_t rightStart = leftEnd + 2;
+    std::size_t rightEnd = std::string::npos;
+    if (!termEnd(rightStart, rightEnd)
+      || rightEnd + 2 != literal.size()
+      || literal[rightEnd] != ')'
+      || literal[rightEnd + 1] != ')') {
+      return false;
+    }
+    std::string right = literal.substr(rightStart, rightEnd - rightStart);
+    swapped = prefix + right + ") " + left + "))";
+    return true;
+  };
 
   auto matchTerm = [&](auto&& self, Kernel::TermList pattern, Kernel::TermList target, std::map<unsigned, Kernel::TermList>& bindings) -> bool {
     if (pattern.isVar()) {
@@ -531,6 +613,12 @@ bool MegalodonChecker::certificateCondensationStepSexpr(Kernel::Unit* unit, std:
         return true;
       }
       return existing->second == target;
+    }
+    if (pattern.isApplication() || target.isApplication()) {
+      return pattern.isApplication()
+        && target.isApplication()
+        && self(self, pattern.lhs(), target.lhs(), bindings)
+        && self(self, pattern.rhs(), target.rhs(), bindings);
     }
     if (!pattern.isTerm() || !target.isTerm()) {
       return pattern == target;
@@ -635,26 +723,114 @@ bool MegalodonChecker::certificateCondensationStepSexpr(Kernel::Unit* unit, std:
       substitution.rebind(binding.first, binding.second);
     }
 
-    std::vector<std::string> substituted;
-    if (!substitutedParentLiterals(substitution, substituted)) {
+    std::vector<std::string> substitutedRaw;
+    if (!substitutedParentLiterals(substitution, substitutedRaw)) {
       continue;
     }
+    std::vector<std::string> substituted = substitutedRaw;
     std::sort(substituted.begin(), substituted.end());
     substituted.erase(std::unique(substituted.begin(), substituted.end()), substituted.end());
-    if (substituted != actual) {
-      continue;
-    }
 
     std::string subst;
-    std::string renderedClause;
-    if (!substitutionSexpr(substitution, subst)
-      || !certificateClauseSexpr(child, renderedClause)) {
+    if (!substitutionSexpr(substitution, subst)) {
       return false;
     }
-    result = "(condensation " + sexprQuote("u" + std::to_string(unit->number()))
+    if (substituted == actual) {
+      std::string renderedClause;
+      if (!certificateClauseSexpr(child, renderedClause)) {
+        return false;
+      }
+      result = "(condensation " + sexprQuote("u" + std::to_string(unit->number()))
+        + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ") "
+        + subst
+        + " (result " + renderedClause + "))";
+      return true;
+    }
+
+    std::vector<std::string> actualRaw;
+    if (!appendCertificateClauseLiteralsSexpr(child, actualRaw)) {
+      return false;
+    }
+    std::vector<std::string> steps;
+    const std::string stepBase = "u" + std::to_string(unit->number());
+    std::string currentParentId = stepBase + "_subst0";
+    std::vector<std::string> current = substitutedRaw;
+    steps.push_back(
+      "(substitute " + sexprQuote(currentParentId)
       + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ") "
       + subst
-      + " (result " + renderedClause + "))";
+      + " (result " + clauseSexprFromLiterals(current) + "))");
+
+    unsigned symmetryCount = 0;
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      for (unsigned index = 0; index < current.size(); ++index) {
+        if (literalMultiplicity(current, current[index]) <= literalMultiplicity(actualRaw, current[index])) {
+          continue;
+        }
+        std::string swapped;
+        if (!swappedEqualityLiteral(current[index], swapped)
+          || literalMultiplicity(actualRaw, swapped) == 0) {
+          continue;
+        }
+        std::vector<std::string> next = current;
+        next[index] = swapped;
+        const std::string symmetryId = stepBase + "_symmetry" + std::to_string(symmetryCount++);
+        steps.push_back(
+          "(equality_symmetry " + sexprQuote(symmetryId)
+          + " (parent " + sexprQuote(currentParentId) + ")"
+          + " (literal " + std::to_string(index) + ")"
+          + " (result " + clauseSexprFromLiterals(next) + "))");
+        current = next;
+        currentParentId = symmetryId;
+        changed = true;
+        break;
+      }
+    }
+
+    unsigned factorCount = 0;
+    changed = true;
+    while (changed) {
+      changed = false;
+      for (unsigned left = 0; left < current.size() && !changed; ++left) {
+        for (unsigned right = left + 1; right < current.size(); ++right) {
+          if (current[left] != current[right]) {
+            continue;
+          }
+          if (literalMultiplicity(current, current[left]) <= literalMultiplicity(actualRaw, current[left])) {
+            continue;
+          }
+          std::vector<std::string> next = removeAt(current, right);
+          const std::string factorId = stepBase + "_factor" + std::to_string(factorCount++);
+          steps.push_back(
+            "(factor " + sexprQuote(factorId)
+            + " (parent " + sexprQuote(currentParentId) + ")"
+            + " (literals " + std::to_string(left) + " " + std::to_string(right) + ")"
+            + " (result " + clauseSexprFromLiterals(next) + "))");
+          current = next;
+          currentParentId = factorId;
+          changed = true;
+          break;
+        }
+      }
+    }
+
+    if (!sameMultiset(current, actualRaw)) {
+      continue;
+    }
+    steps.push_back(
+      "(substitute " + sexprQuote(stepBase)
+      + " (parent " + sexprQuote(currentParentId) + ") (subst)"
+      + " (result " + clauseSexprFromLiterals(actualRaw) + "))");
+    std::ostringstream out;
+    for (std::size_t i = 0; i < steps.size(); ++i) {
+      if (i != 0) {
+        out << "\n  ";
+      }
+      out << steps[i];
+    }
+    result = out.str();
     return true;
   }
 
@@ -1769,20 +1945,6 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     rendered = out.str();
     return true;
   };
-  auto renderClause = [&](const std::vector<Kernel::Literal*>& literals, std::string& rendered) {
-    std::ostringstream out;
-    out << "(clause";
-    for (Kernel::Literal* literal : literals) {
-      std::string literalSexpr;
-      if (!certificateLiteralSexpr(literal, literalSexpr)) {
-        return false;
-      }
-      out << ' ' << literalSexpr;
-    }
-    out << ')';
-    rendered = out.str();
-    return true;
-  };
   auto renderedLiterals = [&](const std::vector<Kernel::Literal*>& literals, std::vector<std::string>& rendered) {
     rendered.clear();
     for (Kernel::Literal* literal : literals) {
@@ -1802,6 +1964,71 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     }
     out << ')';
     return out.str();
+  };
+  auto complementLiteralSexpr = [](const std::string& literal, std::string& complement) {
+    if (literal.rfind("(pos ", 0) == 0) {
+      complement = "(neg " + literal.substr(5);
+      return true;
+    }
+    if (literal.rfind("(neg ", 0) == 0) {
+      complement = "(pos " + literal.substr(5);
+      return true;
+    }
+    return false;
+  };
+  auto swappedEqualityLiteral = [](const std::string& literal, std::string& swapped) {
+    const std::string posPrefix = "(pos (AP (AP (TMH \"=\") ";
+    const std::string negPrefix = "(neg (AP (AP (TMH \"=\") ";
+    std::string prefix;
+    if (literal.rfind(posPrefix, 0) == 0) {
+      prefix = posPrefix;
+    } else if (literal.rfind(negPrefix, 0) == 0) {
+      prefix = negPrefix;
+    } else {
+      return false;
+    }
+    std::size_t leftStart = prefix.size();
+    auto termEnd = [&](std::size_t start, std::size_t& end) {
+      if (start >= literal.size()) {
+        return false;
+      }
+      if (literal[start] != '(') {
+        end = literal.find_first_of(" )", start);
+        return end != std::string::npos;
+      }
+      int depth = 0;
+      for (std::size_t i = start; i < literal.size(); ++i) {
+        if (literal[i] == '(') {
+          ++depth;
+        } else if (literal[i] == ')') {
+          --depth;
+          if (depth == 0) {
+            end = i + 1;
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+    std::size_t leftEnd = std::string::npos;
+    if (!termEnd(leftStart, leftEnd)
+      || leftEnd + 2 >= literal.size()
+      || literal[leftEnd] != ')'
+      || literal[leftEnd + 1] != ' ') {
+      return false;
+    }
+    std::string left = literal.substr(leftStart, leftEnd - leftStart);
+    std::size_t rightStart = leftEnd + 2;
+    std::size_t rightEnd = std::string::npos;
+    if (!termEnd(rightStart, rightEnd)
+      || rightEnd + 2 != literal.size()
+      || literal[rightEnd] != ')'
+      || literal[rightEnd + 1] != ')') {
+      return false;
+    }
+    std::string right = literal.substr(rightStart, rightEnd - rightStart);
+    swapped = prefix + right + ") " + left + "))";
+    return true;
   };
   auto replaceAll = [](std::string& text, const std::string& from, const std::string& to) {
     if (from.empty()) {
@@ -1845,6 +2072,10 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     std::sort(literals.begin(), literals.end());
     return literals;
   };
+  auto literalMultiplicity =
+    [](const std::vector<std::string>& literals, const std::string& literal) {
+      return static_cast<unsigned>(std::count(literals.begin(), literals.end(), literal));
+    };
   auto swapEqualityLiteral = [&](Kernel::Literal* literal) -> Kernel::Literal* {
     if (literal == nullptr || !literal->isEquality()) {
       return nullptr;
@@ -1869,11 +2100,15 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
       rhs,
       Kernel::SortHelper::getEqualityArgumentSort(positive));
   };
-  auto samePolarityAndAtom = [](Kernel::Literal* left, Kernel::Literal* right) {
-    return left != nullptr
-      && right != nullptr
-      && left->isPositive() == right->isPositive()
-      && left->toString() == right->toString();
+  auto samePolarityAndAtom = [&](Kernel::Literal* left, Kernel::Literal* right) {
+    if (left == nullptr || right == nullptr || left->isPositive() != right->isPositive()) {
+      return false;
+    }
+    std::string leftRendered;
+    std::string rightRendered;
+    return certificateLiteralSexpr(left, leftRendered)
+      && certificateLiteralSexpr(right, rightRendered)
+      && leftRendered == rightRendered;
   };
 
   std::vector<Kernel::Literal*> currentLiterals;
@@ -1881,7 +2116,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     currentLiterals.push_back(literal);
   }
   std::vector<std::string> currentRendered;
-  if (!renderedLiterals(currentLiterals, currentRendered)) {
+  if (!appendCertificateClauseLiteralsSexpr(urr->mainParent, currentRendered)) {
     return false;
   }
   std::string currentParentId = "u" + std::to_string(urr->mainParent->number());
@@ -1892,12 +2127,26 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     const auto& trace = urr->steps[traceIndex];
     Kernel::Substitution currentSubstitution;
     int selectedIndex = -1;
-    for (std::size_t i = 0; i < currentLiterals.size(); ++i) {
-      Kernel::Substitution attempt;
-      if (matchLiteral(currentLiterals[i], trace.selectedSubstituted, attempt)) {
-        currentSubstitution = cloneSubstitution(attempt);
-        selectedIndex = static_cast<int>(i);
-        break;
+    std::string traceSelectedLiteralSexpr;
+    if (!certificateLiteralSexpr(trace.selected, traceSelectedLiteralSexpr)) {
+      return false;
+    }
+    unsigned selectionPasses = traceIndex == 0 ? 2 : 1;
+    for (unsigned pass = 0; pass < selectionPasses && selectedIndex < 0; ++pass) {
+      for (std::size_t i = 0; i < currentLiterals.size(); ++i) {
+        if (selectionPasses == 2 && pass == 0) {
+          std::string currentLiteralSexpr;
+          if (!certificateLiteralSexpr(currentLiterals[i], currentLiteralSexpr)
+            || currentLiteralSexpr != traceSelectedLiteralSexpr) {
+            continue;
+          }
+        }
+        Kernel::Substitution attempt;
+        if (matchLiteral(currentLiterals[i], trace.selectedSubstituted, attempt)) {
+          currentSubstitution = cloneSubstitution(attempt);
+          selectedIndex = static_cast<int>(i);
+          break;
+        }
       }
     }
     if (selectedIndex < 0) {
@@ -1937,10 +2186,12 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
       }
       std::vector<Kernel::Literal*> symmetryClause = currentLiterals;
       symmetryClause[selectedIndex] = swapped;
-      std::vector<std::string> symmetryRendered;
-      if (!renderedLiterals(symmetryClause, symmetryRendered)) {
+      std::string swappedRendered;
+      if (!certificateLiteralSexpr(swapped, swappedRendered)) {
         return false;
       }
+      std::vector<std::string> symmetryRendered = currentRendered;
+      symmetryRendered[selectedIndex] = swappedRendered;
       const std::string symmetryId = unitId + "_current_symmetry" + std::to_string(traceIndex);
       steps.push_back(
         "(equality_symmetry " + sexprQuote(symmetryId)
@@ -1964,10 +2215,17 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     }
     std::vector<Kernel::Literal*> unitLiterals = { applyLiteralPreservingEquality(unitLiteral, unitSubstitution) };
     std::vector<std::string> unitRendered;
-    {
+    if (nonIdentity) {
       std::vector<std::string> unitSourceRendered;
       if (!renderedLiterals(std::vector<Kernel::Literal*>{unitLiteral}, unitSourceRendered)
         || !applyRenderedSubstitution(unitSourceRendered, unitSubstitution, unitRendered)) {
+        return false;
+      }
+      if (!appendCertificateSplitLiteralsSexpr(unitParent, unitRendered)) {
+        return false;
+      }
+    } else {
+      if (!appendCertificateClauseLiteralsSexpr(unitParent, unitRendered)) {
         return false;
       }
     }
@@ -1982,15 +2240,47 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
       unitParentId = substituteId;
     }
 
-    if (!samePolarityAndAtom(Kernel::Literal::complementaryLiteral(selectedLiteral), unitLiterals[0])) {
+    auto selectedComplementMatchesUnit = [&]() {
+      std::string complement;
+      return !unitRendered.empty()
+        && complementLiteralSexpr(currentRendered[selectedIndex], complement)
+        && complement == unitRendered[0];
+    };
+
+    if (!selectedComplementMatchesUnit()) {
+      Kernel::Literal* swapped = swapEqualityLiteral(selectedLiteral);
+      std::string swappedRendered;
+      std::string swappedComplement;
+      if (swapped != nullptr
+        && !unitRendered.empty()
+        && certificateLiteralSexpr(swapped, swappedRendered)
+        && complementLiteralSexpr(swappedRendered, swappedComplement)
+        && swappedComplement == unitRendered[0]) {
+        currentLiterals[selectedIndex] = swapped;
+        currentRendered[selectedIndex] = swappedRendered;
+        const std::string symmetryId = unitId + "_current_pivot_symmetry" + std::to_string(traceIndex);
+        steps.push_back(
+          "(equality_symmetry " + sexprQuote(symmetryId)
+          + " (parent " + sexprQuote(currentParentId) + ")"
+          + " (literal " + std::to_string(selectedIndex) + ")"
+          + " (result " + clauseSexprFromRendered(currentRendered) + "))");
+        currentParentId = symmetryId;
+        selectedLiteral = currentLiterals[selectedIndex];
+      }
+    }
+
+    if (!selectedComplementMatchesUnit()) {
       Kernel::Literal* swapped = swapEqualityLiteral(unitLiterals[0]);
-      if (!samePolarityAndAtom(Kernel::Literal::complementaryLiteral(selectedLiteral), swapped)) {
+      std::string selectedComplement;
+      std::string swappedRendered;
+      if (swapped == nullptr
+        || !complementLiteralSexpr(currentRendered[selectedIndex], selectedComplement)
+        || !certificateLiteralSexpr(swapped, swappedRendered)
+        || selectedComplement != swappedRendered) {
         return false;
       }
       unitLiterals[0] = swapped;
-      if (!renderedLiterals(unitLiterals, unitRendered)) {
-        return false;
-      }
+      unitRendered[0] = swappedRendered;
       const std::string symmetryId = unitId + "_unit_symmetry" + std::to_string(traceIndex);
       steps.push_back(
         "(equality_symmetry " + sexprQuote(symmetryId)
@@ -2004,6 +2294,9 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     nextLiterals.erase(nextLiterals.begin() + selectedIndex);
     std::vector<std::string> nextRendered = currentRendered;
     nextRendered.erase(nextRendered.begin() + selectedIndex);
+    if (!appendCertificateSplitLiteralsSexpr(unitParent, nextRendered)) {
+      return false;
+    }
     const std::string resolveId = unitId + "_resolve" + std::to_string(traceIndex);
     steps.push_back(
       "(resolve " + sexprQuote(resolveId)
@@ -2020,31 +2313,51 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     return false;
   }
   std::vector<std::string> current = currentRendered;
-  for (std::size_t guard = 0; normalized(current) != normalized(actual) && guard < currentLiterals.size(); ++guard) {
+  unsigned finalFactorCount = 0;
+  auto factorFinalDuplicate = [&]() {
+    for (unsigned left = 0; left < current.size(); ++left) {
+      for (unsigned right = left + 1; right < current.size(); ++right) {
+        if (current[left] != current[right]
+          || literalMultiplicity(current, current[left]) <= literalMultiplicity(actual, current[left])) {
+          continue;
+        }
+        std::vector<std::string> factored = current;
+        factored.erase(factored.begin() + right);
+        const std::string factorId = unitId + "_final_factor" + std::to_string(finalFactorCount++);
+        steps.push_back(
+          "(factor " + sexprQuote(factorId)
+          + " (parent " + sexprQuote(currentParentId) + ")"
+          + " (literals " + std::to_string(left) + " " + std::to_string(right) + ")"
+          + " (result " + clauseSexprFromRendered(factored) + "))");
+        if (right < currentLiterals.size()) {
+          currentLiterals.erase(currentLiterals.begin() + right);
+        }
+        current = factored;
+        currentRendered = factored;
+        currentParentId = factorId;
+        return true;
+      }
+    }
+    return false;
+  };
+  while (normalized(current) != normalized(actual) && factorFinalDuplicate()) {
+  }
+  for (std::size_t guard = 0; normalized(current) != normalized(actual) && guard < current.size(); ++guard) {
     bool changed = false;
-    for (std::size_t i = 0; i < currentLiterals.size(); ++i) {
-      Kernel::Literal* swapped = swapEqualityLiteral(currentLiterals[i]);
-      if (swapped == nullptr) {
+    std::string swappedRendered;
+    for (std::size_t i = 0; i < current.size(); ++i) {
+      if (!swappedEqualityLiteral(current[i], swappedRendered)) {
         continue;
       }
-      std::vector<Kernel::Literal*> candidateLiterals = currentLiterals;
-      candidateLiterals[i] = swapped;
-      std::vector<std::string> candidate;
-      if (!renderedLiterals(candidateLiterals, candidate)) {
-        return false;
-      }
+      std::vector<std::string> candidate = currentRendered;
+      candidate[i] = swappedRendered;
       if (normalized(candidate) == normalized(actual)) {
-        std::string clause;
-        if (!renderClause(candidateLiterals, clause)) {
-          return false;
-        }
         const std::string symmetryId = unitId + "_final_symmetry" + std::to_string(guard);
         steps.push_back(
           "(equality_symmetry " + sexprQuote(symmetryId)
           + " (parent " + sexprQuote(currentParentId) + ")"
           + " (literal " + std::to_string(i) + ")"
-          + " (result " + clause + "))");
-        currentLiterals = candidateLiterals;
+          + " (result " + clauseSexprFromRendered(candidate) + "))");
         current = candidate;
         currentRendered = candidate;
         currentParentId = symmetryId;
@@ -2054,6 +2367,8 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     }
     if (!changed) {
       break;
+    }
+    while (normalized(current) != normalized(actual) && factorFinalDuplicate()) {
     }
   }
   if (normalized(current) != normalized(actual)) {
@@ -3907,12 +4222,44 @@ bool MegalodonChecker::certificateParamodulateStepSexpr(
     }
     return excludedOne && appendCertificateSplitLiteralsSexpr(clause, literals);
   };
+  auto clauseSexprFromLiterals = [](const std::vector<std::string>& literals) {
+    std::ostringstream out;
+    out << "(clause";
+    for (const std::string& literal : literals) {
+      out << ' ' << literal;
+    }
+    out << ')';
+    return out.str();
+  };
+  auto sameMultiset = [](std::vector<std::string> left, std::vector<std::string> right) {
+    std::sort(left.begin(), left.end());
+    std::sort(right.begin(), right.end());
+    return left == right;
+  };
+  auto normalized = [](std::vector<std::string> literals) {
+    std::sort(literals.begin(), literals.end());
+    literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
+    return literals;
+  };
+  auto literalMultiplicity =
+    [](const std::vector<std::string>& literals, const std::string& literal) {
+      return static_cast<unsigned>(std::count(literals.begin(), literals.end(), literal));
+    };
+  auto removeAt = [](const std::vector<std::string>& literals, unsigned index) {
+    std::vector<std::string> result;
+    result.reserve(literals.size() == 0 ? 0 : literals.size() - 1);
+    for (unsigned i = 0; i < literals.size(); ++i) {
+      if (i != index) {
+        result.push_back(literals[i]);
+      }
+    }
+    return result;
+  };
   std::vector<std::string> actual;
   if (!appendCertificateClauseLiteralsSexpr(unit->asClause(), actual)) {
     return false;
   }
-  std::sort(actual.begin(), actual.end());
-  actual.erase(std::unique(actual.begin(), actual.end()), actual.end());
+  const std::vector<std::string> actualNormalized = normalized(actual);
 
   for (std::size_t equalityParentIndex = 0; equalityParentIndex < parents.size(); ++equalityParentIndex) {
     Kernel::Clause* equalityParent = parents[equalityParentIndex];
@@ -3948,27 +4295,84 @@ bool MegalodonChecker::certificateParamodulateStepSexpr(
             continue;
           }
           expected.push_back(rewrittenTarget);
-          std::sort(expected.begin(), expected.end());
-          expected.erase(std::unique(expected.begin(), expected.end()), expected.end());
-          if (expected != actual) {
+          bool needsDuplicateFactors = false;
+          if (!sameMultiset(expected, actual)) {
+            if (normalized(expected) != actualNormalized) {
+              continue;
+            }
+            needsDuplicateFactors = true;
+          }
+
+          std::vector<std::string> steps;
+          std::vector<std::string> paramodulationResult = needsDuplicateFactors ? expected : actual;
+          std::string paramodulationStepId = needsDuplicateFactors
+            ? "u" + std::to_string(unit->number()) + "_paramodulate"
+            : "u" + std::to_string(unit->number());
+          std::string currentParentId = paramodulationStepId;
+          std::vector<std::string> currentClause = paramodulationResult;
+          if (needsDuplicateFactors) {
+            unsigned factorCount = 0;
+            bool changed = true;
+            while (changed) {
+              changed = false;
+              for (unsigned left = 0; left < currentClause.size() && !changed; ++left) {
+                for (unsigned right = left + 1; right < currentClause.size(); ++right) {
+                  if (currentClause[left] != currentClause[right]) {
+                    continue;
+                  }
+                  if (literalMultiplicity(currentClause, currentClause[left]) <= literalMultiplicity(actual, currentClause[left])) {
+                    continue;
+                  }
+                  std::vector<std::string> factored = removeAt(currentClause, right);
+                  const std::string factorId = "u" + std::to_string(unit->number()) + "_factor" + std::to_string(factorCount++);
+                  steps.push_back(
+                    "(factor " + sexprQuote(factorId)
+                    + " (parent " + sexprQuote(currentParentId) + ")"
+                    + " (literals " + std::to_string(left) + " " + std::to_string(right) + ")"
+                    + " (result " + clauseSexprFromLiterals(factored) + "))");
+                  currentClause = factored;
+                  currentParentId = factorId;
+                  changed = true;
+                  break;
+                }
+              }
+            }
+            if (!sameMultiset(currentClause, actual)) {
+              continue;
+            }
+          }
+
+          if (needsDuplicateFactors) {
+            steps.push_back(
+              "(substitute " + sexprQuote("u" + std::to_string(unit->number()))
+              + " (parent " + sexprQuote(currentParentId) + ") (subst)"
+              + " (result " + clauseSexprFromLiterals(actual) + "))");
+          }
+
+          if (!needsDuplicateFactors && !sameMultiset(paramodulationResult, actual)) {
             continue;
           }
 
           unsigned equalityIndex = 0;
           unsigned targetIndex = 0;
-          std::string clause;
           if (!literalIndex(equalityParent, equality, equalityIndex)
-            || !literalIndex(targetParent, target, targetIndex)
-            || !certificateClauseSexpr(unit->asClause(), clause)) {
+            || !literalIndex(targetParent, target, targetIndex)) {
             continue;
           }
-          result = "(paramodulate " + sexprQuote("u" + std::to_string(unit->number()))
+          std::string paramodulate =
+            "(paramodulate " + sexprQuote(paramodulationStepId)
             + " (equality " + sexprQuote("u" + std::to_string(equalityParent->number())) + " " + std::to_string(equalityIndex) + ")"
             + " (target " + sexprQuote("u" + std::to_string(targetParent->number())) + " " + std::to_string(targetIndex) + ") "
             + certificatePositionSexpr(nativePosition)
             + " (from " + selectedFromSexpr + ")"
             + " (to " + selectedToSexpr + ")"
-            + " (result " + clause + "))";
+            + " (result " + clauseSexprFromLiterals(paramodulationResult) + "))";
+          std::ostringstream out;
+          out << paramodulate;
+          for (const std::string& step : steps) {
+            out << "\n  " << step;
+          }
+          result = out.str();
           return true;
         }
       }
@@ -4874,15 +5278,13 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
       return false;
     }
     parentIds[parentIndex] = "u" + std::to_string(parents[parentIndex]->number());
-    if (nonIdentity) {
-      const std::string substituteId = stepBase + "_subst" + std::to_string(parentIndex);
-      steps.push_back(
-        "(substitute " + sexprQuote(substituteId)
-        + " (parent " + sexprQuote(parentIds[parentIndex]) + ") "
-        + subst
-        + " (result " + clauseSexprFromLiterals(substitutedParentClauses[parentIndex]) + "))");
-      parentIds[parentIndex] = substituteId;
-    }
+    const std::string substituteId = stepBase + "_subst" + std::to_string(parentIndex);
+    steps.push_back(
+      "(substitute " + sexprQuote(substituteId)
+      + " (parent " + sexprQuote(parentIds[parentIndex]) + ") "
+      + subst
+      + " (result " + clauseSexprFromLiterals(substitutedParentClauses[parentIndex]) + "))");
+    parentIds[parentIndex] = substituteId;
   }
 
   Kernel::Literal* equalitySubstituted = Kernel::SubstHelper::apply(equalityLiteral, replayInfo->substitutionForBanksSub[equalityParentIndex]);
