@@ -5215,8 +5215,7 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
     std::string lhs;
     std::string rhs;
     if (!certificateTermSexpr(*literal->nthArgument(0), lhs)
-      || !certificateTermSexpr(*literal->nthArgument(1), rhs)
-      || lhs != rhs) {
+      || !certificateTermSexpr(*literal->nthArgument(1), rhs)) {
       return false;
     }
 
@@ -5235,6 +5234,51 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
     if (!appendCertificateClauseLiteralsSexpr(unit->asClause(), actual)) {
       return false;
     }
+
+    if (lhs != rhs) {
+      std::vector<std::string> remainingActual = actual;
+      for (const std::string& literal : expected) {
+        auto found = std::find(remainingActual.begin(), remainingActual.end(), literal);
+        if (found == remainingActual.end()) {
+          return false;
+        }
+        remainingActual.erase(found);
+      }
+      if (remainingActual.empty()) {
+        return false;
+      }
+      std::string selectedLiteral;
+      if (!substitutedLiteralSexpr(literal, *selectedSubstitution, selectedLiteral)) {
+        return false;
+      }
+      std::vector<std::string> steps;
+      if (!substitutionStep.empty()) {
+        steps.push_back(substitutionStep);
+      }
+      std::ostringstream constraints;
+      constraints << "(constraints";
+      for (const std::string& constraint : remainingActual) {
+        constraints << ' ' << constraint;
+      }
+      constraints << ')';
+      steps.push_back(
+        "(equality_resolution_constraints " + sexprQuote(unitId)
+        + " (parent " + sexprQuote(activeParentId) + ")"
+        + " (literal " + std::to_string(literalIndex) + ")"
+        + " (selected " + selectedLiteral + ")"
+        + ' ' + constraints.str()
+        + " (result " + clauseSexprFromLiterals(actual) + "))");
+      std::ostringstream out;
+      for (std::size_t i = 0; i < steps.size(); ++i) {
+        if (i != 0) {
+          out << "\n  ";
+        }
+        out << steps[i];
+      }
+      step = out.str();
+      return true;
+    }
+
     if (!sameMultiset(expected, actual)) {
       std::vector<std::string> current = expected;
       std::vector<std::string> probeSteps;
@@ -6988,31 +7032,29 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                   std::vector<unsigned> position;
                 };
                 std::vector<TargetRewrite> targetRewrites;
-                for (Kernel::Literal* originalLiteral : targetParent->iterLits()) {
-                  Kernel::Literal* currentLiteral = Kernel::SubstHelper::apply(originalLiteral, activeSubstitutions[targetParentIndex]);
-                  std::string currentLiteralSexpr;
-                  if (!certificateLiteralSexpr(currentLiteral, currentLiteralSexpr)) {
+                Kernel::Literal* currentLiteral = Kernel::SubstHelper::apply(targetLiteral, activeSubstitutions[targetParentIndex]);
+                std::string currentLiteralSexpr;
+                if (!certificateLiteralSexpr(currentLiteral, currentLiteralSexpr)) {
+                  return false;
+                }
+                for (unsigned guard = 0; guard < 16; ++guard) {
+                  std::vector<unsigned> rewritePosition;
+                  Kernel::Literal* nextLiteral = nullptr;
+                  if (!certificateRewriteLiteralAtMegalodonPosition(
+                        currentLiteral,
+                        redex,
+                        replacement,
+                        rewritePosition,
+                        nextLiteral)) {
+                    break;
+                  }
+                  std::string nextLiteralSexpr;
+                  if (!certificateLiteralSexpr(nextLiteral, nextLiteralSexpr)) {
                     return false;
                   }
-                  for (unsigned guard = 0; guard < 16; ++guard) {
-                    std::vector<unsigned> rewritePosition;
-                    Kernel::Literal* nextLiteral = nullptr;
-                    if (!certificateRewriteLiteralAtMegalodonPosition(
-                          currentLiteral,
-                          redex,
-                          replacement,
-                          rewritePosition,
-                          nextLiteral)) {
-                      break;
-                    }
-                    std::string nextLiteralSexpr;
-                    if (!certificateLiteralSexpr(nextLiteral, nextLiteralSexpr)) {
-                      return false;
-                    }
-                    targetRewrites.push_back({currentLiteralSexpr, nextLiteralSexpr, rewritePosition});
-                    currentLiteral = nextLiteral;
-                    currentLiteralSexpr = nextLiteralSexpr;
-                  }
+                  targetRewrites.push_back({currentLiteralSexpr, nextLiteralSexpr, rewritePosition});
+                  currentLiteral = nextLiteral;
+                  currentLiteralSexpr = nextLiteralSexpr;
                 }
                 if (targetRewrites.empty()) {
                   continue;
