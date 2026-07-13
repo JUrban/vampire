@@ -1716,6 +1716,204 @@ bool MegalodonChecker::certificateDefinitionInputStepSexpr(Kernel::Unit* unit, s
   return true;
 }
 
+bool MegalodonChecker::certificateInequalitySplittingNameIntroductionStepSexpr(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause()
+    || unit->inference().rule() != Kernel::InferenceRule::INEQUALITY_SPLITTING_NAME_INTRODUCTION) {
+    return false;
+  }
+  Kernel::Clause* clause = unit->asClause();
+  if (clause->length() != 1) {
+    return false;
+  }
+  std::string renderedClause;
+  if (!certificateClauseSexpr(clause, renderedClause)) {
+    return false;
+  }
+  result = "(inequality_name_intro " + sexprQuote("u" + std::to_string(unit->number()))
+    + " (result " + renderedClause + "))";
+  return true;
+}
+
+bool MegalodonChecker::certificateInequalitySplittingStepSexpr(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause()
+    || unit->inference().rule() != Kernel::InferenceRule::INEQUALITY_SPLITTING) {
+    return false;
+  }
+
+  std::vector<Kernel::Unit*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    parents.push_back(parent);
+  }
+  if (parents.size() < 2 || !parents[0]->isClause()) {
+    return false;
+  }
+  for (std::size_t i = 1; i < parents.size(); ++i) {
+    if (!parents[i]->isClause()
+      || parents[i]->inference().rule() != Kernel::InferenceRule::INEQUALITY_SPLITTING_NAME_INTRODUCTION
+      || parents[i]->asClause()->length() != 1) {
+      return false;
+    }
+  }
+
+  auto isFoolConstant = [](Kernel::TermList term, bool value) {
+    return term.isTerm()
+      && !term.term()->isSpecial()
+      && env.signature->isFoolConstantSymbol(value, term.term()->functor());
+  };
+  auto boolNameLiteralTerm = [&](Kernel::Literal* literal, bool value, Kernel::TermList& namedTerm) {
+    if (literal == nullptr
+      || !literal->isEquality()
+      || !literal->isPositive()
+      || Kernel::SortHelper::getEqualityArgumentSort(literal) != Kernel::AtomicSort::boolSort()) {
+      return false;
+    }
+    Kernel::TermList left = *literal->nthArgument(0);
+    Kernel::TermList right = *literal->nthArgument(1);
+    if (isFoolConstant(left, value)) {
+      namedTerm = right;
+      return true;
+    }
+    if (isFoolConstant(right, value)) {
+      namedTerm = left;
+      return true;
+    }
+    return false;
+  };
+  auto applicationHeadAndArg = [](Kernel::TermList term, Kernel::TermList& head, Kernel::TermList& arg) {
+    if (!term.isApplication()) {
+      return false;
+    }
+    head = term.lhs();
+    arg = term.rhs();
+    return true;
+  };
+  auto replacementInConclusion = [&](Kernel::TermList head, Kernel::TermList argument, Kernel::Literal*& replacement) {
+    for (Kernel::Literal* literal : unit->asClause()->iterLits()) {
+      Kernel::TermList namedTerm;
+      Kernel::TermList candidateHead;
+      Kernel::TermList candidateArg;
+      if (boolNameLiteralTerm(literal, true, namedTerm)
+        && applicationHeadAndArg(namedTerm, candidateHead, candidateArg)
+        && candidateHead == head
+        && candidateArg == argument) {
+        replacement = literal;
+        return true;
+      }
+    }
+    return false;
+  };
+
+  Kernel::Clause* sourceClause = parents[0]->asClause();
+  std::set<Kernel::Literal*> usedSourceLiterals;
+  std::set<Kernel::Literal*> usedReplacementLiterals;
+  std::vector<std::string> splitItems;
+  for (std::size_t parentIndex = 1; parentIndex < parents.size(); ++parentIndex) {
+    Kernel::Literal* nameLiteral = (*parents[parentIndex]->asClause())[0];
+    Kernel::TermList namedTerm;
+    Kernel::TermList nameHead;
+    Kernel::TermList splitTerm;
+    if (!boolNameLiteralTerm(nameLiteral, false, namedTerm)
+      || !applicationHeadAndArg(namedTerm, nameHead, splitTerm)) {
+      return false;
+    }
+
+    Kernel::Literal* selected = nullptr;
+    Kernel::Literal* replacement = nullptr;
+    for (Kernel::Literal* sourceLiteral : sourceClause->iterLits()) {
+      if (usedSourceLiterals.find(sourceLiteral) != usedSourceLiterals.end()
+        || !sourceLiteral->isEquality()
+        || sourceLiteral->isPositive()) {
+        continue;
+      }
+      Kernel::TermList left = *sourceLiteral->nthArgument(0);
+      Kernel::TermList right = *sourceLiteral->nthArgument(1);
+      Kernel::TermList otherSide;
+      if (left == splitTerm) {
+        otherSide = right;
+      } else if (right == splitTerm) {
+        otherSide = left;
+      } else {
+        continue;
+      }
+      Kernel::Literal* candidateReplacement = nullptr;
+      if (!replacementInConclusion(nameHead, otherSide, candidateReplacement)
+        || usedReplacementLiterals.find(candidateReplacement) != usedReplacementLiterals.end()) {
+        continue;
+      }
+      selected = sourceLiteral;
+      replacement = candidateReplacement;
+      break;
+    }
+    if (selected == nullptr || replacement == nullptr) {
+      return false;
+    }
+    usedSourceLiterals.insert(selected);
+    usedReplacementLiterals.insert(replacement);
+
+    std::string selectedSexpr;
+    std::string nameLiteralSexpr;
+    std::string replacementSexpr;
+    if (!certificateLiteralSexpr(selected, selectedSexpr)
+      || !certificateLiteralSexpr(nameLiteral, nameLiteralSexpr)
+      || !certificateLiteralSexpr(replacement, replacementSexpr)) {
+      return false;
+    }
+    splitItems.push_back(
+      "(split (name_parent " + sexprQuote("u" + std::to_string(parents[parentIndex]->number())) + ")"
+      + " (source " + selectedSexpr + ")"
+      + " (name_literal " + nameLiteralSexpr + ")"
+      + " (replacement " + replacementSexpr + "))");
+  }
+
+  std::vector<std::string> expectedLiterals;
+  for (Kernel::Literal* literal : sourceClause->iterLits()) {
+    if (usedSourceLiterals.find(literal) != usedSourceLiterals.end()) {
+      continue;
+    }
+    std::string rendered;
+    if (!certificateLiteralSexpr(literal, rendered)) {
+      return false;
+    }
+    expectedLiterals.push_back(rendered);
+  }
+  for (Kernel::Literal* literal : usedReplacementLiterals) {
+    std::string rendered;
+    if (!certificateLiteralSexpr(literal, rendered)) {
+      return false;
+    }
+    expectedLiterals.push_back(rendered);
+  }
+  std::sort(expectedLiterals.begin(), expectedLiterals.end());
+  expectedLiterals.erase(std::unique(expectedLiterals.begin(), expectedLiterals.end()), expectedLiterals.end());
+  std::vector<std::string> actualLiterals;
+  if (!appendCertificateClauseLiteralsSexpr(unit->asClause(), actualLiterals)) {
+    return false;
+  }
+  std::sort(actualLiterals.begin(), actualLiterals.end());
+  actualLiterals.erase(std::unique(actualLiterals.begin(), actualLiterals.end()), actualLiterals.end());
+  if (expectedLiterals != actualLiterals) {
+    return false;
+  }
+
+  std::string conclusion;
+  if (!certificateClauseSexpr(unit->asClause(), conclusion)) {
+    return false;
+  }
+  std::ostringstream splits;
+  splits << "(splits";
+  for (const std::string& item : splitItems) {
+    splits << ' ' << item;
+  }
+  splits << ')';
+  result = "(inequality_split " + sexprQuote("u" + std::to_string(unit->number()))
+    + " (source " + sexprQuote("u" + std::to_string(parents[0]->number())) + ") "
+    + splits.str()
+    + " (result " + conclusion + "))";
+  return true;
+}
+
 bool MegalodonChecker::certificateDefinitionRewriteStepsSexpr(Kernel::Unit* unit, std::string& result)
 {
   if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::DEFINITION_UNFOLDING) {
@@ -2656,7 +2854,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     if (!certificateLiteralSexpr(trace.selected, traceSelectedLiteralSexpr)) {
       return false;
     }
-    unsigned selectionPasses = traceIndex == 0 ? 2 : 1;
+    unsigned selectionPasses = 2;
     for (unsigned pass = 0; pass < selectionPasses && selectedIndex < 0; ++pass) {
       for (std::size_t i = 0; i < currentLiterals.size(); ++i) {
         if (selectionPasses == 2 && pass == 0) {
@@ -2668,6 +2866,19 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
         }
         Kernel::Substitution attempt;
         if (matchLiteral(currentLiterals[i], trace.selectedSubstituted, attempt)) {
+          currentSubstitution = cloneSubstitution(attempt);
+          selectedIndex = static_cast<int>(i);
+          break;
+        }
+      }
+    }
+    if (selectedIndex < 0) {
+      for (std::size_t i = 0; i < currentLiterals.size(); ++i) {
+        std::string currentLiteralSexpr;
+        Kernel::Substitution attempt;
+        if (certificateLiteralSexpr(currentLiterals[i], currentLiteralSexpr)
+          && currentLiteralSexpr == traceSelectedLiteralSexpr
+          && matchLiteral(trace.selected, trace.selectedSubstituted, attempt)) {
           currentSubstitution = cloneSubstitution(attempt);
           selectedIndex = static_cast<int>(i);
           break;
@@ -6600,6 +6811,8 @@ bool MegalodonChecker::certificateNativeStepSexpr(
     || certificatePredicateDefinitionStepSexpr(unit, result)
     || certificatePredicateDefinitionFoldStepSexpr(unit, result)
     || certificateDefinitionInputStepSexpr(unit, result)
+    || certificateInequalitySplittingNameIntroductionStepSexpr(unit, result)
+    || certificateInequalitySplittingStepSexpr(unit, result)
     || certificateAvatarComponentStepSexpr(unit, result)
     || certificateAvatarRefutationStepSexpr(unit, result)
     || certificateCondensationStepSexpr(unit, result)

@@ -154,6 +154,8 @@ private:
   bool certificatePredicateDefinitionStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificatePredicateDefinitionFoldStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateDefinitionInputStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateInequalitySplittingNameIntroductionStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateInequalitySplittingStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateAvatarComponentStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateCondensationStepSexpr(Kernel::Unit* unit, std::string& result);
