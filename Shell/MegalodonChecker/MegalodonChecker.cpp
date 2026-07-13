@@ -8895,14 +8895,34 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
             std::vector<std::string> targetRest = removeAt(effectiveTargetClause, targetIndex);
             expected.insert(expected.end(), targetRest.begin(), targetRest.end());
             expected.push_back(rewrittenTarget);
+            std::vector<std::vector<std::string>> expectedVariants;
+            expectedVariants.push_back(expected);
+            Kernel::Literal* simultaneousTarget =
+              Kernel::EqHelper::replace(candidate.effectiveTarget, candidate.effectiveFrom, candidate.effectiveTo);
+            std::string simultaneousRewrittenTarget;
+            if (simultaneousTarget != candidate.effectiveTarget
+              && certificateLiteralSexpr(simultaneousTarget, simultaneousRewrittenTarget)
+              && simultaneousRewrittenTarget != rewrittenTarget) {
+              std::vector<std::string> simultaneousExpected = removeAt(effectiveEqualityClause, equalityIndex);
+              simultaneousExpected.insert(simultaneousExpected.end(), targetRest.begin(), targetRest.end());
+              simultaneousExpected.push_back(simultaneousRewrittenTarget);
+              expectedVariants.push_back(simultaneousExpected);
+            }
             ++directClauseCandidates;
             if (debugDirectSuperposition && firstDirectExpected.empty()) {
               firstDirectExpected = clauseSexprFromLiterals(expected);
               firstDirectActual = clauseSexprFromLiterals(actualDirect);
             }
-            if (!sameMultiset(expected, actualDirect)
-              && !sameModuloEqualitySymmetry(expected, actualDirect)
-              && !sameModuloVariableRenaming(expected, actualDirect)) {
+            bool expectedMatches = false;
+            for (const auto& expectedVariant : expectedVariants) {
+              if (sameMultiset(expectedVariant, actualDirect)
+                || sameModuloEqualitySymmetry(expectedVariant, actualDirect)
+                || sameModuloVariableRenaming(expectedVariant, actualDirect)) {
+                expectedMatches = true;
+                break;
+              }
+            }
+            if (!expectedMatches) {
               continue;
             }
             std::string targetSubst;
