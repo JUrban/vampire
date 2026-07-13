@@ -5608,10 +5608,9 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
     return fail("bad replay precondition");
   }
   const auto* extra = env.proofExtra.find(unit);
-  if (extra == nullptr) {
-    return fail("missing proof extra");
-  }
-  const auto* rewrite = static_cast<const Inferences::TwoLiteralRewriteInferenceExtra*>(extra);
+  const auto* rewrite = extra == nullptr
+    ? nullptr
+    : static_cast<const Inferences::TwoLiteralRewriteInferenceExtra*>(extra);
 
   std::vector<Kernel::Clause*> parents;
   for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
@@ -8429,12 +8428,12 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
     return false;
   };
   if (!unit->isClause()
-    || unit->inference().rule() != Kernel::InferenceRule::SUPERPOSITION
-    || replayInfo == nullptr
-    || replayInfo->premises.size() != 2
-    || replayInfo->substitutionForBanksSub.size() != 2) {
+    || unit->inference().rule() != Kernel::InferenceRule::SUPERPOSITION) {
     return fail("bad replay precondition");
   }
+  const bool hasReplaySubstitutions = replayInfo != nullptr
+    && replayInfo->premises.size() == 2
+    && replayInfo->substitutionForBanksSub.size() == 2;
   const auto* extra = env.proofExtra.find(unit);
   if (extra == nullptr) {
     return fail("missing proof extra");
@@ -8447,9 +8446,19 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
       parents.push_back(parent->asClause());
     }
   }
-  if (parents.size() != 2 || parents[0] != replayInfo->premises[0] || parents[1] != replayInfo->premises[1]) {
+  if (parents.size() != 2
+    || (hasReplaySubstitutions
+      && (parents[0] != replayInfo->premises[0] || parents[1] != replayInfo->premises[1]))) {
     return fail("parent/replay mismatch");
   }
+  Kernel::Substitution emptySubstitution0;
+  Kernel::Substitution emptySubstitution1;
+  auto directSubstitution = [&](std::size_t index) -> const Kernel::Substitution& {
+    if (hasReplaySubstitutions) {
+      return replayInfo->substitutionForBanksSub[index];
+    }
+    return index == 0 ? emptySubstitution0 : emptySubstitution1;
+  };
 
   auto literalIndex = [](Kernel::Clause* clause, Kernel::Literal* literal, unsigned& index) {
     if (literal == nullptr) {
@@ -8492,6 +8501,459 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
       }
       return appendCertificateSplitLiteralsSexpr(clause, literals);
   };
+  auto clauseSexprFromLiterals = [](const std::vector<std::string>& literals) {
+    std::ostringstream out;
+    out << "(clause";
+    for (const std::string& literal : literals) {
+      out << ' ' << literal;
+    }
+    out << ')';
+    return out.str();
+  };
+  auto normalized = [](std::vector<std::string> literals) {
+    std::sort(literals.begin(), literals.end());
+    literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
+    return literals;
+  };
+  auto sameMultiset = [](std::vector<std::string> left, std::vector<std::string> right) {
+    std::sort(left.begin(), left.end());
+    std::sort(right.begin(), right.end());
+    return left == right;
+  };
+  auto removeAt = [](std::vector<std::string> literals, unsigned index) {
+    literals.erase(literals.begin() + index);
+    return literals;
+  };
+  auto swappedEqualityLiteral = [&](const std::string& literal, std::string& swapped) {
+    const std::string posPrefix = "(pos (AP (AP (TMH \"=\") ";
+    const std::string negPrefix = "(neg (AP (AP (TMH \"=\") ";
+    std::string prefix;
+    if (literal.rfind(posPrefix, 0) == 0) {
+      prefix = posPrefix;
+    } else if (literal.rfind(negPrefix, 0) == 0) {
+      prefix = negPrefix;
+    } else {
+      return false;
+    }
+    auto termEnd = [&](std::size_t start, std::size_t& end) {
+      int depth = 0;
+      for (std::size_t i = start; i < literal.size(); ++i) {
+        if (literal[i] == '(') {
+          ++depth;
+        } else if (literal[i] == ')') {
+          --depth;
+          if (depth == 0) {
+            end = i + 1;
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+    std::size_t leftStart = prefix.size();
+    std::size_t leftEnd = std::string::npos;
+    if (!termEnd(leftStart, leftEnd) || leftEnd + 2 >= literal.size() || literal[leftEnd] != ')' || literal[leftEnd + 1] != ' ') {
+      return false;
+    }
+    std::size_t rightStart = leftEnd + 2;
+    std::size_t rightEnd = std::string::npos;
+    if (!termEnd(rightStart, rightEnd) || rightEnd + 2 != literal.size() || literal[rightEnd] != ')' || literal[rightEnd + 1] != ')') {
+      return false;
+    }
+    std::string left = literal.substr(leftStart, leftEnd - leftStart);
+    std::string right = literal.substr(rightStart, rightEnd - rightStart);
+    swapped = prefix + right + ") " + left + "))";
+    return true;
+  };
+  auto sameModuloEqualitySymmetry = [&](std::vector<std::string> current, const std::vector<std::string>& actual) {
+    const std::vector<std::string> actualNormalized = normalized(actual);
+    for (unsigned guard = 0; normalized(current) != actualNormalized && guard < current.size(); ++guard) {
+      bool changed = false;
+      for (unsigned i = 0; i < current.size(); ++i) {
+        std::string swapped;
+        if (!swappedEqualityLiteral(current[i], swapped)) {
+          continue;
+        }
+        std::vector<std::string> candidate = current;
+        candidate[i] = swapped;
+        if (normalized(candidate) == actualNormalized
+          || std::find(actualNormalized.begin(), actualNormalized.end(), swapped) != actualNormalized.end()) {
+          current = candidate;
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) {
+        break;
+      }
+    }
+    return normalized(current) == actualNormalized;
+  };
+  auto isVampireVariableName = [](const std::string& name) {
+    if (name.size() < 2 || name[0] != 'X') {
+      return false;
+    }
+    for (std::size_t i = 1; i < name.size(); ++i) {
+      if (name[i] < '0' || name[i] > '9') {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto replaceAll = [](std::string& text, const std::string& from, const std::string& to) {
+    if (from.empty()) {
+      return;
+    }
+    std::size_t pos = 0;
+    while ((pos = text.find(from, pos)) != std::string::npos) {
+      text.replace(pos, from.size(), to);
+      pos += to.size();
+    }
+  };
+  auto collectSexprVariables = [&](const std::vector<std::string>& clause) {
+    std::vector<std::string> variables;
+    const std::string marker = "(TMH \"";
+    for (const std::string& literal : clause) {
+      std::size_t pos = 0;
+      while ((pos = literal.find(marker, pos)) != std::string::npos) {
+        pos += marker.size();
+        std::size_t end = literal.find("\")", pos);
+        if (end == std::string::npos) {
+          break;
+        }
+        std::string name = literal.substr(pos, end - pos);
+        if (isVampireVariableName(name)) {
+          variables.push_back(name);
+        }
+        pos = end + 2;
+      }
+    }
+    std::sort(variables.begin(), variables.end());
+    variables.erase(std::unique(variables.begin(), variables.end()), variables.end());
+    return variables;
+  };
+  auto applySexprVariableRenaming =
+    [&](const std::vector<std::string>& source,
+        const std::vector<std::pair<std::string, std::string>>& renaming) {
+      std::vector<std::string> renamed = source;
+      for (std::string& literal : renamed) {
+        for (std::size_t i = 0; i < renaming.size(); ++i) {
+          replaceAll(literal,
+            "(TMH " + sexprQuote(renaming[i].first) + ")",
+            "__mg_var_rename_" + std::to_string(i) + "__");
+        }
+        for (std::size_t i = 0; i < renaming.size(); ++i) {
+          replaceAll(literal,
+            "__mg_var_rename_" + std::to_string(i) + "__",
+            "(TMH " + sexprQuote(renaming[i].second) + ")");
+        }
+      }
+      return renamed;
+    };
+  auto sameModuloVariableRenaming =
+    [&](const std::vector<std::string>& source,
+        const std::vector<std::string>& target) {
+      std::vector<std::string> sourceVars = collectSexprVariables(source);
+      std::vector<std::string> targetVars = collectSexprVariables(target);
+      if (sourceVars.size() != targetVars.size() || sourceVars.empty() || sourceVars.size() > 7) {
+        return false;
+      }
+      std::vector<std::string> candidateTargets = targetVars;
+      do {
+        std::vector<std::pair<std::string, std::string>> candidate;
+        candidate.reserve(sourceVars.size());
+        bool nontrivial = false;
+        for (std::size_t i = 0; i < sourceVars.size(); ++i) {
+          candidate.push_back({sourceVars[i], candidateTargets[i]});
+          nontrivial = nontrivial || sourceVars[i] != candidateTargets[i];
+        }
+        if (!nontrivial) {
+          continue;
+        }
+        std::vector<std::string> renamed = applySexprVariableRenaming(source, candidate);
+        if (normalized(renamed) == normalized(target)
+          || sameModuloEqualitySymmetry(renamed, target)) {
+          return true;
+        }
+      } while (std::next_permutation(candidateTargets.begin(), candidateTargets.end()));
+      return false;
+  };
+  auto matchTerm =
+    [&](auto&& self, Kernel::TermList pattern, Kernel::TermList target, Kernel::Substitution& bindings) -> bool {
+      if (pattern.isVar()) {
+        Kernel::TermList existing;
+        if (!bindings.findBinding(pattern.var(), existing)) {
+          bindings.bind(pattern.var(), target);
+          return true;
+        }
+        return existing == target;
+      }
+      if (!pattern.isTerm() || !target.isTerm()) {
+        return pattern == target;
+      }
+      Kernel::Term* patternTerm = pattern.term();
+      Kernel::Term* targetTerm = target.term();
+      if (patternTerm->functor() != targetTerm->functor()
+        || patternTerm->arity() != targetTerm->arity()) {
+        return false;
+      }
+      for (unsigned i = 0; i < patternTerm->arity(); ++i) {
+        if (!self(self, *patternTerm->nthArgument(i), *targetTerm->nthArgument(i), bindings)) {
+          return false;
+        }
+      }
+      return true;
+  };
+  auto termContainsVariable =
+    [&](auto&& self, Kernel::TermList term, unsigned variable) -> bool {
+      if (term.isVar()) {
+        return term.var() == variable;
+      }
+      if (!term.isTerm()) {
+        return false;
+      }
+      Kernel::Term* asTerm = term.term();
+      for (unsigned i = 0; i < asTerm->arity(); ++i) {
+        if (self(self, *asTerm->nthArgument(i), variable)) {
+          return true;
+        }
+      }
+      return false;
+  };
+  auto termContainsMatcher =
+    [&](auto&& self, Kernel::TermList term, Kernel::TermList target, Kernel::Substitution& bindings) -> bool {
+      if (!term.isVar()) {
+        Kernel::Substitution candidate = bindings;
+        if (matchTerm(matchTerm, term, target, candidate)) {
+          Kernel::Substitution candidateCopy = candidate;
+          for (auto [var, replacement] : iterTraits(candidateCopy.items())) {
+            bindings.rebind(var, replacement);
+          }
+          return true;
+        }
+      }
+      if (!term.isTerm()) {
+        return false;
+      }
+      Kernel::Term* asTerm = term.term();
+      for (unsigned i = 0; i < asTerm->arity(); ++i) {
+        if (self(self, *asTerm->nthArgument(i), target, bindings)) {
+          return true;
+        }
+      }
+      return false;
+  };
+  auto collectTermPatternMatchers =
+    [&](auto&& self,
+        Kernel::TermList term,
+        Kernel::TermList pattern,
+        Kernel::Substitution bindings,
+        std::vector<Kernel::Substitution>& matches) -> void {
+      Kernel::Substitution candidate = bindings;
+      if ((!pattern.isVar() || !termContainsVariable(termContainsVariable, term, pattern.var()))
+        && matchTerm(matchTerm, pattern, term, candidate)) {
+        matches.push_back(candidate);
+      }
+      if (!term.isTerm()) {
+        return;
+      }
+      Kernel::Term* asTerm = term.term();
+      for (unsigned i = 0; i < asTerm->arity(); ++i) {
+        self(self, *asTerm->nthArgument(i), pattern, bindings, matches);
+      }
+  };
+  auto literalContainsMatcher =
+    [&](Kernel::Literal* literal, Kernel::TermList target, Kernel::Substitution& bindings) {
+      Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
+      for (unsigned i = 0; i < positive->arity(); ++i) {
+        if (termContainsMatcher(termContainsMatcher, *positive->nthArgument(i), target, bindings)) {
+          return true;
+        }
+      }
+      return false;
+  };
+  auto literalPatternMatchers =
+    [&](Kernel::Literal* literal, Kernel::TermList pattern, std::vector<Kernel::Substitution>& matches) {
+      Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
+      for (unsigned i = 0; i < positive->arity(); ++i) {
+        Kernel::Substitution empty;
+        collectTermPatternMatchers(collectTermPatternMatchers, *positive->nthArgument(i), pattern, empty, matches);
+      }
+  };
+  auto substitutionWithExtras =
+    [&](const Kernel::Substitution& substitution, const Kernel::Substitution& extras) {
+      Kernel::Substitution merged = substitution;
+      Kernel::Substitution extrasCopy = extras;
+      for (auto [var, term] : iterTraits(extrasCopy.items())) {
+        merged.rebind(var, term);
+      }
+      return merged;
+  };
+  auto substitutionSexprWithExtras =
+    [&](const Kernel::Substitution& substitution, const Kernel::Substitution& extras, std::string& rendered) {
+      Kernel::Substitution merged = substitutionWithExtras(substitution, extras);
+      return certificateSubstitutionSexpr(merged, rendered);
+  };
+
+  std::vector<std::string> actualDirect;
+  if (!appendCertificateClauseLiteralsSexpr(unit->asClause(), actualDirect)) {
+    return fail("render actual clause");
+  }
+  const bool debugDirectSuperposition = std::getenv("MEGALODON_CERT_DEBUG") != nullptr;
+  unsigned directRewriteCandidates = 0;
+  unsigned directMatcherCandidates = 0;
+  unsigned directClauseCandidates = 0;
+  std::string firstDirectExpected;
+  std::string firstDirectActual;
+  for (std::size_t targetParentIndex = 0; targetParentIndex < 2; ++targetParentIndex) {
+    const std::size_t equalityParentIndex = targetParentIndex == 0 ? 1 : 0;
+    std::vector<std::string> targetClause;
+    std::vector<std::string> equalityClause;
+    if (!substitutedClauseLiterals(parents[targetParentIndex], directSubstitution(targetParentIndex), targetClause)
+      || !substitutedClauseLiterals(parents[equalityParentIndex], directSubstitution(equalityParentIndex), equalityClause)) {
+      return fail("render direct substituted clauses");
+    }
+    for (unsigned targetIndex = 0; targetIndex < parents[targetParentIndex]->length(); ++targetIndex) {
+      Kernel::Literal* targetSubstituted = Kernel::SubstHelper::apply(
+        (*parents[targetParentIndex])[targetIndex],
+        directSubstitution(targetParentIndex));
+      for (unsigned equalityIndex = 0; equalityIndex < parents[equalityParentIndex]->length(); ++equalityIndex) {
+        Kernel::Literal* equalityLiteralCandidate = (*parents[equalityParentIndex])[equalityIndex];
+        if (!equalityLiteralCandidate->isEquality() || !equalityLiteralCandidate->isPositive()) {
+          continue;
+        }
+        Kernel::Literal* equalitySubstituted = Kernel::SubstHelper::apply(
+          equalityLiteralCandidate,
+          directSubstitution(equalityParentIndex));
+        if (!equalitySubstituted->isEquality() || !equalitySubstituted->isPositive()) {
+          continue;
+        }
+        for (unsigned direction = 0; direction < 2; ++direction) {
+          Kernel::TermList from = *equalitySubstituted->nthArgument(direction == 0 ? 0 : 1);
+          Kernel::TermList to = *equalitySubstituted->nthArgument(direction == 0 ? 1 : 0);
+          struct DirectSuperpositionCandidate {
+            Kernel::Substitution targetMatcher;
+            Kernel::Substitution equalityMatcher;
+            Kernel::Literal* effectiveTarget;
+            Kernel::TermList effectiveFrom;
+            Kernel::TermList effectiveTo;
+            bool usesMatcher;
+          };
+          std::vector<DirectSuperpositionCandidate> candidates;
+          candidates.push_back({Kernel::Substitution(), Kernel::Substitution(), targetSubstituted, from, to, false});
+
+          Kernel::Substitution targetMatcher;
+          if (literalContainsMatcher(targetSubstituted, from, targetMatcher)) {
+            Kernel::Literal* effectiveTarget = Kernel::SubstHelper::apply(targetSubstituted, targetMatcher);
+            candidates.push_back({
+              targetMatcher,
+              Kernel::Substitution(),
+              effectiveTarget,
+              Kernel::SubstHelper::apply(from, targetMatcher),
+              Kernel::SubstHelper::apply(to, targetMatcher),
+              true});
+          }
+
+          std::vector<Kernel::Substitution> equalityMatchers;
+          literalPatternMatchers(targetSubstituted, from, equalityMatchers);
+          for (Kernel::Substitution& equalityMatcher : equalityMatchers) {
+            candidates.push_back({
+              Kernel::Substitution(),
+              equalityMatcher,
+              targetSubstituted,
+              Kernel::SubstHelper::apply(from, equalityMatcher),
+              Kernel::SubstHelper::apply(to, equalityMatcher),
+              true});
+          }
+
+          for (const DirectSuperpositionCandidate& candidate : candidates) {
+            std::vector<unsigned> position;
+            std::string rewrittenTarget;
+            if (!certificateRewriteLiteralAtMegalodonPosition(
+                  candidate.effectiveTarget,
+                  candidate.effectiveFrom,
+                  candidate.effectiveTo,
+                  position,
+                  rewrittenTarget)) {
+              continue;
+            }
+            if (candidate.usesMatcher) {
+              ++directMatcherCandidates;
+            }
+            ++directRewriteCandidates;
+            Kernel::Substitution effectiveTargetSubstitution =
+              substitutionWithExtras(directSubstitution(targetParentIndex), candidate.targetMatcher);
+            Kernel::Substitution effectiveEqualitySubstitution =
+              substitutionWithExtras(directSubstitution(equalityParentIndex), candidate.equalityMatcher);
+            std::vector<std::string> effectiveTargetClause;
+            std::vector<std::string> effectiveEqualityClause;
+            if (!substitutedClauseLiterals(parents[targetParentIndex], effectiveTargetSubstitution, effectiveTargetClause)
+              || !substitutedClauseLiterals(parents[equalityParentIndex], effectiveEqualitySubstitution, effectiveEqualityClause)) {
+              return fail("render direct effective clauses");
+            }
+            std::vector<std::string> expected = removeAt(effectiveEqualityClause, equalityIndex);
+            std::vector<std::string> targetRest = removeAt(effectiveTargetClause, targetIndex);
+            expected.insert(expected.end(), targetRest.begin(), targetRest.end());
+            expected.push_back(rewrittenTarget);
+            ++directClauseCandidates;
+            if (debugDirectSuperposition && firstDirectExpected.empty()) {
+              firstDirectExpected = clauseSexprFromLiterals(expected);
+              firstDirectActual = clauseSexprFromLiterals(actualDirect);
+            }
+            if (!sameMultiset(expected, actualDirect)
+              && !sameModuloEqualitySymmetry(expected, actualDirect)
+              && !sameModuloVariableRenaming(expected, actualDirect)) {
+              continue;
+            }
+            std::string targetSubst;
+            std::string equalitySubst;
+            std::string fromSexpr;
+            std::string toSexpr;
+            if (!substitutionSexprWithExtras(directSubstitution(targetParentIndex), candidate.targetMatcher, targetSubst)
+              || !substitutionSexprWithExtras(directSubstitution(equalityParentIndex), candidate.equalityMatcher, equalitySubst)
+              || !certificateTermSexpr(candidate.effectiveFrom, fromSexpr)
+              || !certificateTermSexpr(candidate.effectiveTo, toSexpr)) {
+              return fail("render direct superposition");
+            }
+            result =
+              "(superposition " + sexprQuote("u" + std::to_string(unit->number()))
+              + " (target " + sexprQuote("u" + std::to_string(parents[targetParentIndex]->number()))
+              + " " + std::to_string(targetIndex) + ")"
+              + " (equality " + sexprQuote("u" + std::to_string(parents[equalityParentIndex]->number()))
+              + " " + std::to_string(equalityIndex) + ") "
+              + targetSubst + " "
+              + equalitySubst + " "
+              + certificatePositionSexpr(position)
+              + " (from " + fromSexpr + ")"
+              + " (to " + toSexpr + ")"
+              + " (result " + clauseSexprFromLiterals(actualDirect) + "))";
+            return true;
+          }
+        }
+      }
+    }
+  }
+  if (debugDirectSuperposition) {
+    std::cerr << "megalodon native direct superposition search failed for u"
+              << unit->number()
+              << ": rewrites=" << directRewriteCandidates
+              << " matcher_rewrites=" << directMatcherCandidates
+              << " clause_candidates=" << directClauseCandidates
+              << std::endl;
+    if (!firstDirectExpected.empty()) {
+      std::cerr << "megalodon native direct superposition first expected for u"
+                << unit->number() << ": " << firstDirectExpected << std::endl;
+      std::cerr << "megalodon native direct superposition actual for u"
+                << unit->number() << ": " << firstDirectActual << std::endl;
+    }
+  }
+
+  if (!hasReplaySubstitutions) {
+    return fail("bad replay precondition");
+  }
+  if (rewrite == nullptr) {
+    return fail("missing proof extra");
+  }
   Kernel::Literal* targetLiteral = rewrite->selected.selectedLiteral.selectedLiteral;
   Kernel::Literal* equalityLiteral = rewrite->selected.otherLiteral;
   if (targetLiteral == nullptr || equalityLiteral == nullptr || !equalityLiteral->isEquality() || !equalityLiteral->isPositive()) {
