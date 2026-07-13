@@ -61,6 +61,7 @@ private:
   bool certificateUnitResultingResolutionStepsJson(Kernel::Unit* unit, std::string& result);
   bool certificateSubstitutedResolutionStepsJson(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateSatSubsumptionResolutionStepsJson(Kernel::Unit* unit, std::string& result);
+  bool certificateExtensionalityResolutionStepsJson(Kernel::Unit* unit, std::string& result);
   bool certificateCondensationStepsJson(Kernel::Unit* unit, std::string& result);
   bool certificateAvatarRefutationStepJson(Kernel::Unit* unit, std::string& result);
   bool certificateDefinitionRewriteChainStepJson(Kernel::Unit* unit, std::string& result);

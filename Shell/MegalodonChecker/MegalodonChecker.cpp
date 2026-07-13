@@ -4191,6 +4191,260 @@ bool MegalodonChecker::certificateInequalitySplittingStepJson(Kernel::Unit* unit
   return true;
 }
 
+bool MegalodonChecker::certificateExtensionalityResolutionStepsJson(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause()
+    || unit->inference().rule() != Kernel::InferenceRule::EXTENSIONALITY_RESOLUTION) {
+    return false;
+  }
+
+  std::vector<Kernel::Clause*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    if (parent->isClause()) {
+      parents.push_back(parent->asClause());
+    }
+  }
+  if (parents.size() != 2) {
+    return false;
+  }
+
+  auto jsonArray = [](const std::vector<std::string>& items) {
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << items[i];
+    }
+    out << ']';
+    return out.str();
+  };
+  auto normalize = [](std::vector<std::string>& literals) {
+    std::sort(literals.begin(), literals.end());
+    literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
+  };
+  auto certificateSubstitutionJson = [&](const Kernel::Substitution& substitution, std::string& rendered) {
+    std::vector<std::pair<unsigned, std::string>> items;
+    Kernel::Substitution substitutionCopy = substitution;
+    for (auto [var, term] : iterTraits(substitutionCopy.items())) {
+      if (term.isVar() && term.var() == var) {
+        continue;
+      }
+      std::string termJson;
+      if (!certificateTermJson(term, termJson)) {
+        return false;
+      }
+      items.push_back({var, quote(variableName(var)) + ":" + termJson});
+    }
+    std::sort(items.begin(), items.end(), [](const auto& left, const auto& right) {
+      return left.first < right.first;
+    });
+    std::ostringstream out;
+    out << '{';
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << items[i].second;
+    }
+    out << '}';
+    rendered = out.str();
+    return true;
+  };
+  struct ExtensionalitySymmetryCandidate {
+    bool extParent;
+    std::string literal;
+    std::string swapped;
+  };
+  auto appendSubstitutedClauseExcept = [&](
+    std::vector<std::string>& literals,
+    Kernel::Clause* clause,
+    const Kernel::Substitution& substitution,
+    Kernel::Literal* excluded,
+    bool extParent,
+    std::vector<ExtensionalitySymmetryCandidate>& symmetryCandidates) {
+    bool skipped = false;
+    for (Kernel::Literal* literal : clause->iterLits()) {
+      if (!skipped && literal == excluded) {
+        skipped = true;
+        continue;
+      }
+      std::string literalJson;
+      if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, substitution, literalJson)) {
+        return false;
+      }
+      literals.push_back(literalJson);
+      if (literal->isEquality()) {
+        std::string swappedJson;
+        if (!certificateSubstitutedEqualityLiteralJson(literal, substitution, true, swappedJson)) {
+          return false;
+        }
+        if (literalJson != swappedJson) {
+          symmetryCandidates.push_back({extParent, literalJson, swappedJson});
+        }
+      }
+    }
+    return skipped;
+  };
+  auto normalizedActualClause = [&](std::vector<std::string>& literals) {
+    for (Kernel::Literal* literal : unit->asClause()->iterLits()) {
+      std::string literalJson;
+      if (!certificateLiteralJson(literal, literalJson)) {
+        return false;
+      }
+      literals.push_back(literalJson);
+    }
+    normalize(literals);
+    return true;
+  };
+  auto tryBuildSubstitution = [&](Kernel::Literal* extLiteral, Kernel::Literal* otherLiteral, Kernel::Substitution& extSubstitution) {
+    if (!extLiteral->isEquality()
+      || !extLiteral->isPositive()
+      || !otherLiteral->isEquality()
+      || otherLiteral->isPositive()) {
+      return false;
+    }
+    Kernel::TermList extLeft = *extLiteral->nthArgument(0);
+    Kernel::TermList extRight = *extLiteral->nthArgument(1);
+    if (!extLeft.isVar() || !extRight.isVar()) {
+      return false;
+    }
+    extSubstitution.bind(extLeft.var(), *otherLiteral->nthArgument(0));
+    extSubstitution.bind(extRight.var(), *otherLiteral->nthArgument(1));
+    return true;
+  };
+
+  for (std::size_t extIndex = 0; extIndex < 2; ++extIndex) {
+    std::size_t otherIndex = extIndex == 0 ? 1 : 0;
+    Kernel::Clause* extParent = parents[extIndex];
+    Kernel::Clause* otherParent = parents[otherIndex];
+    Kernel::Substitution emptySubstitution;
+    for (Kernel::Literal* extLiteral : extParent->iterLits()) {
+      for (Kernel::Literal* otherLiteral : otherParent->iterLits()) {
+        Kernel::Substitution extSubstitution;
+        if (!tryBuildSubstitution(extLiteral, otherLiteral, extSubstitution)) {
+          continue;
+        }
+
+        std::vector<std::string> expected;
+        std::vector<std::string> actual;
+        std::vector<ExtensionalitySymmetryCandidate> symmetryCandidates;
+        if (!appendSubstitutedClauseExcept(expected, extParent, extSubstitution, extLiteral, true, symmetryCandidates)
+          || !appendSubstitutedClauseExcept(expected, otherParent, emptySubstitution, otherLiteral, false, symmetryCandidates)
+          || !normalizedActualClause(actual)) {
+          continue;
+        }
+        normalize(expected);
+        std::vector<ExtensionalitySymmetryCandidate> finalSymmetryFlips;
+        for (std::size_t guard = 0; expected != actual && guard < symmetryCandidates.size(); ++guard) {
+          bool changed = false;
+          for (const auto& candidate : symmetryCandidates) {
+            if (std::find(actual.begin(), actual.end(), candidate.swapped) == actual.end()) {
+              continue;
+            }
+            auto currentIt = std::find(expected.begin(), expected.end(), candidate.literal);
+            if (currentIt == expected.end()) {
+              continue;
+            }
+            *currentIt = candidate.swapped;
+            normalize(expected);
+            finalSymmetryFlips.push_back(candidate);
+            changed = true;
+            break;
+          }
+          if (!changed) {
+            break;
+          }
+        }
+        if (expected != actual) {
+          continue;
+        }
+
+        std::string substitutionJson;
+        std::string substitutedExtClauseJson;
+        std::string pivotJson;
+        std::string conclusionJson;
+        if (!certificateSubstitutionJson(extSubstitution, substitutionJson)
+          || !certificateSubstitutedClausePreservingEqualityJson(extParent, extSubstitution, substitutedExtClauseJson)
+          || !certificateSubstitutedLiteralPreservingEqualityJson(extLiteral, extSubstitution, pivotJson)
+          || !certificateClauseJson(unit->asClause(), conclusionJson)) {
+          return false;
+        }
+
+        std::string stepBase = "u" + std::to_string(unit->number());
+        std::string extParentId = "u" + std::to_string(extParent->number());
+        std::string otherParentId = "u" + std::to_string(otherParent->number());
+        std::vector<std::string> steps;
+        std::vector<std::string> currentExtClause;
+        std::vector<std::string> currentOtherClause;
+        if (substitutionJson != "{}") {
+          std::string substituteId = stepBase + "_subst_ext";
+          steps.push_back(
+            "{\"id\":" + quote(substituteId) + ","
+            "\"rule\":\"substitute\","
+            "\"parents\":[" + quote(extParentId) + "],"
+            "\"substitution\":" + substitutionJson + ","
+            "\"clause\":" + substitutedExtClauseJson + "}");
+          extParentId = substituteId;
+        }
+        for (Kernel::Literal* literal : extParent->iterLits()) {
+          std::string literalJson;
+          if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, extSubstitution, literalJson)) {
+            return false;
+          }
+          currentExtClause.push_back(literalJson);
+        }
+        for (Kernel::Literal* literal : otherParent->iterLits()) {
+          std::string literalJson;
+          if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, emptySubstitution, literalJson)) {
+            return false;
+          }
+          currentOtherClause.push_back(literalJson);
+        }
+        normalize(currentExtClause);
+        normalize(currentOtherClause);
+        std::size_t extSymmetryIndex = 0;
+        std::size_t otherSymmetryIndex = 0;
+        for (const auto& flip : finalSymmetryFlips) {
+          std::vector<std::string>& currentClause = flip.extParent ? currentExtClause : currentOtherClause;
+          auto currentIt = std::find(currentClause.begin(), currentClause.end(), flip.literal);
+          if (currentIt == currentClause.end()) {
+            return false;
+          }
+          *currentIt = flip.swapped;
+          normalize(currentClause);
+          std::string symmetryStepId;
+          std::string* parentId;
+          if (flip.extParent) {
+            symmetryStepId = stepBase + "_symmetry_ext" + std::to_string(extSymmetryIndex++);
+            parentId = &extParentId;
+          } else {
+            symmetryStepId = stepBase + "_symmetry_other" + std::to_string(otherSymmetryIndex++);
+            parentId = &otherParentId;
+          }
+          steps.push_back(
+            "{\"id\":" + quote(symmetryStepId) + ","
+            "\"rule\":\"equality_symmetry\","
+            "\"parents\":[" + quote(*parentId) + "],"
+            "\"literal\":" + flip.literal + ","
+            "\"clause\":" + jsonArray(currentClause) + "}");
+          *parentId = symmetryStepId;
+        }
+        steps.push_back(
+          "{\"id\":" + quote(stepBase) + ","
+          "\"rule\":\"resolve\","
+          "\"parents\":[" + quote(extParentId) + "," + quote(otherParentId) + "],"
+          "\"pivot\":" + pivotJson + ","
+          "\"clause\":" + conclusionJson + "}");
+        result = jsonArray(steps);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 bool MegalodonChecker::certificateEqualityFactoringStepJson(
   Kernel::Unit* unit,
   const InferenceRecorder::InferenceInformation* replayInfo,
@@ -9745,6 +9999,11 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
           << certificateStep
           << ").\n";
     } else if (certificateSubstitutedResolutionStepsJson(u, replayInfo, certificateStep)) {
+      out << "megalodon_certificate_steps("
+          << u->number() << ','
+          << certificateStep
+          << ").\n";
+    } else if (certificateExtensionalityResolutionStepsJson(u, certificateStep)) {
       out << "megalodon_certificate_steps("
           << u->number() << ','
           << certificateStep
