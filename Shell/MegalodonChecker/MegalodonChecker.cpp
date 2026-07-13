@@ -4438,6 +4438,107 @@ bool MegalodonChecker::certificateDefinitionRewriteChainStepJson(Kernel::Unit* u
     return out.str();
   };
 
+  auto positionJson = [](const std::vector<unsigned>& position) {
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t i = 0; i < position.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << position[i];
+    }
+    out << ']';
+    return out.str();
+  };
+  auto collectTermPositions = [&](auto&& self, Kernel::TermList term, Kernel::TermList needle, std::vector<unsigned>& current, std::vector<std::vector<unsigned>>& positions) -> void {
+    if (term == needle) {
+      positions.push_back(current);
+    }
+    if (term.isVar()) {
+      return;
+    }
+    if (term.isApplication()) {
+      current.push_back(0);
+      self(self, term.lhs(), needle, current, positions);
+      current.pop_back();
+      current.push_back(1);
+      self(self, term.rhs(), needle, current, positions);
+      current.pop_back();
+      return;
+    }
+    Kernel::Term* termPtr = term.term();
+    for (unsigned i = 0; i < termPtr->numTermArguments(); ++i) {
+      current.push_back(i);
+      self(self, termPtr->termArg(i), needle, current, positions);
+      current.pop_back();
+    }
+  };
+  std::function<bool(Kernel::TermList, const std::vector<unsigned>&, std::size_t, Kernel::TermList, Kernel::TermList&)> replaceTermAtPosition =
+    [&](Kernel::TermList term, const std::vector<unsigned>& position, std::size_t depth, Kernel::TermList replacement, Kernel::TermList& result) -> bool {
+      if (depth == position.size()) {
+        result = replacement;
+        return true;
+      }
+      if (term.isVar()) {
+        return false;
+      }
+      unsigned childIndex = position[depth];
+      if (term.isApplication()) {
+        Kernel::TermList lhs = term.lhs();
+        Kernel::TermList rhs = term.rhs();
+        Kernel::TermList rewritten;
+        if (childIndex == 0) {
+          if (!replaceTermAtPosition(lhs, position, depth + 1, replacement, rewritten)) {
+            return false;
+          }
+          result = HOL::create::app(*term.term()->nthArgument(0), *term.term()->nthArgument(1), rewritten, rhs);
+          return true;
+        }
+        if (childIndex == 1) {
+          if (!replaceTermAtPosition(rhs, position, depth + 1, replacement, rewritten)) {
+            return false;
+          }
+          result = HOL::create::app(*term.term()->nthArgument(0), *term.term()->nthArgument(1), lhs, rewritten);
+          return true;
+        }
+        return false;
+      }
+      Kernel::Term* termPtr = term.term();
+      if (childIndex >= termPtr->numTermArguments()) {
+        return false;
+      }
+      Stack<Kernel::TermList> args;
+      for (unsigned i = 0; i < termPtr->arity(); ++i) {
+        args.push(*termPtr->nthArgument(i));
+      }
+      Kernel::TermList rewritten;
+      unsigned argumentIndex = termPtr->numTypeArguments() + childIndex;
+      if (!replaceTermAtPosition(args[argumentIndex], position, depth + 1, replacement, rewritten)) {
+        return false;
+      }
+      args[argumentIndex] = rewritten;
+      result = term.term()->isSort()
+        ? Kernel::TermList(Kernel::AtomicSort::create(static_cast<Kernel::AtomicSort*>(termPtr), args.begin()))
+        : Kernel::TermList(Kernel::Term::create(termPtr, args.begin()));
+      return true;
+    };
+  auto rewriteLiteralAtPosition = [&](Kernel::Literal* literal, const std::vector<unsigned>& position, Kernel::TermList replacement, Kernel::Literal*& rewritten) {
+    if (position.empty() || position[0] >= literal->arity()) {
+      return false;
+    }
+    Stack<Kernel::TermList> args;
+    for (unsigned i = 0; i < literal->arity(); ++i) {
+      args.push(*literal->nthArgument(i));
+    }
+    Kernel::TermList rewrittenArgument;
+    std::vector<unsigned> argumentPosition(position.begin() + 1, position.end());
+    if (!replaceTermAtPosition(args[position[0]], argumentPosition, 0, replacement, rewrittenArgument)) {
+      return false;
+    }
+    args[position[0]] = rewrittenArgument;
+    rewritten = Kernel::Literal::create(literal, args.begin());
+    return true;
+  };
   auto appendEqualityDefinitionRewrite = [&](Kernel::Clause* definitionParent, std::size_t parentIndex, std::vector<std::string>& rewrites) {
     for (Kernel::Literal* literal : definitionParent->iterLits()) {
       if (!literal->isEquality() || !literal->isPositive() || literal->arity() != 2) {
@@ -4458,6 +4559,57 @@ bool MegalodonChecker::certificateDefinitionRewriteChainStepJson(Kernel::Unit* u
     }
     return false;
   };
+  auto appendPositionedEqualityDefinitionRewrite =
+    [&](Kernel::Clause* definitionParent, std::size_t parentIndex, std::vector<Kernel::Literal*>& currentClause, std::vector<std::string>& rewrites) {
+      for (Kernel::Literal* literal : definitionParent->iterLits()) {
+        if (!literal->isEquality() || !literal->isPositive() || literal->arity() != 2) {
+          continue;
+        }
+        Kernel::TermList fromTerm = *literal->nthArgument(0);
+        Kernel::TermList toTerm = *literal->nthArgument(1);
+        for (std::size_t literalIndex = 0; literalIndex < currentClause.size(); ++literalIndex) {
+          Kernel::Literal* current = currentClause[literalIndex];
+          for (unsigned argumentIndex = 0; argumentIndex < current->arity(); ++argumentIndex) {
+            std::vector<unsigned> prefix;
+            prefix.push_back(argumentIndex);
+            std::vector<std::vector<unsigned>> positions;
+            collectTermPositions(collectTermPositions, *current->nthArgument(argumentIndex), fromTerm, prefix, positions);
+            if (positions.empty()) {
+              continue;
+            }
+            Kernel::Literal* rewrittenLiteral = nullptr;
+            if (!rewriteLiteralAtPosition(current, positions.front(), toTerm, rewrittenLiteral)) {
+              return false;
+            }
+            std::string from;
+            std::string to;
+            if (!certificateTermJson(fromTerm, from) || !certificateTermJson(toTerm, to)) {
+              return false;
+            }
+            currentClause[literalIndex] = rewrittenLiteral;
+            std::vector<std::string> intermediateLiterals;
+            for (Kernel::Literal* intermediateLiteral : currentClause) {
+              std::string intermediateLiteralJson;
+              if (!certificateLiteralJson(intermediateLiteral, intermediateLiteralJson)) {
+                return false;
+              }
+              intermediateLiterals.push_back(intermediateLiteralJson);
+            }
+            rewrites.push_back(
+              "{\"from\":" + from
+              + ",\"to\":" + to
+              + ",\"parent\":" + quote("u" + std::to_string(parents[parentIndex]->number()))
+              + ",\"literal\":" + std::to_string(literalIndex)
+              + ",\"position\":" + positionJson(positions.front())
+              + ",\"clause\":" + jsonArray(intermediateLiterals)
+              + "}");
+            return true;
+          }
+        }
+        return false;
+      }
+      return false;
+    };
 
   std::vector<std::string> parentIds;
   for (Kernel::Unit* parent : parents) {
@@ -4503,10 +4655,52 @@ bool MegalodonChecker::certificateDefinitionRewriteChainStepJson(Kernel::Unit* u
         + "}");
     }
   } else {
+    std::vector<Kernel::Literal*> currentClause;
+    for (Kernel::Literal* literal : parents[0]->asClause()->iterLits()) {
+      currentClause.push_back(literal);
+    }
     for (std::size_t parentIndex = 1; parentIndex < parents.size(); ++parentIndex) {
       if (!parents[parentIndex]->isClause()
-        || !appendEqualityDefinitionRewrite(parents[parentIndex]->asClause(), parentIndex, rewrites)) {
-        return false;
+        || !appendPositionedEqualityDefinitionRewrite(parents[parentIndex]->asClause(), parentIndex, currentClause, rewrites)) {
+        rewrites.clear();
+        for (std::size_t fallbackParentIndex = 1; fallbackParentIndex < parents.size(); ++fallbackParentIndex) {
+          if (!parents[fallbackParentIndex]->isClause()
+            || !appendEqualityDefinitionRewrite(parents[fallbackParentIndex]->asClause(), fallbackParentIndex, rewrites)) {
+            return false;
+          }
+        }
+        break;
+      }
+    }
+    if (!rewrites.empty() && rewrites.size() == parents.size() - 1) {
+      std::vector<std::string> expectedLiterals;
+      for (Kernel::Literal* literal : currentClause) {
+        std::string literalJson;
+        if (!certificateLiteralJson(literal, literalJson)) {
+          return false;
+        }
+        expectedLiterals.push_back(literalJson);
+      }
+      std::vector<std::string> actualLiterals;
+      for (Kernel::Literal* literal : unit->asClause()->iterLits()) {
+        std::string literalJson;
+        if (!certificateLiteralJson(literal, literalJson)) {
+          return false;
+        }
+        actualLiterals.push_back(literalJson);
+      }
+      std::sort(expectedLiterals.begin(), expectedLiterals.end());
+      expectedLiterals.erase(std::unique(expectedLiterals.begin(), expectedLiterals.end()), expectedLiterals.end());
+      std::sort(actualLiterals.begin(), actualLiterals.end());
+      actualLiterals.erase(std::unique(actualLiterals.begin(), actualLiterals.end()), actualLiterals.end());
+      if (expectedLiterals != actualLiterals) {
+        rewrites.clear();
+        for (std::size_t fallbackParentIndex = 1; fallbackParentIndex < parents.size(); ++fallbackParentIndex) {
+          if (!parents[fallbackParentIndex]->isClause()
+            || !appendEqualityDefinitionRewrite(parents[fallbackParentIndex]->asClause(), fallbackParentIndex, rewrites)) {
+            return false;
+          }
+        }
       }
     }
   }
