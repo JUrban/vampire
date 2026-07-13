@@ -165,6 +165,7 @@ private:
   bool certificateResolveStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateSubstitutedResolutionStepsSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateFactorStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateTrivialInequalityRemovalStepsSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateEqualityResolutionStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateEqualityFactoringStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateTruthConflictStepSexpr(Kernel::Unit* unit, std::string& result);
