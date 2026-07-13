@@ -8028,7 +8028,7 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
   Kernel::TermList from;
   Kernel::TermList to;
   std::vector<std::vector<unsigned>> redexPositions;
-  auto chooseEqualitySource = [&](Kernel::Literal* candidate) {
+  auto chooseEqualitySource = [&](Kernel::Literal* candidate, bool allowUnpreferredMatch) {
     if (candidate == nullptr || !candidate->isEquality() || !candidate->isPositive()) {
       return false;
     }
@@ -8064,11 +8064,11 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
       from = right;
       to = left;
       redexPositions = rightPositions;
-    } else if (!leftPositions.empty()) {
+    } else if (allowUnpreferredMatch && !leftPositions.empty()) {
       from = left;
       to = right;
       redexPositions = leftPositions;
-    } else if (!rightPositions.empty()) {
+    } else if (allowUnpreferredMatch && !rightPositions.empty()) {
       from = right;
       to = left;
       redexPositions = rightPositions;
@@ -8078,7 +8078,8 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     equalityLiteral = candidate;
     return true;
   };
-  bool foundSource = chooseEqualitySource(equalityLiteral);
+  Kernel::Literal* recordedEqualityLiteral = equalityLiteral;
+  bool foundSource = chooseEqualitySource(recordedEqualityLiteral, true);
   if (!foundSource || to.isVar()) {
     bool foundConcreteAlternative = false;
     bool foundFallbackAlternative = false;
@@ -8088,7 +8089,7 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     std::vector<std::vector<unsigned>> fallbackPositions;
     for (unsigned i = 0; i < equalityParent->length(); ++i) {
       Kernel::Literal* candidate = (*equalityParent)[i];
-      if (candidate == equalityLiteral || !chooseEqualitySource(candidate)) {
+      if (candidate == equalityLiteral || !chooseEqualitySource(candidate, false)) {
         continue;
       }
       if (!to.isVar()) {
@@ -8105,7 +8106,7 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     }
     if (!foundConcreteAlternative) {
       if (foundSource) {
-        chooseEqualitySource(equalityLiteral);
+        chooseEqualitySource(recordedEqualityLiteral, true);
       } else if (foundFallbackAlternative) {
         equalityLiteral = fallbackLiteral;
         from = fallbackFrom;
@@ -8239,13 +8240,16 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     return out.str();
   };
 
-  auto canNormalizeBySymmetry = [&](const std::vector<std::string>& source, std::vector<std::pair<std::string, std::string>>& flips) {
+  auto canNormalizeBySymmetryToTarget = [&](const std::vector<std::string>& source,
+                                            const std::vector<std::string>& target,
+                                            const std::vector<std::pair<std::string, std::string>>& candidates,
+                                            std::vector<std::pair<std::string, std::string>>& flips) {
     std::vector<std::string> current = source;
     flips.clear();
-    for (std::size_t guard = 0; current != actual && guard < symmetryCandidates.size(); ++guard) {
+    for (std::size_t guard = 0; current != target && guard < candidates.size(); ++guard) {
       bool changed = false;
-      for (const auto& candidate : symmetryCandidates) {
-        if (std::find(actual.begin(), actual.end(), candidate.second) == actual.end()) {
+      for (const auto& candidate : candidates) {
+        if (std::find(target.begin(), target.end(), candidate.second) == target.end()) {
           continue;
         }
         auto currentIt = std::find(current.begin(), current.end(), candidate.first);
@@ -8263,10 +8267,64 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
         break;
       }
     }
-    return current == actual;
+    return current == target;
+  };
+  auto canNormalizeBySymmetry = [&](const std::vector<std::string>& source, std::vector<std::pair<std::string, std::string>>& flips) {
+    return canNormalizeBySymmetryToTarget(source, actual, symmetryCandidates, flips);
+  };
+  auto renamedSymmetryCandidates = [&](const std::vector<std::pair<std::string, std::string>>& renaming) {
+    std::vector<std::pair<std::string, std::string>> renamed;
+    renamed.reserve(symmetryCandidates.size());
+    for (const auto& candidate : symmetryCandidates) {
+      std::vector<std::string> first{candidate.first};
+      std::vector<std::string> second{candidate.second};
+      first = applyJsonVariableRenaming(first, renaming);
+      second = applyJsonVariableRenaming(second, renaming);
+      if (!first.empty() && !second.empty() && first[0] != second[0]) {
+        renamed.push_back({first[0], second[0]});
+      }
+    }
+    return renamed;
+  };
+  auto findJsonVariableRenamingThenSymmetry =
+    [&](const std::vector<std::string>& source,
+        const std::vector<std::string>& target,
+        std::vector<std::pair<std::string, std::string>>& renaming,
+        std::vector<std::pair<std::string, std::string>>& flips) {
+      std::vector<std::string> sourceVars = collectJsonVariables(source);
+      std::vector<std::string> targetVars = collectJsonVariables(target);
+      renaming.clear();
+      flips.clear();
+      if (sourceVars.size() != targetVars.size() || sourceVars.empty() || sourceVars.size() > 7) {
+        return false;
+      }
+
+      std::vector<std::string> candidateTargets = targetVars;
+      do {
+        std::vector<std::pair<std::string, std::string>> candidate;
+        candidate.reserve(sourceVars.size());
+        bool nontrivial = false;
+        for (std::size_t i = 0; i < sourceVars.size(); ++i) {
+          candidate.push_back({sourceVars[i], candidateTargets[i]});
+          nontrivial = nontrivial || sourceVars[i] != candidateTargets[i];
+        }
+        if (!nontrivial) {
+          continue;
+        }
+        std::vector<std::string> renamedSource = applyJsonVariableRenaming(source, candidate);
+        std::vector<std::pair<std::string, std::string>> renamedCandidates = renamedSymmetryCandidates(candidate);
+        std::vector<std::pair<std::string, std::string>> candidateFlips;
+        if (canNormalizeBySymmetryToTarget(renamedSource, target, renamedCandidates, candidateFlips)) {
+          renaming = candidate;
+          flips = candidateFlips;
+          return true;
+        }
+      } while (std::next_permutation(candidateTargets.begin(), candidateTargets.end()));
+      return false;
   };
   std::vector<std::pair<std::string, std::string>> finalSymmetryFlips;
   std::vector<std::pair<std::string, std::string>> finalRenaming;
+  bool finalRenamingBeforeSymmetry = false;
   bool clauseWideParamodulation = false;
   std::vector<TargetRewrite> targetRewrites;
   if (!canNormalizeBySymmetry(paramClause, finalSymmetryFlips)) {
@@ -8293,12 +8351,26 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
       if (!canNormalizeBySymmetry(clauseWideParamClause, finalSymmetryFlips)) {
         finalSymmetryFlips.clear();
         if (!findJsonVariableRenaming(clauseWideParamClause, actual, finalRenaming)) {
-          return false;
+          if (!findJsonVariableRenamingThenSymmetry(clauseWideParamClause, actual, finalRenaming, finalSymmetryFlips)) {
+            return false;
+          }
+          finalRenamingBeforeSymmetry = true;
         }
       }
       clauseWideParamodulation = true;
       paramClause = clauseWideParamClause;
       targetRewrites = clauseWideTargetRewrites;
+    } else {
+      finalSymmetryFlips.clear();
+    }
+    if (!finalRenamingBeforeSymmetry && finalRenaming.empty()) {
+      std::vector<std::pair<std::string, std::string>> mixedRenaming;
+      std::vector<std::pair<std::string, std::string>> mixedFlips;
+      if (findJsonVariableRenamingThenSymmetry(paramClause, actual, mixedRenaming, mixedFlips)) {
+        finalRenaming = mixedRenaming;
+        finalSymmetryFlips = mixedFlips;
+        finalRenamingBeforeSymmetry = true;
+      }
     }
   }
 
@@ -8495,6 +8567,21 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
   }
   std::string currentStepId = paramodulateStepId;
   std::vector<std::string> currentClause = paramClause;
+  if (finalRenamingNeeded && finalRenamingBeforeSymmetry) {
+    std::vector<std::string> renamedClause = applyJsonVariableRenaming(currentClause, finalRenaming);
+    if (finalSymmetryFlips.empty() && renamedClause != actual) {
+      return false;
+    }
+    std::string renameStepId = finalSymmetryFlips.empty() ? stepBase : stepBase + "_rename";
+    steps.push_back(
+      "{\"id\":" + quote(renameStepId) + ","
+      "\"rule\":\"substitute\","
+      "\"parents\":[" + quote(currentStepId) + "],"
+      "\"substitution\":" + renamingSubstitutionJson(finalRenaming) + ","
+      "\"clause\":" + (finalSymmetryFlips.empty() ? conclusionJson : jsonArray(renamedClause)) + "}");
+    currentStepId = renameStepId;
+    currentClause = renamedClause;
+  }
   for (std::size_t index = 0; index < finalSymmetryFlips.size(); ++index) {
     const auto& flip = finalSymmetryFlips[index];
     auto literalIt = std::find(currentClause.begin(), currentClause.end(), flip.first);
@@ -8504,8 +8591,9 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     *literalIt = flip.second;
     std::sort(currentClause.begin(), currentClause.end());
     currentClause.erase(std::unique(currentClause.begin(), currentClause.end()), currentClause.end());
-    std::string normalizeStepId = index + 1 == finalSymmetryFlips.size()
-      && !finalRenamingNeeded
+    bool lastNormalizationStep = index + 1 == finalSymmetryFlips.size();
+    std::string normalizeStepId = lastNormalizationStep
+      && (!finalRenamingNeeded || finalRenamingBeforeSymmetry)
       ? stepBase
       : stepBase + "_normalize" + std::to_string(index);
     steps.push_back(
@@ -8516,7 +8604,7 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
       "\"clause\":" + jsonArray(currentClause) + "}");
     currentStepId = normalizeStepId;
   }
-  if (finalRenamingNeeded) {
+  if (finalRenamingNeeded && !finalRenamingBeforeSymmetry) {
     std::vector<std::string> renamedClause = applyJsonVariableRenaming(currentClause, finalRenaming);
     if (renamedClause != actual) {
       return false;
