@@ -20,10 +20,17 @@
 
 namespace Shell {
 
-struct TweeDefinitionFoldingExtra : public InferenceExtra {
-  std::vector<std::pair<Kernel::TermList, Kernel::TermList>> steps;
+struct TweeDefinitionFoldStep {
+  Kernel::TermList from;
+  Kernel::TermList to;
+  unsigned literal;
+  std::vector<unsigned> position;
+};
 
-  explicit TweeDefinitionFoldingExtra(std::vector<std::pair<Kernel::TermList, Kernel::TermList>> steps)
+struct TweeDefinitionFoldingExtra : public InferenceExtra {
+  std::vector<TweeDefinitionFoldStep> steps;
+
+  explicit TweeDefinitionFoldingExtra(std::vector<TweeDefinitionFoldStep> steps)
     : steps(std::move(steps)) {}
 
   void output(std::ostream& out) const override;

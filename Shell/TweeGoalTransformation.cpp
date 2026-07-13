@@ -65,11 +65,13 @@ class Definizator : public BottomUpTermTransformer {
     DHMap<Term*,std::pair<unsigned,Clause*>> _cache;
 
     // concrete bottom-up replacement sequence for the current transformed clause
-    std::vector<std::pair<TermList, TermList>> steps;
+    std::vector<Shell::TweeDefinitionFoldStep> steps;
 
     Definizator(bool groundOnly) : newUnits(UnitList::empty()), _groundOnly(groundOnly) {}
   private:
     bool _groundOnly;
+    unsigned _currentLiteral = 0;
+    std::vector<unsigned> _currentPosition;
 
     unsigned _typeArity;
     TermStack _allVars; // including typeVars, which will come first, then termVars
@@ -111,8 +113,7 @@ class Definizator : public BottomUpTermTransformer {
       ASS_EQ(_typeArity+_termVarSorts.size(), _allVars.size())
     }
 
-  protected:
-    TermList transformSubterm(TermList trm) override {
+    TermList transformSubtermWithPosition(TermList trm) {
       // cout << "tf: " << trm.toString() << endl;
       if (trm.isVar()) return trm;
       Term* t = trm.term();
@@ -181,9 +182,67 @@ class Definizator : public BottomUpTermTransformer {
       }
       // record as a new premise
       UnitList::push(symAndDef.second,premises);
-      steps.push_back({trm, res});
+      steps.push_back({trm, res, _currentLiteral, _currentPosition});
       // cout << "r: " << res.toString() << endl;
       return res;
+    }
+
+    TermList transformTermListWithPositions(TermList ts) {
+      if (ts.isVar()) {
+        return transformSubtermWithPosition(ts);
+      }
+      ASS(ts.isTerm());
+      Term* term = ts.term();
+      if (term->isSpecial()) {
+        return TermList(BottomUpTermTransformer::transform(term));
+      }
+      Term* transformed = transformProperSubtermsWithPositions(term);
+      return transformSubtermWithPosition(TermList(transformed));
+    }
+
+    Term* transformProperSubtermsWithPositions(Term* term) {
+      if (term->isSpecial()) {
+        return BottomUpTermTransformer::transform(term);
+      }
+
+      Stack<TermList> args(term->arity());
+      bool changed = false;
+
+      for (unsigned i = 0; i < term->arity(); ++i) {
+        TermList arg = *term->nthArgument(i);
+        _currentPosition.push_back(i);
+        TermList transformedArg = transformTermListWithPositions(arg);
+        _currentPosition.pop_back();
+        changed = changed || (arg != transformedArg);
+        args.push(transformedArg);
+      }
+
+      if (!changed) {
+        return term;
+      }
+
+      TermList* argLst = term->arity() ? &args.top() - (term->arity() - 1) : nullptr;
+      if (term->isLiteral()) {
+        return Literal::create(static_cast<Literal*>(term), argLst);
+      }
+      if (term->isSort()) {
+        return AtomicSort::create(static_cast<AtomicSort*>(term), argLst);
+      }
+      return Term::create(term, argLst);
+    }
+
+  public:
+    Literal* transformLiteralWithPositions(Literal* lit, unsigned literalIndex) {
+      _currentLiteral = literalIndex;
+      _currentPosition.clear();
+      Term* t = transformProperSubtermsWithPositions(static_cast<Term*>(lit));
+      ASS(t->isLiteral());
+      return static_cast<Literal*>(t);
+    }
+
+  protected:
+    TermList transformSubterm(TermList trm) override {
+      return transformSubtermWithPosition(trm);
     }
 };
 
@@ -191,7 +250,14 @@ void Shell::TweeDefinitionFoldingExtra::output(std::ostream& out) const
 {
   out << "steps=" << steps.size();
   for (std::size_t i = 0; i < steps.size(); ++i) {
-    out << ",step" << i << "=(" << steps[i].first << " -> " << steps[i].second << ")";
+    out << ",step" << i << "=(" << steps[i].from << " -> " << steps[i].to << ")@"
+        << steps[i].literal << ":";
+    for (std::size_t j = 0; j < steps[i].position.size(); ++j) {
+      if (j) {
+        out << ".";
+      }
+      out << steps[i].position[j];
+    }
   }
 }
 
@@ -216,7 +282,7 @@ void Shell::TweeGoalTransformation::apply(Problem &prb, bool groundOnly)
     for (unsigned i = 0; i < c->size(); i++) {
       Literal* l = c->literals()[i];
       // cout << "L: " << l->toString() << endl;
-      Literal* nl = df.transformLiteral(l);
+      Literal* nl = df.transformLiteralWithPositions(l, i);
       // cout << "NL: " << nl->toString() << endl;
       newLits.push(nl);
     }

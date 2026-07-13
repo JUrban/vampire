@@ -1366,13 +1366,22 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       for (std::size_t stepIndex = 0; stepIndex < foldingExtra->steps.size(); ++stepIndex) {
         const std::string prefix = "fold_step_" + std::to_string(stepIndex);
         std::string lhs;
-        if (renderTermForExtra(foldingExtra->steps[stepIndex].first, lhs)) {
+        if (renderTermForExtra(foldingExtra->steps[stepIndex].from, lhs)) {
           fields.push_back(prefix + "_lhs=" + lhs);
         }
         std::string rhs;
-        if (renderTermForExtra(foldingExtra->steps[stepIndex].second, rhs)) {
+        if (renderTermForExtra(foldingExtra->steps[stepIndex].to, rhs)) {
           fields.push_back(prefix + "_rhs=" + rhs);
         }
+        fields.push_back(prefix + "_literal=" + std::to_string(foldingExtra->steps[stepIndex].literal));
+        std::ostringstream position;
+        for (std::size_t positionIndex = 0; positionIndex < foldingExtra->steps[stepIndex].position.size(); ++positionIndex) {
+          if (positionIndex) {
+            position << ".";
+          }
+          position << foldingExtra->steps[stepIndex].position[positionIndex];
+        }
+        fields.push_back(prefix + "_position=" + position.str());
       }
     }
     emit("definition_rewrite", fields);
@@ -3987,15 +3996,30 @@ bool MegalodonChecker::certificateDefinitionRewriteChainStepJson(Kernel::Unit* u
     const auto& step = foldingExtra->steps[stepIndex];
     std::string lhs;
     std::string rhs;
-    if (!certificateTermJson(step.first, lhs) || !certificateTermJson(step.second, rhs)) {
+    if (!certificateTermJson(step.from, lhs) || !certificateTermJson(step.to, rhs)) {
       return false;
     }
+    std::ostringstream position;
+    position << '[';
+    for (std::size_t positionIndex = 0; positionIndex < step.position.size(); ++positionIndex) {
+      if (positionIndex) {
+        position << ',';
+      }
+      position << step.position[positionIndex];
+    }
+    position << ']';
     std::string parentField;
     if (parents.size() == foldingExtra->steps.size() + 1) {
       std::size_t parentIndex = parents.size() - 1 - stepIndex;
       parentField = ",\"parent\":" + quote("u" + std::to_string(parents[parentIndex]->number()));
     }
-    rewrites.push_back("{\"from\":" + lhs + ",\"to\":" + rhs + parentField + "}");
+    rewrites.push_back(
+      "{\"from\":" + lhs
+      + ",\"to\":" + rhs
+      + parentField
+      + ",\"literal\":" + std::to_string(step.literal)
+      + ",\"position\":" + position.str()
+      + "}");
   }
 
   std::string sourceClause;
