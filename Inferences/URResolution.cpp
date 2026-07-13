@@ -95,7 +95,6 @@ struct URResolution<synthesis>::Item
       premiseLiteral = (*premise)[1];
     }
     Literal* unitSubstituted = unif.unifier->apply(premiseLiteral, useQuerySubstitution);
-    _steps.emplace_back(rlit, selectedSubstituted, premise, unitSubstituted);
     _lits[idx] = 0;
     _premises[idx] = premise;
     _color = static_cast<Color>(_color | premise->color());
@@ -122,7 +121,18 @@ struct URResolution<synthesis>::Item
       }
     }
 
+    auto recordProofExtraStep = [&]() {
+      std::vector<Literal*> remainingAfter;
+      for (Literal* lit : _lits) {
+        if (lit != nullptr) {
+          remainingAfter.push_back(lit);
+        }
+      }
+      _steps.emplace_back(rlit, selectedSubstituted, premise, unitSubstituted, std::move(remainingAfter));
+    };
+
     if(_atMostOneNonGround) {
+      recordProofExtraStep();
       return;
     }
 
@@ -139,6 +149,7 @@ struct URResolution<synthesis>::Item
       }
     }
     _atMostOneNonGround = nonGroundCnt<=1;
+    recordProofExtraStep();
   }
 
   Clause* generateClause() const

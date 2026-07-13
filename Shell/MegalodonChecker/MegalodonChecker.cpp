@@ -6789,46 +6789,39 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
       rightParentId = currentStepId;
     }
 
+    std::vector<Kernel::Clause*> nextSplitSources = splitSources;
+    nextSplitSources.push_back(unitParent);
+    std::vector<std::string> nextCurrentClause;
+    for (Kernel::Literal* literal : trace.remainingAfter) {
+      std::string rendered;
+      if (!certificateLiteralJson(literal, rendered)) {
+        return fail("post-resolve remaining literal render failed");
+      }
+      nextCurrentClause.push_back(rendered);
+    }
+    for (Kernel::Clause* splitSource : nextSplitSources) {
+      if (!appendCertificateSplitLiteralsJson(splitSource, nextCurrentClause)) {
+        return fail("post-resolve remaining split append failed");
+      }
+    }
+    normalizeJsonClause(nextCurrentClause);
+
     auto selectedIt = std::find(currentClause.begin(), currentClause.end(), selectedJson);
     if (selectedIt == currentClause.end()) {
       return fail("selected literal missing from current clause");
     }
-    currentClause.erase(selectedIt);
-    if (!appendCertificateSplitLiteralsJson(unitParent, currentClause)) {
-      return fail("current clause unit split append failed");
-    }
-    normalizeJsonClause(currentClause);
     std::string resolveStepId = stepBase + "_resolve" + std::to_string(traceIndex);
     steps.push_back(
       "{\"id\":" + quote(resolveStepId) + ","
       "\"rule\":\"resolve\","
       "\"parents\":[" + quote(leftParentId) + "," + quote(rightParentId) + "],"
       "\"pivot\":" + pivotJson + ","
-      "\"clause\":" + jsonArray(currentClause) + "}");
+      "\"clause\":" + jsonArray(nextCurrentClause) + "}");
     currentStepId = resolveStepId;
 
-    std::vector<Kernel::Literal*> nextCurrentLiterals;
-    bool removedSelected = false;
-    for (Kernel::Literal* literal : currentLiterals) {
-      std::string rendered;
-      if (!certificateLiteralJson(literal, rendered)) {
-        return fail("post-resolve literal render failed");
-      }
-      if (!removedSelected && rendered == selectedSourceJson) {
-        removedSelected = true;
-        continue;
-      }
-      if (!removedSelected && rendered == selectedJson) {
-        removedSelected = true;
-        continue;
-      }
-      nextCurrentLiterals.push_back(literal);
-    }
-    if (!removedSelected) {
-      return fail("selected literal not removed from current literals");
-    }
-    currentLiterals = nextCurrentLiterals;
-    splitSources.push_back(unitParent);
+    currentLiterals = trace.remainingAfter;
+    currentClause = nextCurrentClause;
+    splitSources = nextSplitSources;
   }
 
   if (currentClause != actualClause) {

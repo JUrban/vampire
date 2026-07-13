@@ -135,16 +135,19 @@ struct UnitResultingResolutionExtra : public InferenceExtra {
       Kernel::Literal* selected,
       Kernel::Literal* selectedSubstituted,
       Kernel::Clause* unitParent,
-      Kernel::Literal* unitSubstituted)
+      Kernel::Literal* unitSubstituted,
+      std::vector<Kernel::Literal*> remainingAfter)
       : selected(selected),
         selectedSubstituted(selectedSubstituted),
         unitParent(unitParent),
-        unitSubstituted(unitSubstituted) {}
+        unitSubstituted(unitSubstituted),
+        remainingAfter(std::move(remainingAfter)) {}
 
     Kernel::Literal* selected;
     Kernel::Literal* selectedSubstituted;
     Kernel::Clause* unitParent;
     Kernel::Literal* unitSubstituted;
+    std::vector<Kernel::Literal*> remainingAfter;
   };
 
   UnitResultingResolutionExtra(
