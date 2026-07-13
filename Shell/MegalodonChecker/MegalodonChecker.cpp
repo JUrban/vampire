@@ -2288,6 +2288,62 @@ bool MegalodonChecker::certificateDefinitionFoldingStepsSexpr(Kernel::Unit* unit
     }
   }
 
+  auto emitDefinitionRewriteChain = [&]() {
+    auto foldingPositionToNative = [](const std::vector<unsigned>& position) {
+      std::vector<unsigned> native;
+      if (position.empty()) {
+        return native;
+      }
+      if (position[0] == 0) {
+        native.push_back(0);
+        native.push_back(1);
+      } else if (position[0] == 1) {
+        native.push_back(1);
+      } else {
+        native.push_back(position[0]);
+      }
+      for (std::size_t index = 1; index < position.size(); ++index) {
+        if (position[index] == 2) {
+          native.push_back(0);
+        } else if (position[index] == 3) {
+          native.push_back(1);
+        } else {
+          native.push_back(position[index]);
+        }
+      }
+      return native;
+    };
+    std::string resultClause;
+    if (!certificateClauseSexpr(unit->asClause(), resultClause)) {
+      return false;
+    }
+    std::ostringstream rewrites;
+    rewrites << "(rewrites";
+    for (std::size_t stepIndex = 0; stepIndex < foldingExtra->steps.size(); ++stepIndex) {
+      const auto& step = foldingExtra->steps[stepIndex];
+      const std::size_t definitionParentIndex = parents.size() - 1 - stepIndex;
+      std::string fromSexpr;
+      std::string toSexpr;
+      if (!certificateTermSexpr(step.from, fromSexpr) || !certificateTermSexpr(step.to, toSexpr)) {
+        return false;
+      }
+      rewrites
+        << " (rewrite"
+        << " (definition " << sexprQuote("u" + std::to_string(parents[definitionParentIndex]->number())) << " 0)"
+        << " (target_literal " << step.literal << ") "
+        << certificatePositionSexpr(foldingPositionToNative(step.position))
+        << " (from " << fromSexpr << ")"
+        << " (to " << toSexpr << "))";
+    }
+    rewrites << ')';
+    result =
+      "(definition_rewrite_chain " + sexprQuote("u" + std::to_string(unit->number()))
+      + " (parent " + sexprQuote("u" + std::to_string(parents[0]->number())) + ") "
+      + rewrites.str()
+      + " (result " + resultClause + "))";
+    return true;
+  };
+
   auto firstPositiveEqualityIndex = [](Kernel::Clause* clause, unsigned& index) {
     for (unsigned i = 0; i < clause->length(); ++i) {
       Kernel::Literal* literal = (*clause)[i];
@@ -2420,15 +2476,15 @@ bool MegalodonChecker::certificateDefinitionFoldingStepsSexpr(Kernel::Unit* unit
   for (std::size_t stepIndex = 0; stepIndex < foldingExtra->steps.size(); ++stepIndex) {
     const auto& step = foldingExtra->steps[stepIndex];
     if (step.literal >= currentClause.size()) {
-      return false;
+      return emitDefinitionRewriteChain();
     }
     const std::size_t definitionParentIndex = parents.size() - 1 - stepIndex;
     Kernel::Clause* definitionParent = parents[definitionParentIndex]->asClause();
     unsigned equalityIndex = 0;
-    if (!firstPositiveEqualityIndex(definitionParent, equalityIndex)) {
-      return false;
+    Kernel::Literal* definitionEquality = nullptr;
+    if (firstPositiveEqualityIndex(definitionParent, equalityIndex)) {
+      definitionEquality = (*definitionParent)[equalityIndex];
     }
-    Kernel::Literal* definitionEquality = (*definitionParent)[equalityIndex];
 
     Kernel::Literal* rewrittenLiteral = nullptr;
     std::vector<unsigned> nativePosition;
@@ -2438,7 +2494,7 @@ bool MegalodonChecker::certificateDefinitionFoldingStepsSexpr(Kernel::Unit* unit
       from = step.to;
       to = step.from;
       if (!certificateRewriteLiteralAtMegalodonPosition(currentClause[step.literal], from, to, nativePosition, rewrittenLiteral)) {
-        return false;
+        return emitDefinitionRewriteChain();
       }
     }
 
@@ -2450,28 +2506,29 @@ bool MegalodonChecker::certificateDefinitionFoldingStepsSexpr(Kernel::Unit* unit
     std::string resultClause;
     const bool isLast = stepIndex + 1 == foldingExtra->steps.size();
     if (!certificateTermSexpr(from, fromSexpr) || !certificateTermSexpr(to, toSexpr)) {
-      return false;
+      return emitDefinitionRewriteChain();
     }
     if (isLast) {
       if (!certificateClauseSexpr(unit->asClause(), resultClause)) {
-        return false;
+        return emitDefinitionRewriteChain();
       }
     } else {
       resultClause = clauseSexprFromLiterals(nextClause);
       if (resultClause.empty()) {
-        return false;
+        return emitDefinitionRewriteChain();
       }
     }
 
     std::string definitionParentId = "u" + std::to_string(parents[definitionParentIndex]->number());
     std::map<unsigned, Kernel::TermList> definitionBindings;
-    if (!definitionEqualitySubstitution(definitionEquality, from, to, definitionBindings)) {
-      return false;
+    if (definitionEquality != nullptr
+      && !definitionEqualitySubstitution(definitionEquality, from, to, definitionBindings)) {
+      definitionBindings.clear();
     }
     std::string definitionSubst;
     bool nonIdentityDefinitionSubstitution = false;
     if (!substitutionSexprFromBindings(definitionBindings, definitionSubst, nonIdentityDefinitionSubstitution)) {
-      return false;
+      return emitDefinitionRewriteChain();
     }
     if (nonIdentityDefinitionSubstitution) {
       Kernel::Substitution substitution;
@@ -2480,7 +2537,7 @@ bool MegalodonChecker::certificateDefinitionFoldingStepsSexpr(Kernel::Unit* unit
       }
       std::string substitutedDefinitionClause;
       if (!substitutedClauseSexpr(definitionParent, substitution, substitutedDefinitionClause)) {
-        return false;
+        return emitDefinitionRewriteChain();
       }
       definitionParentId = unitId + "_def_subst" + std::to_string(stepIndex);
       steps.push_back(
