@@ -8123,7 +8123,12 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
   Kernel::Literal* substitutedEquality = Kernel::SubstHelper::apply(equalityLiteral, replayInfo->substitutionForBanksSub[equalityParentIndex]);
   Kernel::TermList equalityLeft = *substitutedEquality->nthArgument(0);
   Kernel::TermList equalityRight = *substitutedEquality->nthArgument(1);
-  Kernel::TermList preferredFrom = Kernel::SubstHelper::apply(rewrite->rewrite.lhs, replayInfo->substitutionForBanksSub[equalityParentIndex]);
+  Kernel::TermList preferredRedex = Kernel::SubstHelper::apply(
+    rewrite->rewrite.rewritten,
+    replayInfo->substitutionForBanksSub[targetParentIndex]);
+  Kernel::TermList preferredEqualitySide = Kernel::SubstHelper::apply(
+    rewrite->rewrite.lhs,
+    replayInfo->substitutionForBanksSub[equalityParentIndex]);
   Kernel::TermList from;
   Kernel::TermList to;
   std::vector<std::vector<unsigned>> leftRedexPositions;
@@ -8139,11 +8144,19 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     equalityRight,
     rightRedexPositions);
   std::vector<std::vector<unsigned>> redexPositions;
-  if (preferredFrom == equalityLeft && !leftRedexPositions.empty()) {
+  if (preferredRedex == equalityLeft && !leftRedexPositions.empty()) {
     from = equalityLeft;
     to = equalityRight;
     redexPositions = leftRedexPositions;
-  } else if (preferredFrom == equalityRight && !rightRedexPositions.empty()) {
+  } else if (preferredRedex == equalityRight && !rightRedexPositions.empty()) {
+    from = equalityRight;
+    to = equalityLeft;
+    redexPositions = rightRedexPositions;
+  } else if (preferredEqualitySide == equalityLeft && !leftRedexPositions.empty()) {
+    from = equalityLeft;
+    to = equalityRight;
+    redexPositions = leftRedexPositions;
+  } else if (preferredEqualitySide == equalityRight && !rightRedexPositions.empty()) {
     from = equalityRight;
     to = equalityLeft;
     redexPositions = rightRedexPositions;
