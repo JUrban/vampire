@@ -7201,6 +7201,7 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
   if (equalityLiteral != nullptr && equalityLiteral->isEquality() && equalityLiteral->isPositive()) {
     equalityCandidates.push_back(equalityLiteral);
   }
+  Kernel::Literal* recordedEqualityLiteral = equalityLiteral;
   for (Kernel::Literal* candidate : equalityParent->iterLits()) {
     if (candidate->isEquality()
       && candidate->isPositive()
@@ -7211,6 +7212,12 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
   unsigned equalityIndex = 0;
   bool foundEqualityCandidate = false;
   unsigned bestEqualityScore = 0;
+  Kernel::TermList preferredRedex = Kernel::SubstHelper::apply(
+    rewrite->rewrite.rewritten,
+    replayInfo->substitutionForBanksSub[targetParentIndex]);
+  Kernel::TermList preferredEqualitySide = Kernel::SubstHelper::apply(
+    rewrite->rewrite.lhs,
+    replayInfo->substitutionForBanksSub[equalityParentIndex]);
   auto isBooleanConstant = [](Kernel::TermList term) {
     if (term.isVar() || !term.isTerm()) {
       return false;
@@ -7227,6 +7234,22 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
     }
     return 1u;
   };
+  auto rewriteCandidateScore = [&](Kernel::TermList source, Kernel::TermList replacement) {
+    unsigned score = candidateScore(replacement);
+    if (source == preferredRedex) {
+      score += 200u;
+    }
+    if (source == preferredEqualitySide) {
+      score += 120u;
+    }
+    if (!replacement.isVar() && replacement == preferredEqualitySide) {
+      score += 80u;
+    }
+    if (replacement == preferredRedex) {
+      score += 40u;
+    }
+    return score;
+  };
   for (Kernel::Literal* candidate : equalityCandidates) {
     Kernel::Literal* substituted = Kernel::SubstHelper::apply(
       candidate,
@@ -7239,11 +7262,27 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
     std::vector<unsigned> probePosition;
     Kernel::Literal* probeRewritten = nullptr;
     unsigned score = 0;
-    if (certificateRewriteLiteralAtMegalodonPosition(targetSubstitutedProbe, left, right, probePosition, probeRewritten)) {
-      score = std::max(score, candidateScore(right));
+    bool rewritesLeftToRight =
+      certificateRewriteLiteralAtMegalodonPosition(targetSubstitutedProbe, left, right, probePosition, probeRewritten);
+    bool rewritesRightToLeft =
+      certificateRewriteLiteralAtMegalodonPosition(targetSubstitutedProbe, right, left, probePosition, probeRewritten);
+    if (rewritesLeftToRight) {
+      score = std::max(score, rewriteCandidateScore(left, right));
+      if (candidate == recordedEqualityLiteral
+        && left == preferredRedex
+        && !right.isVar()
+        && !isBooleanConstant(right)) {
+        score += 80u;
+      }
     }
-    if (certificateRewriteLiteralAtMegalodonPosition(targetSubstitutedProbe, right, left, probePosition, probeRewritten)) {
-      score = std::max(score, candidateScore(left));
+    if (rewritesRightToLeft) {
+      score = std::max(score, rewriteCandidateScore(right, left));
+      if (candidate == recordedEqualityLiteral
+        && right == preferredRedex
+        && !left.isVar()
+        && !isBooleanConstant(left)) {
+        score += 80u;
+      }
     }
     unsigned candidateIndex = 0;
     if (score == 0 || !literalIndex(equalityParent, candidate, candidateIndex) || score < bestEqualityScore) {
@@ -7592,31 +7631,78 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
         std::vector<std::string> clauseWideSteps = steps;
         std::vector<std::string> currentClause = substitutedParentClauses[targetParentIndex];
         std::string currentTargetParentId = parentIds[targetParentIndex];
-        for (std::size_t rewriteIndex = 0; rewriteIndex < targetRewrites.size(); ++rewriteIndex) {
-          const TargetRewrite& rewrite = targetRewrites[rewriteIndex];
-          auto literalIt = std::find(currentClause.begin(), currentClause.end(), rewrite.literal);
-          if (literalIt == currentClause.end()) {
-            clauseWideSteps.clear();
-            break;
+        std::vector<bool> usedRewrites(targetRewrites.size(), false);
+        std::function<bool(
+          std::vector<std::string>,
+          std::vector<std::string>,
+          std::string,
+          std::vector<bool>,
+          unsigned,
+          unsigned)> finishClauseWideSearch;
+        finishClauseWideSearch =
+          [&](std::vector<std::string> searchSteps,
+              std::vector<std::string> searchClause,
+              std::string searchParentId,
+              std::vector<bool> searchUsed,
+              unsigned emittedRewriteCount,
+              unsigned depth) {
+          std::vector<std::string> candidateFinishedSteps;
+          if (finishCandidate(
+                searchSteps,
+                searchClause,
+                searchParentId,
+                stepBase,
+                candidateFinishedSteps)) {
+            steps = candidateFinishedSteps;
+            return true;
           }
-          unsigned currentTargetIndex = literalIt - currentClause.begin();
-          std::vector<std::string> nextClause = removeAt(currentClause, currentTargetIndex);
-          nextClause.insert(nextClause.end(), equalityRemainder.begin(), equalityRemainder.end());
-          nextClause.push_back(rewrite.rewritten);
-          const std::string rewriteId = stepBase + "_paramodulate" + std::to_string(rewriteIndex);
-          clauseWideSteps.push_back(
-            "(paramodulate " + sexprQuote(rewriteId)
-            + " (equality " + sexprQuote(parentIds[equalityParentIndex]) + " " + std::to_string(equalityIndex) + ")"
-            + " (target " + sexprQuote(currentTargetParentId) + " " + std::to_string(currentTargetIndex) + ") "
-            + certificatePositionSexpr(rewrite.position)
-            + " (from " + fromSexpr + ")"
-            + " (to " + toSexpr + ")"
-            + " (result " + clauseSexprFromLiterals(nextClause) + "))");
-          currentClause = nextClause;
-          currentTargetParentId = rewriteId;
-        }
-        if (clauseWideSteps.empty()
-          || !finishCandidate(clauseWideSteps, currentClause, currentTargetParentId, stepBase, steps)) {
+          if (depth >= targetRewrites.size()) {
+            return false;
+          }
+          for (std::size_t rewriteIndex = 0; rewriteIndex < targetRewrites.size(); ++rewriteIndex) {
+            if (searchUsed[rewriteIndex]) {
+              continue;
+            }
+            const TargetRewrite& rewrite = targetRewrites[rewriteIndex];
+            auto literalIt = std::find(searchClause.begin(), searchClause.end(), rewrite.literal);
+            if (literalIt == searchClause.end()) {
+              continue;
+            }
+            unsigned currentTargetIndex = literalIt - searchClause.begin();
+            std::vector<std::string> nextClause = removeAt(searchClause, currentTargetIndex);
+            nextClause.insert(nextClause.end(), equalityRemainder.begin(), equalityRemainder.end());
+            nextClause.push_back(rewrite.rewritten);
+            const std::string rewriteId = stepBase + "_paramodulate" + std::to_string(emittedRewriteCount);
+            std::vector<std::string> nextSteps = searchSteps;
+            nextSteps.push_back(
+              "(paramodulate " + sexprQuote(rewriteId)
+              + " (equality " + sexprQuote(parentIds[equalityParentIndex]) + " " + std::to_string(equalityIndex) + ")"
+              + " (target " + sexprQuote(searchParentId) + " " + std::to_string(currentTargetIndex) + ") "
+              + certificatePositionSexpr(rewrite.position)
+              + " (from " + fromSexpr + ")"
+              + " (to " + toSexpr + ")"
+              + " (result " + clauseSexprFromLiterals(nextClause) + "))");
+            std::vector<bool> nextUsed = searchUsed;
+            nextUsed[rewriteIndex] = true;
+            if (finishClauseWideSearch(
+                  nextSteps,
+                  nextClause,
+                  rewriteId,
+                  nextUsed,
+                  emittedRewriteCount + 1,
+                  depth + 1)) {
+              return true;
+            }
+          }
+          return false;
+        };
+        if (!finishClauseWideSearch(
+              clauseWideSteps,
+              currentClause,
+              currentTargetParentId,
+              usedRewrites,
+              0,
+              0)) {
           continue;
         }
       }
