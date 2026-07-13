@@ -5220,7 +5220,10 @@ bool MegalodonChecker::certificateEqualityFactoringStepJson(
   return true;
 }
 
-bool MegalodonChecker::certificateParamodulateStepJson(Kernel::Unit* unit, std::string& result)
+bool MegalodonChecker::certificateParamodulateStepJson(
+  Kernel::Unit* unit,
+  const InferenceRecorder::InferenceInformation*,
+  std::string& result)
 {
   const Kernel::InferenceRule& rule = unit->inference().rule();
   if (!unit->isClause()
@@ -5586,15 +5589,33 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
   std::string& result)
 {
   const Kernel::InferenceRule& rule = unit->inference().rule();
+  const auto* extra = env.proofExtra.find(unit);
+  const auto* rewriteExtra = extra == nullptr
+    ? nullptr
+    : static_cast<const Inferences::RewriteInferenceExtra*>(extra);
+  bool hasReplayRewrite = replayInfo != nullptr && replayInfo->hasDemodulationRewrite;
+  bool hasProofExtraRewrite = rewriteExtra != nullptr && rewriteExtra->hasReplacement;
+  std::vector<Kernel::Clause*> actualParents;
+  if (unit->isClause()) {
+    for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+      if (parent->isClause()) {
+        actualParents.push_back(parent->asClause());
+      }
+    }
+  }
+  bool useActualParents = !hasReplayRewrite && actualParents.size() == 2;
+  std::vector<Kernel::Clause*> premises = useActualParents
+    ? actualParents
+    : (replayInfo == nullptr ? std::vector<Kernel::Clause*>() : replayInfo->premises);
   if (!unit->isClause()
     || (
       rule != Kernel::InferenceRule::FORWARD_DEMODULATION
       && rule != Kernel::InferenceRule::BACKWARD_DEMODULATION
     )
     || replayInfo == nullptr
-    || !replayInfo->hasDemodulationRewrite
-    || replayInfo->premises.size() != 2
-    || replayInfo->substitutionForBanksSub.size() != 2) {
+    || (!hasReplayRewrite && !hasProofExtraRewrite)
+    || premises.size() != 2
+    || replayInfo->substitutionForBanksSub.size() > 2) {
     return false;
   }
 
@@ -5982,23 +6003,51 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
     return true;
   };
 
+  Kernel::Substitution emptySubstitution;
+  std::vector<std::vector<Kernel::Substitution>> substitutionAlternatives;
+  if (replayInfo->substitutionForBanksSub.size() == 2) {
+    substitutionAlternatives.push_back({
+      replayInfo->substitutionForBanksSub[0],
+      replayInfo->substitutionForBanksSub[1],
+    });
+  } else if (replayInfo->substitutionForBanksSub.size() == 1) {
+    substitutionAlternatives.push_back({
+      replayInfo->substitutionForBanksSub[0],
+      emptySubstitution,
+    });
+    substitutionAlternatives.push_back({
+      emptySubstitution,
+      replayInfo->substitutionForBanksSub[0],
+    });
+  } else {
+    substitutionAlternatives.push_back({
+      emptySubstitution,
+      emptySubstitution,
+    });
+  }
+
   std::vector<std::string> actual;
   if (!normalizedClause(unit->asClause(), actual)) {
     return false;
   }
 
-  Kernel::TermList redex = replayInfo->demodulationRedex;
-  Kernel::TermList replacement = replayInfo->demodulationReplacement;
+  Kernel::TermList redex = hasReplayRewrite
+    ? replayInfo->demodulationRedex
+    : rewriteExtra->rewritten;
+  Kernel::TermList replacement = hasReplayRewrite
+    ? replayInfo->demodulationReplacement
+    : rewriteExtra->replacement;
+  for (const auto& substitutions : substitutionAlternatives) {
   for (std::size_t equalityParentIndex = 0; equalityParentIndex < 2; ++equalityParentIndex) {
     std::size_t targetParentIndex = equalityParentIndex == 0 ? 1 : 0;
-    Kernel::Clause* equalityParent = replayInfo->premises[equalityParentIndex];
-    Kernel::Clause* targetParent = replayInfo->premises[targetParentIndex];
+    Kernel::Clause* equalityParent = premises[equalityParentIndex];
+    Kernel::Clause* targetParent = premises[targetParentIndex];
     for (Kernel::Literal* equalityLiteral : equalityParent->iterLits()) {
       if (!equalityLiteral->isEquality() || !equalityLiteral->isPositive()) {
         continue;
       }
-      Kernel::TermList equalityLeft = Kernel::SubstHelper::apply(*equalityLiteral->nthArgument(0), replayInfo->substitutionForBanksSub[equalityParentIndex]);
-      Kernel::TermList equalityRight = Kernel::SubstHelper::apply(*equalityLiteral->nthArgument(1), replayInfo->substitutionForBanksSub[equalityParentIndex]);
+      Kernel::TermList equalityLeft = Kernel::SubstHelper::apply(*equalityLiteral->nthArgument(0), substitutions[equalityParentIndex]);
+      Kernel::TermList equalityRight = Kernel::SubstHelper::apply(*equalityLiteral->nthArgument(1), substitutions[equalityParentIndex]);
       bool needsSymmetry = false;
       if (equalityLeft == redex && equalityRight == replacement) {
         needsSymmetry = false;
@@ -6010,18 +6059,18 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
 
       for (Kernel::Literal* targetLiteral : targetParent->iterLits()) {
         std::vector<std::vector<unsigned>> positions;
-        collectSubstitutedLiteralAtomPositions(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], redex, positions);
+        collectSubstitutedLiteralAtomPositions(targetLiteral, substitutions[targetParentIndex], redex, positions);
         if (positions.empty()) {
           continue;
         }
 
         std::vector<std::string> paramClause;
-        if (!appendSubstitutedClauseExcept(paramClause, targetParent, replayInfo->substitutionForBanksSub[targetParentIndex], targetLiteral)
-          || !appendSubstitutedClauseExcept(paramClause, equalityParent, replayInfo->substitutionForBanksSub[equalityParentIndex], equalityLiteral)) {
+        if (!appendSubstitutedClauseExcept(paramClause, targetParent, substitutions[targetParentIndex], targetLiteral)
+          || !appendSubstitutedClauseExcept(paramClause, equalityParent, substitutions[equalityParentIndex], equalityLiteral)) {
           continue;
         }
         std::string rewrittenTargetJson;
-        if (!replacedSubstitutedLiteralJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], redex, replacement, rewrittenTargetJson)) {
+        if (!replacedSubstitutedLiteralJson(targetLiteral, substitutions[targetParentIndex], redex, replacement, rewrittenTargetJson)) {
           continue;
         }
         paramClause.push_back(rewrittenTargetJson);
@@ -6029,7 +6078,7 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
         bool needsConclusionSymmetry = false;
         if (paramClause != actual) {
           std::string swappedRewrittenTargetJson;
-          if (!swappedReplacedSubstitutedEqualityLiteralJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], redex, replacement, swappedRewrittenTargetJson)) {
+          if (!swappedReplacedSubstitutedEqualityLiteralJson(targetLiteral, substitutions[targetParentIndex], redex, replacement, swappedRewrittenTargetJson)) {
             continue;
           }
           std::vector<std::string> symmetryClause = paramClause;
@@ -6051,11 +6100,11 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
         for (std::size_t parentIndex = 0; parentIndex < 2; ++parentIndex) {
           std::string substitutionJson;
           std::string clauseJson;
-          if (!certificateSubstitutionJson(replayInfo->substitutionForBanksSub[parentIndex], substitutionJson)
-            || !certificateSubstitutedClausePreservingEqualityJson(replayInfo->premises[parentIndex], replayInfo->substitutionForBanksSub[parentIndex], clauseJson)) {
+          if (!certificateSubstitutionJson(substitutions[parentIndex], substitutionJson)
+            || !certificateSubstitutedClausePreservingEqualityJson(premises[parentIndex], substitutions[parentIndex], clauseJson)) {
             return false;
           }
-          parentIds[parentIndex] = "u" + std::to_string(replayInfo->premises[parentIndex]->number());
+          parentIds[parentIndex] = "u" + std::to_string(premises[parentIndex]->number());
           if (substitutionJson != "{}") {
             std::string substituteId = stepBase + "_subst" + std::to_string(parentIndex);
             steps.push_back(
@@ -6075,11 +6124,11 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
         std::string targetJson;
         std::string conclusionJson;
         std::string paramodulationConclusionJson = jsonArray(paramClause);
-        if (!certificateSubstitutedLiteralPreservingEqualityJson(equalityLiteral, replayInfo->substitutionForBanksSub[equalityParentIndex], equalityParentLiteralJson)
+        if (!certificateSubstitutedLiteralPreservingEqualityJson(equalityLiteral, substitutions[equalityParentIndex], equalityParentLiteralJson)
           || !positiveEqualityLiteralJson(equalityLiteral, redex, replacement, equalityJson)
           || !certificateTermJson(redex, fromJson)
           || !certificateTermJson(replacement, toJson)
-          || !certificateSubstitutedLiteralPreservingEqualityJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], targetJson)
+          || !certificateSubstitutedLiteralPreservingEqualityJson(targetLiteral, substitutions[targetParentIndex], targetJson)
           || !certificateClauseJson(unit->asClause(), conclusionJson)) {
           return false;
         }
@@ -6087,7 +6136,7 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
         std::string equalityParentId = parentIds[equalityParentIndex];
         if (needsSymmetry || equalityParentLiteralJson != equalityJson) {
           std::string symmetryClauseJson;
-          if (!substitutedClauseReplacingOneLiteralJson(equalityParent, replayInfo->substitutionForBanksSub[equalityParentIndex], equalityLiteral, equalityJson, symmetryClauseJson)) {
+          if (!substitutedClauseReplacingOneLiteralJson(equalityParent, substitutions[equalityParentIndex], equalityLiteral, equalityJson, symmetryClauseJson)) {
             return false;
           }
           std::string symmetryStepId = stepBase + "_symmetry";
@@ -6104,7 +6153,7 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
         if (positions.size() == 1) {
           std::string positionField = "\"position\":" + positionJson(positions.front()) + ",";
           std::string rewriteScopeField;
-          rewriteScopeJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], positions.front(), rewriteScopeField);
+          rewriteScopeJson(targetLiteral, substitutions[targetParentIndex], positions.front(), rewriteScopeField);
           steps.push_back(
             "{\"id\":" + quote(paramodulationStepId) + ","
             "\"rule\":\"paramodulate\","
@@ -6123,8 +6172,8 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
         } else {
           std::vector<std::string> currentClause;
           std::vector<std::string> equalityRemainder;
-          if (!substitutedClauseLiterals(targetParent, replayInfo->substitutionForBanksSub[targetParentIndex], currentClause)
-            || !appendSubstitutedClauseExcept(equalityRemainder, equalityParent, replayInfo->substitutionForBanksSub[equalityParentIndex], equalityLiteral)) {
+          if (!substitutedClauseLiterals(targetParent, substitutions[targetParentIndex], currentClause)
+            || !appendSubstitutedClauseExcept(equalityRemainder, equalityParent, substitutions[equalityParentIndex], equalityLiteral)) {
             return false;
           }
           normalize(currentClause);
@@ -6132,7 +6181,7 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
           std::string currentParentId = parentIds[targetParentIndex];
           std::string currentTargetJson = targetJson;
           std::vector<Kernel::TermList> currentArguments;
-          if (!substitutedLiteralArgumentTerms(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], currentArguments)) {
+          if (!substitutedLiteralArgumentTerms(targetLiteral, substitutions[targetParentIndex], currentArguments)) {
             return false;
           }
           for (std::size_t index = 0; index < positions.size(); ++index) {
@@ -6157,7 +6206,7 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
             std::string rewriteStepId = lastRewrite ? paramodulationStepId : stepBase + "_paramodulate" + std::to_string(index);
             std::string rewriteClauseJson = lastRewrite ? paramodulationConclusionJson : jsonArray(currentClause);
             std::string rewriteScopeField;
-            rewriteScopeJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], rewritePosition, rewriteScopeField);
+            rewriteScopeJson(targetLiteral, substitutions[targetParentIndex], rewritePosition, rewriteScopeField);
             steps.push_back(
               "{\"id\":" + quote(rewriteStepId) + ","
               "\"rule\":\"paramodulate\","
@@ -6191,6 +6240,7 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
         result = jsonArray(steps);
         return true;
       }
+    }
     }
   }
   return false;
@@ -10742,7 +10792,7 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
       }
     } else if (certificateDemodulationStepsJson(u, replayInfo, certificateStep)) {
       emitCertificateSteps(certificateStep);
-    } else if (certificateParamodulateStepJson(u, certificateStep)) {
+    } else if (certificateParamodulateStepJson(u, replayInfo, certificateStep)) {
       emitCertificateStep(certificateStep);
     } else if (certificateParamodulateThenSymmetryStepsJson(u, certificateStep)) {
       emitCertificateSteps(certificateStep);
