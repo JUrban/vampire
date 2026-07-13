@@ -3134,6 +3134,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     }
     return true;
   };
+  const std::string unitId = "u" + std::to_string(unit->number());
   auto clauseSexprFromRendered = [](const std::vector<std::string>& literals) {
     std::ostringstream out;
     out << "(clause";
@@ -3142,6 +3143,37 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     }
     out << ')';
     return out.str();
+  };
+  auto traceMacroSexpr = [&]() {
+    std::string clause;
+    if (!certificateClauseSexpr(unit->asClause(), clause)) {
+      return fail("urr macro final clause render failed");
+    }
+    std::ostringstream out;
+    out << "(unit_resulting_resolution " << sexprQuote(unitId)
+        << " (main " << sexprQuote("u" + std::to_string(urr->mainParent->number())) << ")"
+        << " (trace";
+    for (const auto& trace : urr->steps) {
+      std::string selected;
+      std::string selectedSubstituted;
+      std::string unitSubstituted;
+      std::vector<std::string> remaining;
+      if (!certificateLiteralSexpr(trace.selected, selected)
+        || !certificateLiteralSexpr(trace.selectedSubstituted, selectedSubstituted)
+        || !certificateLiteralSexpr(trace.unitSubstituted, unitSubstituted)
+        || !renderedLiterals(trace.remainingAfter, remaining)) {
+        return fail("urr macro trace render failed");
+      }
+      out << " (step"
+          << " (unit " << sexprQuote("u" + std::to_string(trace.unitParent->number())) << ")"
+          << " (selected " << selected << ")"
+          << " (selected_substituted " << selectedSubstituted << ")"
+          << " (unit_substituted " << unitSubstituted << ")"
+          << " (remaining " << clauseSexprFromRendered(remaining) << "))";
+    }
+    out << ") (result " << clause << "))";
+    result = out.str();
+    return true;
   };
   auto complementLiteralSexpr = [](const std::string& literal, std::string& complement) {
     if (literal.rfind("(pos ", 0) == 0) {
@@ -3298,7 +3330,6 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     return false;
   }
   std::string currentParentId = "u" + std::to_string(urr->mainParent->number());
-  const std::string unitId = "u" + std::to_string(unit->number());
   std::vector<std::string> steps;
   std::string previousTraceSelectedLiteralSexpr;
 
@@ -3676,6 +3707,9 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
                 << ": " << clauseSexprFromRendered(normalized(current)) << std::endl;
       std::cerr << "megalodon native URR actual for u" << unit->number()
                 << ": " << clauseSexprFromRendered(normalized(actual)) << std::endl;
+    }
+    if (traceMacroSexpr()) {
+      return true;
     }
     return fail("sequential urr replay did not reach conclusion");
   }
