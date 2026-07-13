@@ -688,7 +688,9 @@ bool MegalodonChecker::certificateFormulaCopyStepSexpr(Kernel::Unit* unit, std::
     return false;
   }
   const Kernel::InferenceRule& rule = unit->inference().rule();
-  if (rule != Kernel::InferenceRule::RECTIFY && rule != Kernel::InferenceRule::FLATTEN) {
+  if (rule != Kernel::InferenceRule::RECTIFY
+    && rule != Kernel::InferenceRule::FLATTEN
+    && rule != Kernel::InferenceRule::NNF) {
     return false;
   }
   UnitIterator parentIterator = unit->getParents();
@@ -718,7 +720,9 @@ bool MegalodonChecker::certificateFormulaTermCopyStepSexpr(Kernel::Unit* unit, s
     return false;
   }
   const Kernel::InferenceRule& rule = unit->inference().rule();
-  if (rule != Kernel::InferenceRule::RECTIFY && rule != Kernel::InferenceRule::FLATTEN) {
+  if (rule != Kernel::InferenceRule::RECTIFY
+    && rule != Kernel::InferenceRule::FLATTEN
+    && rule != Kernel::InferenceRule::NNF) {
     return false;
   }
   UnitIterator parentIterator = unit->getParents();
@@ -927,6 +931,30 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std
     }
   };
 
+  auto arrowDomainCount = [](Kernel::TermList sort) {
+    unsigned count = 0;
+    while (sort.isArrowSort()) {
+      ++count;
+      sort = sort.result();
+    }
+    return count;
+  };
+
+  auto trimTrailingApplications = [](Kernel::TermList term, unsigned count, Kernel::TermList& trimmed) {
+    while (count > 0) {
+      if (!term.isApplication()) {
+        return false;
+      }
+      term = term.lhs();
+      --count;
+    }
+    trimmed = term;
+    return true;
+  };
+
+  Lib::DHMap<unsigned, Kernel::TermList> parentVarSorts;
+  Kernel::SortHelper::collectVariableSorts(static_cast<Kernel::FormulaUnit*>(parent)->formula(), parentVarSorts);
+
   std::vector<std::pair<unsigned, std::string>> bindings;
   for (auto symbol : iterTraits(Kernel::InferenceStore::SymbolStack::ConstIterator(_is->getIntroducedSymbols(unit)))) {
     if (symbol.first != Kernel::SymbolType::FUNC) {
@@ -940,6 +968,15 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std
     if (!findFormulaTerm(findFormulaTerm, static_cast<Kernel::FormulaUnit*>(unit)->formula(), symbol.second, skolemTerm)) {
       return false;
     }
+    Kernel::TermList varSort;
+    if (!parentVarSorts.find(static_cast<unsigned>(var), varSort)) {
+      return false;
+    }
+    Kernel::TermList trimmedSkolemTerm;
+    if (!trimTrailingApplications(skolemTerm, arrowDomainCount(varSort), trimmedSkolemTerm)) {
+      return false;
+    }
+    skolemTerm = trimmedSkolemTerm;
     std::string skolemTermSexpr;
     if (!certificateTermSexpr(skolemTerm, skolemTermSexpr)) {
       return false;
@@ -1033,6 +1070,55 @@ bool MegalodonChecker::certificateCnfFormulaClauseStepSexpr(Kernel::Unit* unit, 
     + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
     + " (index " + std::to_string(clauseExtra->index) + ")"
     + " (result " + clause + "))";
+  return true;
+}
+
+bool MegalodonChecker::certificatePredicateDefinitionStepSexpr(Kernel::Unit* unit, std::string& result)
+{
+  if (unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::PREDICATE_DEFINITION) {
+    return false;
+  }
+  if (!_is->hasIntroducedSymbols(unit)) {
+    return false;
+  }
+  auto& symbols = _is->getIntroducedSymbols(unit);
+  if (symbols.size() != 1 || symbols.top().first != SymbolType::PRED) {
+    return false;
+  }
+  std::string formula;
+  if (!certificateFormulaTermSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), formula)) {
+    return false;
+  }
+  const std::string symbolName = predicateName(symbols.top().second);
+  result = "(predicate_definition " + sexprQuote("u" + std::to_string(unit->number()))
+    + " (symbol " + sexprQuote(symbolName) + ")"
+    + " (result (formula " + formula + ")))";
+  return true;
+}
+
+bool MegalodonChecker::certificatePredicateDefinitionFoldStepSexpr(Kernel::Unit* unit, std::string& result)
+{
+  if (unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::DEFINITION_FOLDING_PRED) {
+    return false;
+  }
+  std::vector<Kernel::Unit*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    parents.push_back(parent);
+  }
+  if (parents.size() != 2 || parents[0]->isClause() || parents[1]->isClause()) {
+    return false;
+  }
+  if (parents[1]->inference().rule() != Kernel::InferenceRule::PREDICATE_DEFINITION) {
+    return false;
+  }
+  std::string resultFormula;
+  if (!certificateFormulaTermSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), resultFormula)) {
+    return false;
+  }
+  result = "(predicate_definition_fold " + sexprQuote("u" + std::to_string(unit->number()))
+    + " (source " + sexprQuote("u" + std::to_string(parents[0]->number())) + ")"
+    + " (definition " + sexprQuote("u" + std::to_string(parents[1]->number())) + ")"
+    + " (result (formula " + resultFormula + ")))";
   return true;
 }
 
@@ -3218,6 +3304,8 @@ bool MegalodonChecker::certificateNativeStepSexpr(
     || certificateSkolemFormulaStepSexpr(unit, result)
     || certificateCnfLiteralStepSexpr(unit, result)
     || certificateCnfFormulaClauseStepSexpr(unit, result)
+    || certificatePredicateDefinitionStepSexpr(unit, result)
+    || certificatePredicateDefinitionFoldStepSexpr(unit, result)
     || certificateDefinitionInputStepSexpr(unit, result)
     || certificateFoolExhaustivenessStepSexpr(unit, result)
     || certificateSubstitutedResolutionStepsSexpr(unit, replayInfo, result)

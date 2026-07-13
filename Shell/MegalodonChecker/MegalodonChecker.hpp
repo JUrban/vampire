@@ -150,6 +150,8 @@ private:
   bool certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateCnfLiteralStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateCnfFormulaClauseStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificatePredicateDefinitionStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificatePredicateDefinitionFoldStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateDefinitionInputStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFoolExhaustivenessStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateNativeStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
