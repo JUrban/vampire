@@ -130,7 +130,10 @@ private:
   bool appendCertificateSplitLiteralsSexpr(Kernel::Clause* clause, std::vector<std::string>& literals);
   bool appendCertificateClauseLiteralsSexpr(Kernel::Clause* clause, std::vector<std::string>& literals);
   bool certificateClauseSexpr(Kernel::Clause* clause, std::string& result);
+  bool certificateSource(Kernel::Unit* unit, std::string& result);
   bool certificateInputStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateFormulaInputStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateCnfLiteralStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateNativeStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateResolveStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateSubstitutedResolutionStepsSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);

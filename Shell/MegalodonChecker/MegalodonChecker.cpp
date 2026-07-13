@@ -297,6 +297,21 @@ bool MegalodonChecker::certificateClauseSexpr(Kernel::Clause* clause, std::strin
   return true;
 }
 
+bool MegalodonChecker::certificateSource(Kernel::Unit* unit, std::string& result)
+{
+  std::string sourceName = "u" + std::to_string(unit->number());
+  std::string axiomName;
+  if (Parse::TPTP::findAxiomName(unit, axiomName) && !axiomName.empty()) {
+    sourceName = axiomName;
+  }
+  std::string sourceKind = "axiom";
+  if (unit->inputType() == Kernel::UnitInputType::NEGATED_CONJECTURE) {
+    sourceKind = "negated_conjecture";
+  }
+  result = "(source " + sourceKind + " " + sexprQuote(sourceName) + ")";
+  return true;
+}
+
 bool MegalodonChecker::certificateInputStepSexpr(Kernel::Unit* unit, std::string& result)
 {
   if (!unit->isClause()) {
@@ -308,22 +323,68 @@ bool MegalodonChecker::certificateInputStepSexpr(Kernel::Unit* unit, std::string
   }
 
   std::string clause;
-  if (!certificateClauseSexpr(unit->asClause(), clause)) {
+  std::string source;
+  if (!certificateClauseSexpr(unit->asClause(), clause)
+    || !certificateSource(unit, source)) {
     return false;
   }
   const std::string id = "u" + std::to_string(unit->number());
-  std::string sourceName = id;
-  std::string axiomName;
-  if (Parse::TPTP::findAxiomName(unit, axiomName) && !axiomName.empty()) {
-    sourceName = axiomName;
+  result = "(input " + sexprQuote(id) + " " + source + " " + clause + ")";
+  return true;
+}
+
+bool MegalodonChecker::certificateFormulaInputStepSexpr(Kernel::Unit* unit, std::string& result)
+{
+  if (unit->isClause()
+    || unit->inference().rule() != Kernel::InferenceRule::INPUT) {
+    return false;
   }
-  std::string sourceKind = "axiom";
-  if (unit->inputType() == Kernel::UnitInputType::NEGATED_CONJECTURE) {
-    sourceKind = "negated_conjecture";
+  Kernel::Formula* formula = static_cast<Kernel::FormulaUnit*>(unit)->formula();
+  if (formula->connective() != Kernel::LITERAL) {
+    return false;
   }
-  result = "(input " + sexprQuote(id)
-    + " (source " + sourceKind + " " + sexprQuote(sourceName) + ") "
-    + clause + ")";
+  std::string literal;
+  std::string source;
+  if (!certificateLiteralSexpr(formula->literal(), literal)
+    || !certificateSource(unit, source)) {
+    return false;
+  }
+  const std::string id = "u" + std::to_string(unit->number());
+  result = "(formula_input " + sexprQuote(id) + " " + source + " " + literal + ")";
+  return true;
+}
+
+bool MegalodonChecker::certificateCnfLiteralStepSexpr(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::CLAUSIFY) {
+    return false;
+  }
+  UnitIterator parentIterator = unit->getParents();
+  if (!parentIterator.hasNext()) {
+    return false;
+  }
+  Kernel::Unit* parent = parentIterator.next();
+  if (parent->isClause() || parent->inference().rule() != Kernel::InferenceRule::INPUT) {
+    return false;
+  }
+  Kernel::Formula* formula = static_cast<Kernel::FormulaUnit*>(parent)->formula();
+  if (formula->connective() != Kernel::LITERAL || unit->asClause()->length() != 1) {
+    return false;
+  }
+  std::string sourceLiteral;
+  std::string targetLiteral;
+  if (!certificateLiteralSexpr(formula->literal(), sourceLiteral)
+    || !certificateLiteralSexpr((*unit->asClause())[0], targetLiteral)
+    || sourceLiteral != targetLiteral) {
+    return false;
+  }
+  std::string clause;
+  if (!certificateClauseSexpr(unit->asClause(), clause)) {
+    return false;
+  }
+  result = "(cnf_literal " + sexprQuote("u" + std::to_string(unit->number()))
+    + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
+    + " (result " + clause + "))";
   return true;
 }
 
@@ -1080,6 +1141,8 @@ bool MegalodonChecker::certificateNativeStepSexpr(
   std::string& result)
 {
   return certificateInputStepSexpr(unit, result)
+    || certificateFormulaInputStepSexpr(unit, result)
+    || certificateCnfLiteralStepSexpr(unit, result)
     || certificateSubstitutedResolutionStepsSexpr(unit, replayInfo, result)
     || certificateResolveStepSexpr(unit, result)
     || certificateFactorStepSexpr(unit, result)
@@ -12529,6 +12592,12 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
         << quote("connective=" + std::to_string(static_cast<int>(formula->connective()))) << ','
         << quote("raw=" + formula->toString())
         << "]).\n";
+  }
+  if (!u->isClause()) {
+    std::string nativeStep;
+    if (certificateNativeStepSexpr(u, replayInfo, nativeStep)) {
+      _certificateNativeSteps.push_back(nativeStep);
+    }
   }
   if (u->isClause()) {
     std::string certificateClause;
