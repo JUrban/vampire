@@ -360,6 +360,81 @@ bool MegalodonChecker::certificateClauseSexpr(Kernel::Clause* clause, std::strin
   return true;
 }
 
+bool MegalodonChecker::certificateAvatarComponentStepSexpr(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::AVATAR_COMPONENT) {
+    return false;
+  }
+  Kernel::Clause* clause = unit->asClause();
+  if (clause->noSplits()) {
+    return false;
+  }
+  std::string renderedClause;
+  if (!certificateClauseSexpr(clause, renderedClause)) {
+    return false;
+  }
+  result = "(avatar_component " + sexprQuote("u" + std::to_string(unit->number()))
+    + " (result " + renderedClause + "))";
+  return true;
+}
+
+bool MegalodonChecker::certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, std::string& result)
+{
+  const Kernel::InferenceRule& rule = unit->inference().rule();
+  if (!unit->isClause()
+    || (
+      rule != Kernel::InferenceRule::AVATAR_REFUTATION
+      && rule != Kernel::InferenceRule::AVATAR_REFUTATION_SMT
+    )
+    || unit->asClause()->length() != 0) {
+    return false;
+  }
+
+  auto satClauseSexpr = [](SAT::SATClause* clause) {
+    std::ostringstream out;
+    out << "(sat_clause";
+    for (SATLiteral literal : clause->iter()) {
+      out << " (lit " << literal.var() << ' ' << (literal.positive() ? "true" : "false") << ')';
+    }
+    out << ')';
+    return out.str();
+  };
+
+  std::vector<std::string> satClauses;
+  if (SAT::SATClause* refutation = unit->inference().satPremise()) {
+    SAT::SATInference::visitFOConversions(refutation, [&](SAT::SATClause* clause) {
+      satClauses.push_back(satClauseSexpr(clause));
+    });
+  }
+
+  if (satClauses.empty()) {
+    for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+      const auto* extra = env.proofExtra.find(parent);
+      if (extra == nullptr) {
+        continue;
+      }
+      const auto* satExtra = static_cast<const Indexing::SATClauseExtra*>(extra);
+      if (satExtra->clause == nullptr) {
+        continue;
+      }
+      satClauses.push_back(satClauseSexpr(satExtra->clause));
+    }
+  }
+  if (satClauses.empty()) {
+    return false;
+  }
+
+  std::ostringstream out;
+  out << "(avatar_refutation " << sexprQuote("u" + std::to_string(unit->number()))
+      << " (sat_clauses";
+  for (const std::string& clause : satClauses) {
+    out << ' ' << clause;
+  }
+  out << ") (result (clause)))";
+  result = out.str();
+  return true;
+}
+
 bool MegalodonChecker::certificateRewriteTermAtMegalodonPosition(
   Kernel::TermList term,
   Kernel::TermList needle,
@@ -4943,6 +5018,8 @@ bool MegalodonChecker::certificateNativeStepSexpr(
     || certificatePredicateDefinitionStepSexpr(unit, result)
     || certificatePredicateDefinitionFoldStepSexpr(unit, result)
     || certificateDefinitionInputStepSexpr(unit, result)
+    || certificateAvatarComponentStepSexpr(unit, result)
+    || certificateAvatarRefutationStepSexpr(unit, result)
     || certificateDefinitionFoldingStepsSexpr(unit, result)
     || certificateFoolExhaustivenessStepSexpr(unit, result)
     || certificateFoolDistinctnessStepSexpr(unit, result)
