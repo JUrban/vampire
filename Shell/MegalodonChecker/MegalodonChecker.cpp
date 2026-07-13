@@ -6397,16 +6397,231 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
             if (!acceptConclusion(paramClause, false)) {
               std::string swapped;
               if (!swappedEqualityLiteral(rewrittenTarget, swapped)) {
-                continue;
+                swapped.clear();
               }
-              std::vector<std::string> symmetryClause = paramClause;
-              auto rewritten = std::find(symmetryClause.begin(), symmetryClause.end(), rewrittenTarget);
-              if (rewritten == symmetryClause.end()) {
-                continue;
+              bool acceptedSymmetry = false;
+              if (!swapped.empty()) {
+                std::vector<std::string> symmetryClause = paramClause;
+                auto rewritten = std::find(symmetryClause.begin(), symmetryClause.end(), rewrittenTarget);
+                if (rewritten != symmetryClause.end()) {
+                  *rewritten = swapped;
+                  acceptedSymmetry = acceptConclusion(symmetryClause, true);
+                }
               }
-              *rewritten = swapped;
-              if (!acceptConclusion(symmetryClause, true)) {
-                continue;
+              if (!acceptedSymmetry) {
+                std::vector<std::string> steps;
+                std::vector<std::string> parentIds(2);
+                std::vector<std::vector<std::string>> substitutedParents(2);
+                for (std::size_t parentIndex = 0; parentIndex < 2; ++parentIndex) {
+                  std::string subst;
+                  bool nonIdentity = false;
+                  if (!substitutionSexpr(activeSubstitutions[parentIndex], subst, nonIdentity)
+                    || !substitutedClauseLiterals(premises[parentIndex], activeSubstitutions[parentIndex], substitutedParents[parentIndex])) {
+                    return false;
+                  }
+                  parentIds[parentIndex] = "u" + std::to_string(premises[parentIndex]->number());
+                  if (nonIdentity) {
+                    std::string substituteId = stepBase + "_subst" + std::to_string(parentIndex);
+                    steps.push_back(
+                      "(substitute " + sexprQuote(substituteId)
+                      + " (parent " + sexprQuote(parentIds[parentIndex]) + ") "
+                      + subst
+                      + " (result " + clauseSexprFromLiterals(substitutedParents[parentIndex]) + "))");
+                    parentIds[parentIndex] = substituteId;
+                  }
+                }
+
+                std::string equalityParentLiteral;
+                std::string equalityLiteralSexpr;
+                std::string fromSexpr;
+                std::string toSexpr;
+                if (!substitutedLiteralSexpr(equalityLiteral, activeSubstitutions[equalityParentIndex], equalityParentLiteral)
+                  || !positiveEqualityLiteralSexpr(redex, replacement, equalityLiteralSexpr)
+                  || !certificateTermSexpr(redex, fromSexpr)
+                  || !certificateTermSexpr(replacement, toSexpr)) {
+                  return false;
+                }
+
+                std::string equalityParentId = parentIds[equalityParentIndex];
+                if (needsSymmetry || equalityParentLiteral != equalityLiteralSexpr) {
+                  std::vector<std::string> symmetryClause;
+                  if (!substitutedClauseReplacingOneLiteral(
+                        equalityParent,
+                        activeSubstitutions[equalityParentIndex],
+                        equalityLiteral,
+                        equalityLiteralSexpr,
+                        symmetryClause)) {
+                    return false;
+                  }
+                  std::string symmetryStepId = stepBase + "_symmetry";
+                  steps.push_back(
+                    "(equality_symmetry " + sexprQuote(symmetryStepId)
+                    + " (parent " + sexprQuote(equalityParentId) + ")"
+                    + " (literal " + std::to_string(equalityIndex) + ")"
+                    + " (result " + clauseSexprFromLiterals(symmetryClause) + "))");
+                  equalityParentId = symmetryStepId;
+                }
+
+                std::vector<std::string> equalityRemainder;
+                if (!appendSubstitutedClauseExcept(
+                      equalityRemainder,
+                      equalityParent,
+                      activeSubstitutions[equalityParentIndex],
+                      equalityLiteral)) {
+                  continue;
+                }
+
+                struct TargetRewrite {
+                  std::string literal;
+                  std::string rewritten;
+                  std::vector<unsigned> position;
+                };
+                std::vector<TargetRewrite> targetRewrites;
+                for (Kernel::Literal* originalLiteral : targetParent->iterLits()) {
+                  Kernel::Literal* currentLiteral = Kernel::SubstHelper::apply(originalLiteral, activeSubstitutions[targetParentIndex]);
+                  std::string currentLiteralSexpr;
+                  if (!certificateLiteralSexpr(currentLiteral, currentLiteralSexpr)) {
+                    return false;
+                  }
+                  for (unsigned guard = 0; guard < 16; ++guard) {
+                    std::vector<unsigned> rewritePosition;
+                    Kernel::Literal* nextLiteral = nullptr;
+                    if (!certificateRewriteLiteralAtMegalodonPosition(
+                          currentLiteral,
+                          redex,
+                          replacement,
+                          rewritePosition,
+                          nextLiteral)) {
+                      break;
+                    }
+                    std::string nextLiteralSexpr;
+                    if (!certificateLiteralSexpr(nextLiteral, nextLiteralSexpr)) {
+                      return false;
+                    }
+                    targetRewrites.push_back({currentLiteralSexpr, nextLiteralSexpr, rewritePosition});
+                    currentLiteral = nextLiteral;
+                    currentLiteralSexpr = nextLiteralSexpr;
+                  }
+                }
+                if (targetRewrites.empty()) {
+                  continue;
+                }
+
+                std::vector<std::string> currentClause = substitutedParents[targetParentIndex];
+                std::string currentParentId = parentIds[targetParentIndex];
+                bool expanded = true;
+                for (std::size_t rewriteIndex = 0; rewriteIndex < targetRewrites.size(); ++rewriteIndex) {
+                  const TargetRewrite& rewrite = targetRewrites[rewriteIndex];
+                  auto literalIt = std::find(currentClause.begin(), currentClause.end(), rewrite.literal);
+                  if (literalIt == currentClause.end()) {
+                    expanded = false;
+                    break;
+                  }
+                  unsigned currentTargetIndex = literalIt - currentClause.begin();
+                  std::vector<std::string> nextClause = currentClause;
+                  nextClause.erase(nextClause.begin() + currentTargetIndex);
+                  nextClause.insert(nextClause.end(), equalityRemainder.begin(), equalityRemainder.end());
+                  nextClause.push_back(rewrite.rewritten);
+                  const std::string rewriteId = stepBase + "_paramodulate" + std::to_string(rewriteIndex);
+                  steps.push_back(
+                    "(paramodulate " + sexprQuote(rewriteId)
+                    + " (equality " + sexprQuote(equalityParentId) + " " + std::to_string(equalityIndex) + ")"
+                    + " (target " + sexprQuote(currentParentId) + " " + std::to_string(currentTargetIndex) + ") "
+                    + certificatePositionSexpr(rewrite.position)
+                    + " (from " + fromSexpr + ")"
+                    + " (to " + toSexpr + ")"
+                    + " (result " + clauseSexprFromLiterals(nextClause) + "))");
+                  currentClause = nextClause;
+                  currentParentId = rewriteId;
+                }
+                if (!expanded) {
+                  continue;
+                }
+
+                auto emitFactors =
+                  [&](std::vector<std::string>& candidateSteps,
+                      std::string& candidateParentId,
+                      const std::vector<std::pair<unsigned, unsigned>>& factors,
+                      const std::vector<std::vector<std::string>>& factorResults) {
+                    for (std::size_t factorIndex = 0; factorIndex < factors.size(); ++factorIndex) {
+                      const std::string factorId = factorIndex + 1 == factors.size()
+                        ? stepBase
+                        : stepBase + "_factor" + std::to_string(factorIndex);
+                      candidateSteps.push_back(
+                        "(factor " + sexprQuote(factorId)
+                        + " (parent " + sexprQuote(candidateParentId) + ")"
+                        + " (literals " + std::to_string(factors[factorIndex].first)
+                        + " " + std::to_string(factors[factorIndex].second) + ")"
+                        + " (result " + clauseSexprFromLiterals(factorResults[factorIndex]) + "))");
+                      candidateParentId = factorId;
+                    }
+                  };
+                auto finishExpanded =
+                  [&](std::vector<std::string>& candidateSteps,
+                      std::vector<std::string> candidateClause,
+                      std::string candidateParentId) {
+                    if (sameMultiset(candidateClause, actual)) {
+                      if (candidateParentId != stepBase) {
+                        candidateSteps.push_back(
+                          "(substitute " + sexprQuote(stepBase)
+                          + " (parent " + sexprQuote(candidateParentId) + ") (subst)"
+                          + " (result " + clauseSexprFromLiterals(actual) + "))");
+                      }
+                      return true;
+                    }
+
+                    std::vector<std::pair<unsigned, unsigned>> factors;
+                    std::vector<std::vector<std::string>> factorResults;
+                    if (factorDuplicateLiteralsToActual(candidateClause, factors, factorResults)) {
+                      emitFactors(candidateSteps, candidateParentId, factors, factorResults);
+                      return true;
+                    }
+
+                    for (unsigned literalIndex = 0; literalIndex < candidateClause.size(); ++literalIndex) {
+                      std::string swappedLiteral;
+                      if (!swappedEqualityLiteral(candidateClause[literalIndex], swappedLiteral)) {
+                        continue;
+                      }
+                      std::vector<std::string> symmetryClause = candidateClause;
+                      symmetryClause[literalIndex] = swappedLiteral;
+                      std::vector<std::pair<unsigned, unsigned>> symmetryFactors;
+                      std::vector<std::vector<std::string>> symmetryFactorResults;
+                      if (sameMultiset(symmetryClause, actual)) {
+                        candidateSteps.push_back(
+                          "(equality_symmetry " + sexprQuote(stepBase)
+                          + " (parent " + sexprQuote(candidateParentId) + ")"
+                          + " (literal " + std::to_string(literalIndex) + ")"
+                          + " (result " + clauseSexprFromLiterals(actual) + "))");
+                        return true;
+                      }
+                      if (!factorDuplicateLiteralsToActual(symmetryClause, symmetryFactors, symmetryFactorResults)) {
+                        continue;
+                      }
+                      const std::string symmetryStepId = stepBase + "_symmetry_result";
+                      candidateSteps.push_back(
+                        "(equality_symmetry " + sexprQuote(symmetryStepId)
+                        + " (parent " + sexprQuote(candidateParentId) + ")"
+                        + " (literal " + std::to_string(literalIndex) + ")"
+                        + " (result " + clauseSexprFromLiterals(symmetryClause) + "))");
+                      candidateParentId = symmetryStepId;
+                      emitFactors(candidateSteps, candidateParentId, symmetryFactors, symmetryFactorResults);
+                      return true;
+                    }
+                    return false;
+                };
+                if (!finishExpanded(steps, currentClause, currentParentId)) {
+                  continue;
+                }
+
+                std::ostringstream out;
+                for (std::size_t i = 0; i < steps.size(); ++i) {
+                  if (i != 0) {
+                    out << "\n  ";
+                  }
+                  out << steps[i];
+                }
+                result = out.str();
+                return true;
               }
             }
 
