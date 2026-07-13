@@ -1589,21 +1589,23 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std
       continue;
     }
     Kernel::TermList skolemTerm;
-    if (!findFormulaTerm(findFormulaTerm, static_cast<Kernel::FormulaUnit*>(unit)->formula(), symbol.second, skolemTerm)) {
-      return false;
-    }
-    Kernel::TermList varSort;
-    if (!parentVarSorts.find(static_cast<unsigned>(var), varSort)) {
-      return false;
-    }
-    Kernel::TermList trimmedSkolemTerm;
-    if (!trimTrailingApplications(skolemTerm, arrowDomainCount(varSort), trimmedSkolemTerm)) {
-      return false;
-    }
-    skolemTerm = trimmedSkolemTerm;
     std::string skolemTermSexpr;
-    if (!certificateTermSexpr(skolemTerm, skolemTermSexpr)) {
-      return false;
+    if (!findFormulaTerm(findFormulaTerm, static_cast<Kernel::FormulaUnit*>(unit)->formula(), symbol.second, skolemTerm)) {
+      skolemTermSexpr = "(TMH " + sexprQuote(functionName(symbol.second)) + ")";
+    } else {
+      Kernel::TermList varSort;
+      if (!parentVarSorts.find(static_cast<unsigned>(var), varSort)) {
+        return false;
+      }
+      Kernel::TermList trimmedSkolemTerm;
+      if (!trimTrailingApplications(skolemTerm, arrowDomainCount(varSort), trimmedSkolemTerm)) {
+        skolemTermSexpr = "(TMH " + sexprQuote(functionName(symbol.second)) + ")";
+      } else {
+        skolemTerm = trimmedSkolemTerm;
+        if (!certificateTermSexpr(skolemTerm, skolemTermSexpr)) {
+          skolemTermSexpr = "(TMH " + sexprQuote(functionName(symbol.second)) + ")";
+        }
+      }
     }
     bindings.push_back({static_cast<unsigned>(var), skolemTermSexpr});
   }
@@ -2671,16 +2673,22 @@ bool MegalodonChecker::certificateFoolDistinctnessStepSexpr(Kernel::Unit* unit, 
 
 bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit* unit, std::string& result)
 {
-  if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::UNIT_RESULTING_RESOLUTION) {
+  auto fail = [&](const char* reason) {
+    if (std::getenv("MEGALODON_CERT_DEBUG") && std::string(reason) != "not urr clause") {
+      std::cerr << "megalodon native URR certificate failed for u" << unit->number() << ": " << reason << std::endl;
+    }
     return false;
+  };
+  if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::UNIT_RESULTING_RESOLUTION) {
+    return fail("not urr clause");
   }
   const auto* extra = env.proofExtra.find(unit);
   if (extra == nullptr) {
-    return false;
+    return fail("missing proof extra");
   }
   const auto* urr = static_cast<const Inferences::UnitResultingResolutionExtra*>(extra);
   if (urr->steps.empty() || urr->mainParent == nullptr) {
-    return false;
+    return fail("empty urr trace");
   }
   for (const auto& trace : urr->steps) {
     if (trace.selected == nullptr
@@ -2688,7 +2696,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
       || trace.unitParent == nullptr
       || trace.unitSubstituted == nullptr
       || trace.unitParent->length() != 1) {
-      return false;
+      return fail("bad trace entry");
     }
   }
 
@@ -2971,6 +2979,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
   std::string currentParentId = "u" + std::to_string(urr->mainParent->number());
   const std::string unitId = "u" + std::to_string(unit->number());
   std::vector<std::string> steps;
+  std::string previousTraceSelectedLiteralSexpr;
 
   for (std::size_t traceIndex = 0; traceIndex < urr->steps.size(); ++traceIndex) {
     const auto& trace = urr->steps[traceIndex];
@@ -2978,11 +2987,14 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     int selectedIndex = -1;
     std::string traceSelectedLiteralSexpr;
     if (!certificateLiteralSexpr(trace.selected, traceSelectedLiteralSexpr)) {
-      return false;
+      return fail("trace selected literal render failed");
     }
-    unsigned selectionPasses = 2;
+    const bool repeatedTraceSelection =
+      traceIndex > 0 && traceSelectedLiteralSexpr == previousTraceSelectedLiteralSexpr;
+    unsigned selectionPasses = traceIndex == 0 ? 2 : 1;
     for (unsigned pass = 0; pass < selectionPasses && selectedIndex < 0; ++pass) {
-      for (std::size_t i = 0; i < currentLiterals.size(); ++i) {
+      for (std::size_t offset = 0; offset < currentLiterals.size(); ++offset) {
+        std::size_t i = repeatedTraceSelection ? currentLiterals.size() - 1 - offset : offset;
         if (selectionPasses == 2 && pass == 0) {
           std::string currentLiteralSexpr;
           if (!certificateLiteralSexpr(currentLiterals[i], currentLiteralSexpr)
@@ -3012,13 +3024,14 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
       }
     }
     if (selectedIndex < 0) {
-      return false;
+      return fail("current substitution match failed");
     }
+    previousTraceSelectedLiteralSexpr = traceSelectedLiteralSexpr;
 
     std::string subst;
     bool nonIdentity = false;
     if (!substitutionSexpr(currentSubstitution, subst, nonIdentity)) {
-      return false;
+      return fail("current substitution render failed");
     }
     if (nonIdentity) {
       std::vector<Kernel::Literal*> substituted;
@@ -3027,7 +3040,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
       }
       std::vector<std::string> substitutedRendered;
       if (!applyRenderedSubstitution(currentRendered, currentSubstitution, substitutedRendered)) {
-        return false;
+        return fail("current substituted clause render failed");
       }
       const std::string substituteId = unitId + "_current_subst" + std::to_string(traceIndex);
       steps.push_back(
@@ -3044,13 +3057,13 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     if (!samePolarityAndAtom(selectedLiteral, trace.selectedSubstituted)) {
       Kernel::Literal* swapped = swapEqualityLiteral(selectedLiteral);
       if (!samePolarityAndAtom(swapped, trace.selectedSubstituted)) {
-        return false;
+        return fail("selected substituted literal mismatch");
       }
       std::vector<Kernel::Literal*> symmetryClause = currentLiterals;
       symmetryClause[selectedIndex] = swapped;
       std::string swappedRendered;
       if (!certificateLiteralSexpr(swapped, swappedRendered)) {
-        return false;
+        return fail("selected symmetry render failed");
       }
       std::vector<std::string> symmetryRendered = currentRendered;
       symmetryRendered[selectedIndex] = swappedRendered;
@@ -3070,10 +3083,10 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     Kernel::Literal* unitLiteral = (*unitParent)[0];
     Kernel::Substitution unitSubstitution;
     if (!matchLiteral(unitLiteral, trace.unitSubstituted, unitSubstitution)) {
-      return false;
+      return fail("unit substitution match failed");
     }
     if (!substitutionSexpr(unitSubstitution, subst, nonIdentity)) {
-      return false;
+      return fail("unit substitution render failed");
     }
     std::vector<Kernel::Literal*> unitLiterals = { applyLiteralPreservingEquality(unitLiteral, unitSubstitution) };
     std::vector<std::string> unitRendered;
@@ -3081,14 +3094,14 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
       std::vector<std::string> unitSourceRendered;
       if (!renderedLiterals(std::vector<Kernel::Literal*>{unitLiteral}, unitSourceRendered)
         || !applyRenderedSubstitution(unitSourceRendered, unitSubstitution, unitRendered)) {
-        return false;
+        return fail("unit substituted clause render failed");
       }
       if (!appendCertificateSplitLiteralsSexpr(unitParent, unitRendered)) {
-        return false;
+        return fail("unit split literal render failed");
       }
     } else {
       if (!appendCertificateClauseLiteralsSexpr(unitParent, unitRendered)) {
-        return false;
+        return fail("unit clause render failed");
       }
     }
     std::string unitParentId = "u" + std::to_string(unitParent->number());
@@ -3139,7 +3152,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
         || !complementLiteralSexpr(currentRendered[selectedIndex], selectedComplement)
         || !certificateLiteralSexpr(swapped, swappedRendered)
         || selectedComplement != swappedRendered) {
-        return false;
+        return fail("unit pivot symmetry mismatch");
       }
       unitLiterals[0] = swapped;
       unitRendered[0] = swappedRendered;
@@ -3157,7 +3170,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     std::vector<std::string> nextRendered = currentRendered;
     nextRendered.erase(nextRendered.begin() + selectedIndex);
     if (!appendCertificateSplitLiteralsSexpr(unitParent, nextRendered)) {
-      return false;
+      return fail("post-resolve split append failed");
     }
     const std::string resolveId = unitId + "_resolve" + std::to_string(traceIndex);
     steps.push_back(
@@ -3172,9 +3185,63 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
 
   std::vector<std::string> actual;
   if (!appendCertificateClauseLiteralsSexpr(unit->asClause(), actual)) {
-    return false;
+    return fail("actual clause render failed");
   }
   std::vector<std::string> current = currentRendered;
+  if (normalized(current) != normalized(actual)) {
+    Kernel::Substitution finalRenameSubstitution;
+    std::vector<bool> usedActual(unit->asClause()->length(), false);
+    bool finalRenameMatched = currentLiterals.size() == unit->asClause()->length();
+    if (finalRenameMatched) {
+      for (Kernel::Literal* currentLiteral : currentLiterals) {
+        bool matched = false;
+        for (unsigned actualIndex = 0; actualIndex < unit->asClause()->length(); ++actualIndex) {
+          if (usedActual[actualIndex]) {
+            continue;
+          }
+          Kernel::Substitution attempt = cloneSubstitution(finalRenameSubstitution);
+          if (!matchLiteral(currentLiteral, (*unit->asClause())[actualIndex], attempt)) {
+            continue;
+          }
+          finalRenameSubstitution = cloneSubstitution(attempt);
+          usedActual[actualIndex] = true;
+          matched = true;
+          break;
+        }
+        if (!matched) {
+          finalRenameMatched = false;
+          break;
+        }
+      }
+    }
+    if (finalRenameMatched) {
+      std::string finalRenameSubst;
+      bool finalRenameNonIdentity = false;
+      if (!substitutionSexpr(finalRenameSubstitution, finalRenameSubst, finalRenameNonIdentity)) {
+        return fail("final rename substitution render failed");
+      }
+      if (finalRenameNonIdentity) {
+        std::vector<Kernel::Literal*> renamedLiterals;
+        for (Kernel::Literal* literal : currentLiterals) {
+          renamedLiterals.push_back(applyLiteralPreservingEquality(literal, finalRenameSubstitution));
+        }
+        std::vector<std::string> renamedRendered;
+        if (!applyRenderedSubstitution(currentRendered, finalRenameSubstitution, renamedRendered)) {
+          return fail("final rename clause render failed");
+        }
+        const std::string renameId = unitId + "_final_rename";
+        steps.push_back(
+          "(substitute " + sexprQuote(renameId)
+          + " (parent " + sexprQuote(currentParentId) + ") "
+          + finalRenameSubst
+          + " (result " + clauseSexprFromRendered(renamedRendered) + "))");
+        currentLiterals = renamedLiterals;
+        currentRendered = renamedRendered;
+        current = renamedRendered;
+        currentParentId = renameId;
+      }
+    }
+  }
   unsigned finalFactorCount = 0;
   auto factorFinalDuplicate = [&]() {
     for (unsigned left = 0; left < current.size(); ++left) {
@@ -3234,12 +3301,18 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     }
   }
   if (normalized(current) != normalized(actual)) {
-    return false;
+    if (std::getenv("MEGALODON_CERT_DEBUG")) {
+      std::cerr << "megalodon native URR current for u" << unit->number()
+                << ": " << clauseSexprFromRendered(normalized(current)) << std::endl;
+      std::cerr << "megalodon native URR actual for u" << unit->number()
+                << ": " << clauseSexprFromRendered(normalized(actual)) << std::endl;
+    }
+    return fail("sequential urr replay did not reach conclusion");
   }
   if (currentParentId != unitId) {
     std::string clause;
     if (!certificateClauseSexpr(unit->asClause(), clause)) {
-      return false;
+      return fail("final clause render failed");
     }
     steps.push_back(
       "(substitute " + sexprQuote(unitId)
