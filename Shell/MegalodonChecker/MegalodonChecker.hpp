@@ -132,6 +132,7 @@ private:
   bool appendCertificateClauseLiteralsSexpr(Kernel::Clause* clause, std::vector<std::string>& literals);
   bool certificateClauseSexpr(Kernel::Clause* clause, std::string& result);
   bool certificateRewriteTermAtMegalodonPosition(Kernel::TermList term, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::TermList& rewritten);
+  bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::Literal*& rewritten);
   bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, std::string& rendered);
   std::string certificatePositionSexpr(const std::vector<unsigned>& position) const;
   bool certificateSource(Kernel::Unit* unit, std::string& result);
@@ -153,6 +154,7 @@ private:
   bool certificatePredicateDefinitionStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificatePredicateDefinitionFoldStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateDefinitionInputStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateDefinitionFoldingStepsSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFoolExhaustivenessStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateNativeStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateResolveStepSexpr(Kernel::Unit* unit, std::string& result);

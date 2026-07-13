@@ -429,8 +429,9 @@ bool MegalodonChecker::certificateRewriteLiteralAtMegalodonPosition(
   Kernel::TermList needle,
   Kernel::TermList replacement,
   std::vector<unsigned>& position,
-  std::string& rendered)
+  Kernel::Literal*& rewrittenLiteral)
 {
+  rewrittenLiteral = nullptr;
   Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
   if (positive->isEquality()) {
     for (unsigned side = 0; side < 2; ++side) {
@@ -441,7 +442,7 @@ bool MegalodonChecker::certificateRewriteLiteralAtMegalodonPosition(
       }
       Kernel::TermList left = side == 0 ? childRewritten : *positive->nthArgument(0);
       Kernel::TermList right = side == 1 ? childRewritten : *positive->nthArgument(1);
-      Kernel::Literal* rewrittenLiteral = Kernel::Literal::createEquality(
+      rewrittenLiteral = Kernel::Literal::createEquality(
         literal->isPositive(),
         left,
         right,
@@ -454,7 +455,7 @@ bool MegalodonChecker::certificateRewriteLiteralAtMegalodonPosition(
         position.push_back(1);
       }
       position.insert(position.end(), childPosition.begin(), childPosition.end());
-      return certificateLiteralSexpr(rewrittenLiteral, rendered);
+      return true;
     }
     return false;
   }
@@ -471,7 +472,7 @@ bool MegalodonChecker::certificateRewriteLiteralAtMegalodonPosition(
       continue;
     }
     args[i] = childRewritten;
-    Kernel::Literal* rewrittenLiteral = Kernel::Literal::create(
+    rewrittenLiteral = Kernel::Literal::create(
       positive->functor(),
       positive->arity(),
       literal->isPositive(),
@@ -482,9 +483,21 @@ bool MegalodonChecker::certificateRewriteLiteralAtMegalodonPosition(
     }
     position.push_back(1);
     position.insert(position.end(), childPosition.begin(), childPosition.end());
-    return certificateLiteralSexpr(rewrittenLiteral, rendered);
+    return true;
   }
   return false;
+}
+
+bool MegalodonChecker::certificateRewriteLiteralAtMegalodonPosition(
+  Kernel::Literal* literal,
+  Kernel::TermList needle,
+  Kernel::TermList replacement,
+  std::vector<unsigned>& position,
+  std::string& rendered)
+{
+  Kernel::Literal* rewritten = nullptr;
+  return certificateRewriteLiteralAtMegalodonPosition(literal, needle, replacement, position, rewritten)
+    && certificateLiteralSexpr(rewritten, rendered);
 }
 
 std::string MegalodonChecker::certificatePositionSexpr(const std::vector<unsigned>& position) const
@@ -1170,6 +1183,135 @@ bool MegalodonChecker::certificateDefinitionInputStepSexpr(Kernel::Unit* unit, s
   }
   result = "(definition_input " + sexprQuote("u" + std::to_string(unit->number()))
     + " (result " + clause + "))";
+  return true;
+}
+
+bool MegalodonChecker::certificateDefinitionFoldingStepsSexpr(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::DEFINITION_FOLDING_TWEE) {
+    return false;
+  }
+  const auto* extra = env.proofExtra.find(unit);
+  if (extra == nullptr) {
+    return false;
+  }
+  const auto* foldingExtra = static_cast<const TweeDefinitionFoldingExtra*>(extra);
+  if (foldingExtra->steps.empty()) {
+    return false;
+  }
+
+  std::vector<Kernel::Unit*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    parents.push_back(parent);
+  }
+  if (parents.size() != foldingExtra->steps.size() + 1 || parents.empty() || !parents[0]->isClause()) {
+    return false;
+  }
+  for (std::size_t i = 1; i < parents.size(); ++i) {
+    if (!parents[i]->isClause()) {
+      return false;
+    }
+  }
+
+  auto firstPositiveEqualityIndex = [](Kernel::Clause* clause, unsigned& index) {
+    for (unsigned i = 0; i < clause->length(); ++i) {
+      Kernel::Literal* literal = (*clause)[i];
+      if (literal->isEquality() && literal->isPositive()) {
+        index = i;
+        return true;
+      }
+    }
+    return false;
+  };
+  auto clauseSexprFromLiterals = [&](const std::vector<Kernel::Literal*>& literals) {
+    std::ostringstream out;
+    out << "(clause";
+    for (Kernel::Literal* literal : literals) {
+      std::string rendered;
+      if (!certificateLiteralSexpr(literal, rendered)) {
+        return std::string();
+      }
+      out << ' ' << rendered;
+    }
+    out << ')';
+    return out.str();
+  };
+
+  std::vector<Kernel::Literal*> currentClause;
+  for (Kernel::Literal* literal : parents[0]->asClause()->iterLits()) {
+    currentClause.push_back(literal);
+  }
+  std::string currentParentId = "u" + std::to_string(parents[0]->number());
+  const std::string unitId = "u" + std::to_string(unit->number());
+  std::vector<std::string> steps;
+
+  for (std::size_t stepIndex = 0; stepIndex < foldingExtra->steps.size(); ++stepIndex) {
+    const auto& step = foldingExtra->steps[stepIndex];
+    if (step.literal >= currentClause.size()) {
+      return false;
+    }
+    const std::size_t definitionParentIndex = parents.size() - 1 - stepIndex;
+    Kernel::Clause* definitionParent = parents[definitionParentIndex]->asClause();
+    unsigned equalityIndex = 0;
+    if (!firstPositiveEqualityIndex(definitionParent, equalityIndex)) {
+      return false;
+    }
+
+    Kernel::Literal* rewrittenLiteral = nullptr;
+    std::vector<unsigned> nativePosition;
+    Kernel::TermList from = step.from;
+    Kernel::TermList to = step.to;
+    if (!certificateRewriteLiteralAtMegalodonPosition(currentClause[step.literal], from, to, nativePosition, rewrittenLiteral)) {
+      from = step.to;
+      to = step.from;
+      if (!certificateRewriteLiteralAtMegalodonPosition(currentClause[step.literal], from, to, nativePosition, rewrittenLiteral)) {
+        return false;
+      }
+    }
+
+    std::vector<Kernel::Literal*> nextClause = currentClause;
+    nextClause[step.literal] = rewrittenLiteral;
+
+    std::string fromSexpr;
+    std::string toSexpr;
+    std::string resultClause;
+    const bool isLast = stepIndex + 1 == foldingExtra->steps.size();
+    if (!certificateTermSexpr(from, fromSexpr) || !certificateTermSexpr(to, toSexpr)) {
+      return false;
+    }
+    if (isLast) {
+      if (!certificateClauseSexpr(unit->asClause(), resultClause)) {
+        return false;
+      }
+    } else {
+      resultClause = clauseSexprFromLiterals(nextClause);
+      if (resultClause.empty()) {
+        return false;
+      }
+    }
+
+    const std::string stepId = isLast ? unitId : unitId + "_paramodulate" + std::to_string(stepIndex);
+    steps.push_back(
+      "(paramodulate " + sexprQuote(stepId)
+      + " (equality " + sexprQuote("u" + std::to_string(parents[definitionParentIndex]->number())) + " " + std::to_string(equalityIndex) + ")"
+      + " (target " + sexprQuote(currentParentId) + " " + std::to_string(step.literal) + ") "
+      + certificatePositionSexpr(nativePosition)
+      + " (from " + fromSexpr + ")"
+      + " (to " + toSexpr + ")"
+      + " (result " + resultClause + "))");
+
+    currentClause = nextClause;
+    currentParentId = stepId;
+  }
+
+  std::ostringstream out;
+  for (std::size_t i = 0; i < steps.size(); ++i) {
+    if (i != 0) {
+      out << "\n  ";
+    }
+    out << steps[i];
+  }
+  result = out.str();
   return true;
 }
 
@@ -3540,6 +3682,7 @@ bool MegalodonChecker::certificateNativeStepSexpr(
     || certificatePredicateDefinitionStepSexpr(unit, result)
     || certificatePredicateDefinitionFoldStepSexpr(unit, result)
     || certificateDefinitionInputStepSexpr(unit, result)
+    || certificateDefinitionFoldingStepsSexpr(unit, result)
     || certificateFoolExhaustivenessStepSexpr(unit, result)
     || certificateResolveStepSexpr(unit, result)
     || certificateSubstitutedResolutionStepsSexpr(unit, replayInfo, result)
