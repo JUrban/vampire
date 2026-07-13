@@ -5193,6 +5193,17 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
     }
     return skipped;
   };
+  auto substitutedClauseLiterals = [&](Kernel::Clause* clause, const Kernel::Substitution& substitution, std::vector<std::string>& literals) {
+    for (Kernel::Literal* literal : clause->iterLits()) {
+      std::string literalJson;
+      if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, substitution, literalJson)) {
+        return false;
+      }
+      literals.push_back(literalJson);
+    }
+    normalize(literals);
+    return true;
+  };
   auto positiveEqualityLiteralJson = [&](Kernel::Literal* equalityLiteral, Kernel::TermList lhsTerm, Kernel::TermList rhsTerm, std::string& rendered) {
     Kernel::TermList equalityArgumentSort = Kernel::SortHelper::getEqualityArgumentSort(equalityLiteral);
     std::string equalitySort;
@@ -5287,13 +5298,6 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
     out << ']';
     return out.str();
   };
-  auto positionsJson = [&](const std::vector<std::vector<unsigned>>& positions) {
-    std::vector<std::string> renderedPositions;
-    for (const auto& position : positions) {
-      renderedPositions.push_back(positionJson(position));
-    }
-    return jsonArray(renderedPositions);
-  };
   auto rewriteScopeJson = [&](Kernel::Literal* literal, const Kernel::Substitution& substitution, const std::vector<unsigned>& position, std::string& rendered) {
     if (position.empty()) {
       return false;
@@ -5336,6 +5340,120 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
     rendered = "\"rewrite_scope\":{\"kind\":\"bound_lambda_var\","
       "\"lambda_depth\":" + std::to_string(lambdaDepth) + ","
       "\"db_index\":" + std::to_string(dbIndex.unwrap()) + "},";
+    return true;
+  };
+  auto replaceTermAtPrintedPosition = [&](auto&& self, Kernel::TermList term, const std::vector<unsigned>& rewritePosition, std::size_t depth, Kernel::TermList replacement, Kernel::TermList& result) -> bool {
+    if (depth == rewritePosition.size()) {
+      result = replacement;
+      return true;
+    }
+    if (!term.isTerm()) {
+      return false;
+    }
+    Kernel::Term* source = term.term();
+    std::vector<Kernel::TermList> args;
+    args.reserve(source->arity());
+    for (unsigned i = 0; i < source->arity(); ++i) {
+      args.push_back(*source->nthArgument(i));
+    }
+    unsigned printedIndex = rewritePosition[depth];
+    unsigned argumentIndex;
+    if (term.isApplication()) {
+      if (printedIndex > 1) {
+        return false;
+      }
+      argumentIndex = printedIndex == 0 ? 2 : 3;
+    } else {
+      unsigned typeArgs = source->numTypeArguments();
+      if (printedIndex >= source->numTermArguments()) {
+        return false;
+      }
+      argumentIndex = typeArgs + printedIndex;
+    }
+    Kernel::TermList rewrittenChild;
+    if (!self(self, args[argumentIndex], rewritePosition, depth + 1, replacement, rewrittenChild)) {
+      return false;
+    }
+    args[argumentIndex] = rewrittenChild;
+    result = Kernel::TermList(Kernel::Term::create(source, args.data()));
+    return true;
+  };
+  auto equalityLiteralFromTermsJson = [&](Kernel::Literal* literal, Kernel::TermList lhsTerm, Kernel::TermList rhsTerm, std::string& rendered) {
+    if (!literal->isEquality()) {
+      return false;
+    }
+    Kernel::TermList equalityArgumentSort = Kernel::SortHelper::getEqualityArgumentSort(literal);
+    std::string equalitySort;
+    std::string lhs;
+    std::string rhs;
+    if (!sortToMegalodon(equalityArgumentSort, equalitySort)
+      || !certificateTermJson(lhsTerm, lhs)
+      || !certificateTermJson(rhsTerm, rhs)) {
+      return false;
+    }
+    std::string atom;
+    if (equalitySort == "set") {
+      atom = "{\"eq\":[" + lhs + "," + rhs + "]}";
+    } else {
+      atom = "{\"eq\":[" + lhs + "," + rhs + "],\"sort\":" + quote(equalitySort) + "}";
+    }
+    rendered = "{\"polarity\":";
+    rendered += literal->isPositive() ? "true" : "false";
+    rendered += ",\"atom\":" + atom + "}";
+    return true;
+  };
+  auto substitutedLiteralArgumentTerms = [&](Kernel::Literal* literal, const Kernel::Substitution& substitution, std::vector<Kernel::TermList>& arguments) {
+    Kernel::Literal* indexed = literal->isEquality()
+      ? literal
+      : (literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal));
+    unsigned arity = indexed->isEquality() ? 2 : indexed->arity();
+    arguments.clear();
+    arguments.reserve(arity);
+    for (unsigned i = 0; i < arity; ++i) {
+      arguments.push_back(Kernel::SubstHelper::apply(*indexed->nthArgument(i), substitution));
+    }
+    return true;
+  };
+  auto literalFromArgumentTermsJson = [&](Kernel::Literal* literal, const std::vector<Kernel::TermList>& arguments, std::string& rendered) {
+    if (literal->isEquality()) {
+      if (arguments.size() != 2) {
+        return false;
+      }
+      return equalityLiteralFromTermsJson(literal, arguments[0], arguments[1], rendered);
+    }
+
+    Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
+    if (arguments.size() != positive->arity()) {
+      return false;
+    }
+    std::ostringstream atom;
+    atom << "{\"pred\":" << quote(predicateName(positive->functor())) << ",\"args\":[";
+    for (std::size_t i = 0; i < arguments.size(); ++i) {
+      if (i != 0) {
+        atom << ',';
+      }
+      std::string arg;
+      if (!certificateTermJson(arguments[i], arg)) {
+        return false;
+      }
+      atom << arg;
+    }
+    atom << "]}";
+    rendered = "{\"polarity\":";
+    rendered += literal->isPositive() ? "true" : "false";
+    rendered += ",\"atom\":" + atom.str() + "}";
+    return true;
+  };
+  auto rewriteArgumentTermsAtPrintedPosition = [&](std::vector<Kernel::TermList>& arguments, const std::vector<unsigned>& rewritePosition, Kernel::TermList replacement) {
+    if (rewritePosition.empty() || rewritePosition[0] >= arguments.size()) {
+      return false;
+    }
+    std::vector<unsigned> argumentPosition(rewritePosition.begin() + 1, rewritePosition.end());
+    Kernel::TermList rewrittenArgument;
+    if (!replaceTermAtPrintedPosition(replaceTermAtPrintedPosition, arguments[rewritePosition[0]], argumentPosition, 0, replacement, rewrittenArgument)) {
+      return false;
+    }
+    arguments[rewritePosition[0]] = rewrittenArgument;
     return true;
   };
   auto replacedSubstitutedLiteralJson = [&](Kernel::Literal* literal, const Kernel::Substitution& substitution, Kernel::TermList what, Kernel::TermList by, std::string& rendered) {
@@ -5532,20 +5650,64 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
             + "\"substitution\":{},"
             "\"clause\":" + paramodulationConclusionJson + "}");
         } else {
-          steps.push_back(
-            "{\"id\":" + quote(paramodulationStepId) + ","
-            "\"rule\":\"paramodulate_all\","
-            "\"parents\":["
-            + quote(equalityParentId) + ","
-            + quote(parentIds[targetParentIndex]) + "],"
-            "\"equality\":" + equalityJson + ","
-            "\"from\":" + fromJson + ","
-            "\"to\":" + toJson + ","
-            "\"target\":" + targetJson + ","
-            "\"rewritten_target\":" + rewrittenTargetJson + ","
-            "\"positions\":" + positionsJson(positions) + ","
-            "\"substitution\":{},"
-            "\"clause\":" + paramodulationConclusionJson + "}");
+          std::vector<std::string> currentClause;
+          std::vector<std::string> equalityRemainder;
+          if (!substitutedClauseLiterals(targetParent, replayInfo->substitutionForBanksSub[targetParentIndex], currentClause)
+            || !appendSubstitutedClauseExcept(equalityRemainder, equalityParent, replayInfo->substitutionForBanksSub[equalityParentIndex], equalityLiteral)) {
+            return false;
+          }
+          normalize(currentClause);
+          normalize(equalityRemainder);
+          std::string currentParentId = parentIds[targetParentIndex];
+          std::string currentTargetJson = targetJson;
+          std::vector<Kernel::TermList> currentArguments;
+          if (!substitutedLiteralArgumentTerms(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], currentArguments)) {
+            return false;
+          }
+          for (std::size_t index = 0; index < positions.size(); ++index) {
+            const std::vector<unsigned>& rewritePosition = positions[index];
+            if (!rewriteArgumentTermsAtPrintedPosition(currentArguments, rewritePosition, replacement)) {
+              return false;
+            }
+            std::string nextTargetJson;
+            if (!literalFromArgumentTermsJson(targetLiteral, currentArguments, nextTargetJson)) {
+              return false;
+            }
+            auto literalIt = std::find(currentClause.begin(), currentClause.end(), currentTargetJson);
+            if (literalIt == currentClause.end()) {
+              return false;
+            }
+            currentClause.erase(literalIt);
+            currentClause.push_back(nextTargetJson);
+            currentClause.insert(currentClause.end(), equalityRemainder.begin(), equalityRemainder.end());
+            normalize(currentClause);
+
+            bool lastRewrite = index + 1 == positions.size();
+            std::string rewriteStepId = lastRewrite ? paramodulationStepId : stepBase + "_paramodulate" + std::to_string(index);
+            std::string rewriteClauseJson = lastRewrite ? paramodulationConclusionJson : jsonArray(currentClause);
+            std::string rewriteScopeField;
+            rewriteScopeJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], rewritePosition, rewriteScopeField);
+            steps.push_back(
+              "{\"id\":" + quote(rewriteStepId) + ","
+              "\"rule\":\"paramodulate\","
+              "\"parents\":["
+              + quote(equalityParentId) + ","
+              + quote(currentParentId) + "],"
+              "\"equality\":" + equalityJson + ","
+              "\"from\":" + fromJson + ","
+              "\"to\":" + toJson + ","
+              "\"target\":" + currentTargetJson + ","
+              "\"rewritten_target\":" + nextTargetJson + ","
+              "\"position\":" + positionJson(rewritePosition) + ","
+              + rewriteScopeField
+              + "\"substitution\":{},"
+              "\"clause\":" + rewriteClauseJson + "}");
+            currentParentId = rewriteStepId;
+            currentTargetJson = nextTargetJson;
+          }
+          if (currentClause != paramClause) {
+            return false;
+          }
         }
         if (needsConclusionSymmetry) {
           steps.push_back(
