@@ -358,7 +358,7 @@ bool MegalodonChecker::certificateInputStepSexpr(Kernel::Unit* unit, std::string
     return false;
   }
   const Kernel::InferenceRule& rule = unit->inference().rule();
-  if (rule != Kernel::InferenceRule::INPUT && unit->getParents().hasNext()) {
+  if (rule != Kernel::InferenceRule::INPUT) {
     return false;
   }
 
@@ -480,6 +480,20 @@ bool MegalodonChecker::certificateCnfLiteralStepSexpr(Kernel::Unit* unit, std::s
   }
   result = "(cnf_literal " + sexprQuote("u" + std::to_string(unit->number()))
     + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
+    + " (result " + clause + "))";
+  return true;
+}
+
+bool MegalodonChecker::certificateDefinitionInputStepSexpr(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::FUNCTION_DEFINITION) {
+    return false;
+  }
+  std::string clause;
+  if (!certificateClauseSexpr(unit->asClause(), clause)) {
+    return false;
+  }
+  result = "(definition_input " + sexprQuote("u" + std::to_string(unit->number()))
     + " (result " + clause + "))";
   return true;
 }
@@ -1241,6 +1255,7 @@ bool MegalodonChecker::certificateNativeStepSexpr(
     || certificateFormulaCopyStepSexpr(unit, result)
     || certificateFoolBoolStepSexpr(unit, result)
     || certificateCnfLiteralStepSexpr(unit, result)
+    || certificateDefinitionInputStepSexpr(unit, result)
     || certificateSubstitutedResolutionStepsSexpr(unit, replayInfo, result)
     || certificateResolveStepSexpr(unit, result)
     || certificateFactorStepSexpr(unit, result)
