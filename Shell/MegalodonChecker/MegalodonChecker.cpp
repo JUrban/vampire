@@ -17,6 +17,7 @@
 #include "Kernel/Term.hpp"
 #include "Kernel/TermIterators.hpp"
 #include "Kernel/Unit.hpp"
+#include "Parse/TPTP.hpp"
 #include "Lib/DHMap.hpp"
 #include "Lib/Environment.hpp"
 #include "Lib/SharedSet.hpp"
@@ -311,7 +312,18 @@ bool MegalodonChecker::certificateInputStepSexpr(Kernel::Unit* unit, std::string
     return false;
   }
   const std::string id = "u" + std::to_string(unit->number());
-  result = "(input " + sexprQuote(id) + " (source axiom " + sexprQuote(id) + ") " + clause + ")";
+  std::string sourceName = id;
+  std::string axiomName;
+  if (Parse::TPTP::findAxiomName(unit, axiomName) && !axiomName.empty()) {
+    sourceName = axiomName;
+  }
+  std::string sourceKind = "axiom";
+  if (unit->inputType() == Kernel::UnitInputType::NEGATED_CONJECTURE) {
+    sourceKind = "negated_conjecture";
+  }
+  result = "(input " + sexprQuote(id)
+    + " (source " + sourceKind + " " + sexprQuote(sourceName) + ") "
+    + clause + ")";
   return true;
 }
 
