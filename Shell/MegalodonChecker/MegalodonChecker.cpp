@@ -1059,6 +1059,8 @@ bool MegalodonChecker::certificateSource(Kernel::Unit* unit, std::string& result
     }
   } else if (unit->inputType() == Kernel::UnitInputType::NEGATED_CONJECTURE) {
     sourceKind = "negated_conjecture";
+  } else if (unit->inputType() == Kernel::UnitInputType::CONJECTURE) {
+    sourceKind = "conjecture";
   }
 
   std::string sourceName = "u" + std::to_string(sourceUnit->number());
