@@ -210,6 +210,42 @@ bool MegalodonChecker::certificateTermSexpr(Kernel::TermList term, std::string& 
     result = "(AP " + lhs + " " + rhs + ")";
     return true;
   }
+  if (term.isTerm() && term.term()->isSpecial()) {
+    Kernel::Term* special = term.term();
+    switch (special->specialFunctor()) {
+    case Kernel::SpecialFunctor::FORMULA:
+      return certificateFormulaTermSexpr(special->getSpecialData()->getFormula(), result);
+    case Kernel::SpecialFunctor::LAMBDA: {
+      const Kernel::Term::SpecialTermData* data = special->getSpecialData();
+      Kernel::TermList lambdaBody = data->getLambdaExp();
+      std::string body;
+      if (lambdaBody.isTerm() && lambdaBody.term()->isFormula()) {
+        if (!certificateFormulaTermSexpr(lambdaBody.term()->getSpecialData()->getFormula(), body)) {
+          return false;
+        }
+      } else if (!certificateTermSexpr(lambdaBody, body)) {
+        return false;
+      }
+
+      std::vector<std::pair<unsigned, Kernel::TermList>> vars;
+      Kernel::VSList::Iterator vit(data->getLambdaVars());
+      while (vit.hasNext()) {
+        vars.push_back(vit.next());
+      }
+      for (auto it = vars.rbegin(); it != vars.rend(); ++it) {
+        std::string type;
+        if (!certificateTypeSexpr(it->second, type)) {
+          return false;
+        }
+        body = "(LAMV " + sexprQuote(variableName(it->first)) + " " + type + " " + body + ")";
+      }
+      result = body;
+      return true;
+    }
+    default:
+      return false;
+    }
+  }
   if (!term.isTerm() || term.term()->isSpecial()) {
     return false;
   }
