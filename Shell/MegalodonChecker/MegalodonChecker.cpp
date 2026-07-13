@@ -3850,6 +3850,145 @@ bool MegalodonChecker::certificateTruthConflictResolutionStepJson(
   return false;
 }
 
+bool MegalodonChecker::certificateTrivialInequalityRemovalStepsJson(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause()
+    || unit->inference().rule() != Kernel::InferenceRule::TRIVIAL_INEQUALITY_REMOVAL) {
+    return false;
+  }
+
+  std::vector<Kernel::Clause*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    if (parent->isClause()) {
+      parents.push_back(parent->asClause());
+    }
+  }
+  if (parents.size() != 1) {
+    return false;
+  }
+  Kernel::Clause* parent = parents[0];
+
+  auto jsonArray = [](const std::vector<std::string>& items) {
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << items[i];
+    }
+    out << ']';
+    return out.str();
+  };
+  auto normalize = [](std::vector<std::string>& literals) {
+    std::sort(literals.begin(), literals.end());
+    literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
+  };
+  auto normalizedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
+    if (!appendCertificateClauseLiteralsJson(clause, literals)) {
+      return false;
+    }
+    normalize(literals);
+    return true;
+  };
+  auto isTruthConstant = [](const std::string& rendered, const std::string& name) {
+    return rendered == "{\"const\":\"" + name + "\"}";
+  };
+  auto isNegativeReflexiveEquality = [&](Kernel::Literal* literal) {
+    if (literal == nullptr
+      || !literal->isEquality()
+      || !literal->isNegative()) {
+      return false;
+    }
+    std::string lhs;
+    std::string rhs;
+    return certificateTermJson(*literal->nthArgument(0), lhs)
+      && certificateTermJson(*literal->nthArgument(1), rhs)
+      && lhs == rhs;
+  };
+  auto isPositiveTruthConflict = [&](Kernel::Literal* literal) {
+    if (literal == nullptr
+      || !literal->isEquality()
+      || !literal->isPositive()) {
+      return false;
+    }
+    std::string lhs;
+    std::string rhs;
+    if (!certificateTermJson(*literal->nthArgument(0), lhs)
+      || !certificateTermJson(*literal->nthArgument(1), rhs)) {
+      return false;
+    }
+    return (isTruthConstant(lhs, "f__true") && isTruthConstant(rhs, "f__false"))
+      || (isTruthConstant(lhs, "f__false") && isTruthConstant(rhs, "f__true"));
+  };
+
+  std::vector<std::string> current;
+  std::vector<std::string> target;
+  if (!normalizedClause(parent, current)
+    || !normalizedClause(unit->asClause(), target)) {
+    return false;
+  }
+  if (current == target) {
+    return false;
+  }
+
+  struct RemovedLiteral {
+    std::string rule;
+    std::string literalJson;
+  };
+  std::vector<RemovedLiteral> removals;
+  for (Kernel::Literal* literal : parent->iterLits()) {
+    std::string literalJson;
+    if (!certificateLiteralJson(literal, literalJson)) {
+      return false;
+    }
+    if (std::find(current.begin(), current.end(), literalJson) == current.end()
+      || std::find(target.begin(), target.end(), literalJson) != target.end()) {
+      continue;
+    }
+    if (isPositiveTruthConflict(literal)) {
+      removals.push_back({"truth_conflict_resolution", literalJson});
+    } else if (isNegativeReflexiveEquality(literal)) {
+      removals.push_back({"equality_resolution", literalJson});
+    } else {
+      return false;
+    }
+  }
+  if (removals.empty()) {
+    return false;
+  }
+
+  std::vector<std::string> steps;
+  std::string parentId = "u" + std::to_string(parent->number());
+  std::string stepBase = "u" + std::to_string(unit->number());
+  for (std::size_t index = 0; index < removals.size(); ++index) {
+    const RemovedLiteral& removed = removals[index];
+    auto literalIt = std::find(current.begin(), current.end(), removed.literalJson);
+    if (literalIt == current.end()) {
+      return false;
+    }
+    current.erase(literalIt);
+    normalize(current);
+    std::string stepId = index + 1 == removals.size()
+      ? stepBase
+      : stepBase + "_trivial" + std::to_string(index);
+    steps.push_back(
+      "{\"id\":" + quote(stepId) + ","
+      "\"rule\":" + quote(removed.rule) + ","
+      "\"parents\":[" + quote(parentId) + "],"
+      "\"literal\":" + removed.literalJson + ","
+      "\"substitution\":{},"
+      "\"clause\":" + jsonArray(current) + "}");
+    parentId = stepId;
+  }
+
+  if (current != target) {
+    return false;
+  }
+  result = jsonArray(steps);
+  return true;
+}
+
 bool MegalodonChecker::certificateFactorStepJson(Kernel::Unit* unit, std::string& result)
 {
   const Kernel::InferenceRule& rule = unit->inference().rule();
@@ -7267,6 +7406,15 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepsJson(Kernel::Unit
         if (!certificateLiteralJson(selectedLiteral, selectedLiteralJson)) {
           continue;
         }
+        std::string highLevelStep =
+          "{\"rule\":\"subsumption_resolution\","
+          "\"parents\":["
+          + quote("u" + std::to_string(mainParent->number())) + ","
+          + quote("u" + std::to_string(sideParent->number())) + "],"
+          "\"selected\":" + selectedLiteralJson + ","
+          "\"side_pivot\":" + sideLiteralJson + ","
+          "\"side_substitution\":" + sideSubstitutionJson + ","
+          "\"clause\":" + jsonArray(actual) + "}";
         std::string stepBase = "u" + std::to_string(unit->number());
 
         std::vector<std::string> sideCurrent;
@@ -7373,7 +7521,8 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepsJson(Kernel::Unit
             return true;
           }
         }
-
+        result = highLevelStep;
+        return true;
       }
     }
   }
@@ -10567,6 +10716,8 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
       } else {
         emitCertificateStep(certificateStep);
       }
+    } else if (certificateTrivialInequalityRemovalStepsJson(u, certificateStep)) {
+      emitCertificateSteps(certificateStep);
     } else if (certificateEqualityResolutionStepJson(u, replayInfo, certificateStep)) {
       if (!certificateStep.empty() && certificateStep.front() == '[') {
         emitCertificateSteps(certificateStep);

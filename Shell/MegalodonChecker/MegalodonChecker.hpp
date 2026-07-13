@@ -57,6 +57,7 @@ private:
   bool certificateResolveStepJson(Kernel::Unit* unit, std::string& result);
   bool certificateEqualityResolutionStepJson(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateTruthConflictResolutionStepJson(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
+  bool certificateTrivialInequalityRemovalStepsJson(Kernel::Unit* unit, std::string& result);
   bool certificateFactorStepJson(Kernel::Unit* unit, std::string& result);
   bool certificateEqualityFactoringStepJson(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateParamodulateStepJson(Kernel::Unit* unit, std::string& result);
