@@ -2109,7 +2109,7 @@ bool MegalodonChecker::certificateExtensionalityResolutionStepsSexpr(Kernel::Uni
     literals.erase(it);
     return true;
   };
-  auto tryBuildSubstitution = [](Kernel::Literal* extLiteral, Kernel::Literal* otherLiteral, Kernel::Substitution& substitution) {
+  auto tryBuildSubstitution = [](Kernel::Literal* extLiteral, Kernel::Literal* otherLiteral, bool reverseOther, Kernel::Substitution& substitution) {
     if (extLiteral == nullptr
       || otherLiteral == nullptr
       || !extLiteral->isEquality()
@@ -2123,8 +2123,8 @@ bool MegalodonChecker::certificateExtensionalityResolutionStepsSexpr(Kernel::Uni
     if (!extLeft.isVar() || !extRight.isVar()) {
       return false;
     }
-    substitution.bind(extLeft.var(), *otherLiteral->nthArgument(0));
-    substitution.bind(extRight.var(), *otherLiteral->nthArgument(1));
+    substitution.bind(extLeft.var(), *otherLiteral->nthArgument(reverseOther ? 1 : 0));
+    substitution.bind(extRight.var(), *otherLiteral->nthArgument(reverseOther ? 0 : 1));
     return true;
   };
   auto clauseSexprFromLiterals = [](const std::vector<std::string>& literals) {
@@ -2154,8 +2154,9 @@ bool MegalodonChecker::certificateExtensionalityResolutionStepsSexpr(Kernel::Uni
     Kernel::Clause* otherParent = parents[otherIndex];
     for (Kernel::Literal* extLiteral : extParent->iterLits()) {
       for (Kernel::Literal* otherLiteral : otherParent->iterLits()) {
+        for (bool reverseOther : {false, true}) {
         Kernel::Substitution extSubstitution;
-        if (!tryBuildSubstitution(extLiteral, otherLiteral, extSubstitution)) {
+        if (!tryBuildSubstitution(extLiteral, otherLiteral, reverseOther, extSubstitution)) {
           continue;
         }
 
@@ -2174,6 +2175,20 @@ bool MegalodonChecker::certificateExtensionalityResolutionStepsSexpr(Kernel::Uni
           return false;
         }
         pivotExt = rawPivotExt[0];
+        int reverseOtherPivotIndex = -1;
+        if (reverseOther) {
+          std::string swappedPivotOther;
+          if (!swapEqualityLiteralSexpr(pivotOther, swappedPivotOther)) {
+            continue;
+          }
+          auto pivotIt = std::find(currentOther.begin(), currentOther.end(), pivotOther);
+          if (pivotIt == currentOther.end()) {
+            continue;
+          }
+          reverseOtherPivotIndex = static_cast<int>(pivotIt - currentOther.begin());
+          *pivotIt = swappedPivotOther;
+          pivotOther = swappedPivotOther;
+        }
 
         std::vector<std::string> expected = currentExt;
         std::vector<std::string> otherRemainder = currentOther;
@@ -2231,6 +2246,15 @@ bool MegalodonChecker::certificateExtensionalityResolutionStepsSexpr(Kernel::Uni
             + " (result " + clauseSexprFromLiterals(currentExt) + "))");
           extParentId = substituteId;
         }
+        if (reverseOtherPivotIndex >= 0) {
+          const std::string symmetryId = stepBase + "_symmetry_other_pivot";
+          steps.push_back(
+            "(equality_symmetry " + sexprQuote(symmetryId)
+            + " (parent " + sexprQuote(otherParentId) + ")"
+            + " (literal " + std::to_string(reverseOtherPivotIndex) + ")"
+            + " (result " + clauseSexprFromLiterals(currentOther) + "))");
+          otherParentId = symmetryId;
+        }
 
         std::size_t extSymmetryIndex = 0;
         std::size_t otherSymmetryIndex = 0;
@@ -2275,6 +2299,7 @@ bool MegalodonChecker::certificateExtensionalityResolutionStepsSexpr(Kernel::Uni
         }
         result = out.str();
         return true;
+        }
       }
     }
   }
