@@ -4450,26 +4450,97 @@ bool MegalodonChecker::certificateDefinitionRewriteChainStepJson(Kernel::Unit* u
     out << ']';
     return out.str();
   };
-  auto collectTermPositions = [&](auto&& self, Kernel::TermList term, Kernel::TermList needle, std::vector<unsigned>& current, std::vector<std::vector<unsigned>>& positions) -> void {
-    if (term == needle) {
-      positions.push_back(current);
+  std::function<bool(Kernel::TermList, Kernel::TermList, std::map<unsigned, Kernel::TermList>&)> matchTermPattern =
+    [&](Kernel::TermList pattern, Kernel::TermList target, std::map<unsigned, Kernel::TermList>& substitution) -> bool {
+      if (pattern.isVar()) {
+        auto found = substitution.find(pattern.var());
+        if (found == substitution.end()) {
+          substitution.emplace(pattern.var(), target);
+          return true;
+        }
+        return found->second == target;
+      }
+      if (pattern == target) {
+        return true;
+      }
+      if (target.isVar()) {
+        return false;
+      }
+      if (pattern.isApplication() || target.isApplication()) {
+        return pattern.isApplication()
+          && target.isApplication()
+          && matchTermPattern(pattern.lhs(), target.lhs(), substitution)
+          && matchTermPattern(pattern.rhs(), target.rhs(), substitution);
+      }
+      Kernel::Term* patternTerm = pattern.term();
+      Kernel::Term* targetTerm = target.term();
+      if (patternTerm->functor() != targetTerm->functor()
+        || patternTerm->arity() != targetTerm->arity()) {
+        return false;
+      }
+      for (unsigned i = 0; i < patternTerm->arity(); ++i) {
+        if (!matchTermPattern(*patternTerm->nthArgument(i), *targetTerm->nthArgument(i), substitution)) {
+          return false;
+        }
+      }
+      return true;
+    };
+  std::function<bool(Kernel::TermList, const std::map<unsigned, Kernel::TermList>&, Kernel::TermList&)> instantiateTermPattern =
+    [&](Kernel::TermList pattern, const std::map<unsigned, Kernel::TermList>& substitution, Kernel::TermList& result) -> bool {
+      if (pattern.isVar()) {
+        auto found = substitution.find(pattern.var());
+        result = found == substitution.end() ? pattern : found->second;
+        return true;
+      }
+      if (pattern.isApplication()) {
+        Kernel::TermList lhs;
+        Kernel::TermList rhs;
+        if (!instantiateTermPattern(pattern.lhs(), substitution, lhs)
+          || !instantiateTermPattern(pattern.rhs(), substitution, rhs)) {
+          return false;
+        }
+        result = HOL::create::app(*pattern.term()->nthArgument(0), *pattern.term()->nthArgument(1), lhs, rhs);
+        return true;
+      }
+      Kernel::Term* patternTerm = pattern.term();
+      Stack<Kernel::TermList> args;
+      for (unsigned i = 0; i < patternTerm->arity(); ++i) {
+        Kernel::TermList arg;
+        if (!instantiateTermPattern(*patternTerm->nthArgument(i), substitution, arg)) {
+          return false;
+        }
+        args.push(arg);
+      }
+      result = pattern.term()->isSort()
+        ? Kernel::TermList(Kernel::AtomicSort::create(static_cast<Kernel::AtomicSort*>(patternTerm), args.begin()))
+        : Kernel::TermList(Kernel::Term::create(patternTerm, args.begin()));
+      return true;
+    };
+  struct DefinitionRewriteMatch {
+    std::vector<unsigned> position;
+    std::map<unsigned, Kernel::TermList> substitution;
+  };
+  auto collectTermPatternMatches = [&](auto&& self, Kernel::TermList term, Kernel::TermList pattern, std::vector<unsigned>& current, std::vector<DefinitionRewriteMatch>& matches) -> void {
+    std::map<unsigned, Kernel::TermList> substitution;
+    if (matchTermPattern(pattern, term, substitution)) {
+      matches.push_back({current, substitution});
     }
     if (term.isVar()) {
       return;
     }
     if (term.isApplication()) {
       current.push_back(0);
-      self(self, term.lhs(), needle, current, positions);
+      self(self, term.lhs(), pattern, current, matches);
       current.pop_back();
       current.push_back(1);
-      self(self, term.rhs(), needle, current, positions);
+      self(self, term.rhs(), pattern, current, matches);
       current.pop_back();
       return;
     }
     Kernel::Term* termPtr = term.term();
     for (unsigned i = 0; i < termPtr->numTermArguments(); ++i) {
       current.push_back(i);
-      self(self, termPtr->termArg(i), needle, current, positions);
+      self(self, termPtr->termArg(i), pattern, current, matches);
       current.pop_back();
     }
   };
@@ -4572,18 +4643,25 @@ bool MegalodonChecker::certificateDefinitionRewriteChainStepJson(Kernel::Unit* u
           for (unsigned argumentIndex = 0; argumentIndex < current->arity(); ++argumentIndex) {
             std::vector<unsigned> prefix;
             prefix.push_back(argumentIndex);
-            std::vector<std::vector<unsigned>> positions;
-            collectTermPositions(collectTermPositions, *current->nthArgument(argumentIndex), fromTerm, prefix, positions);
-            if (positions.empty()) {
+            std::vector<DefinitionRewriteMatch> matches;
+            collectTermPatternMatches(collectTermPatternMatches, *current->nthArgument(argumentIndex), fromTerm, prefix, matches);
+            if (matches.empty()) {
               continue;
             }
+            const DefinitionRewriteMatch& match = matches.front();
+            Kernel::TermList instantiatedFrom;
+            Kernel::TermList instantiatedTo;
+            if (!instantiateTermPattern(fromTerm, match.substitution, instantiatedFrom)
+              || !instantiateTermPattern(toTerm, match.substitution, instantiatedTo)) {
+              return false;
+            }
             Kernel::Literal* rewrittenLiteral = nullptr;
-            if (!rewriteLiteralAtPosition(current, positions.front(), toTerm, rewrittenLiteral)) {
+            if (!rewriteLiteralAtPosition(current, match.position, instantiatedTo, rewrittenLiteral)) {
               return false;
             }
             std::string from;
             std::string to;
-            if (!certificateTermJson(fromTerm, from) || !certificateTermJson(toTerm, to)) {
+            if (!certificateTermJson(instantiatedFrom, from) || !certificateTermJson(instantiatedTo, to)) {
               return false;
             }
             currentClause[literalIndex] = rewrittenLiteral;
@@ -4600,7 +4678,7 @@ bool MegalodonChecker::certificateDefinitionRewriteChainStepJson(Kernel::Unit* u
               + ",\"to\":" + to
               + ",\"parent\":" + quote("u" + std::to_string(parents[parentIndex]->number()))
               + ",\"literal\":" + std::to_string(literalIndex)
-              + ",\"position\":" + positionJson(positions.front())
+              + ",\"position\":" + positionJson(match.position)
               + ",\"clause\":" + jsonArray(intermediateLiterals)
               + "}");
             return true;
