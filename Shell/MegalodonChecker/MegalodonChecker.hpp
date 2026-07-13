@@ -145,6 +145,7 @@ private:
   bool certificateFactorStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateEqualityResolutionStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateParamodulateStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
+  bool certificateSuperpositionStepsSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   std::string certificateJsonWithStepIds(Kernel::Unit* unit, const std::string& certificateJson);
   std::string certificateFallbackSourceJson(Kernel::Unit* unit);
   void printMegalodonCertificateJson() const;
