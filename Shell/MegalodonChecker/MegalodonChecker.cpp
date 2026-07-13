@@ -9185,6 +9185,7 @@ bool MegalodonChecker::certificateNativeStepSexpr(
     || certificateDefinitionFoldingStepsSexpr(unit, result)
     || certificateFoolExhaustivenessStepSexpr(unit, result)
     || certificateFoolDistinctnessStepSexpr(unit, result)
+    || certificateBoolSimplificationStepSexpr(unit, result)
     || certificateUnitResultingResolutionStepsSexpr(unit, result)
     || certificateResolveStepSexpr(unit, result)
     || certificateSubstitutedResolutionStepsSexpr(unit, replayInfo, result)
@@ -13952,7 +13953,6 @@ bool MegalodonChecker::certificateBoolSimplificationStepJson(Kernel::Unit* unit,
     Kernel::TermList targetHead = HOL::getHeadAndArgs(target, targetArgs);
     return sourceHead == targetHead && sourceArgs.size() == targetArgs.size();
   };
-
   std::function<bool(Kernel::TermList, Kernel::TermList, std::vector<unsigned>&, Kernel::TermList&, Kernel::TermList&)> termDiff =
     [&](Kernel::TermList source, Kernel::TermList target, std::vector<unsigned>& position, Kernel::TermList& from, Kernel::TermList& to) -> bool {
       if (source == target) {
@@ -14114,6 +14114,295 @@ bool MegalodonChecker::certificateBoolSimplificationStepJson(Kernel::Unit* unit,
     "\"literal\":" + std::to_string(changedLiteral) + ","
     "\"position\":" + positionJson(position) + ","
     "\"clause\":" + clauseJson + "}";
+  return true;
+}
+
+bool MegalodonChecker::certificateBoolSimplificationStepSexpr(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause()) {
+    return false;
+  }
+
+  std::vector<Kernel::Unit*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    parents.push_back(parent);
+  }
+  if (parents.size() != 1 || !parents[0]->isClause()) {
+    return false;
+  }
+
+  Kernel::Clause* sourceClause = parents[0]->asClause();
+  Kernel::Clause* targetClause = unit->asClause();
+  if (sourceClause->length() != targetClause->length()) {
+    return false;
+  }
+
+  auto sameApplicationSpine = [](Kernel::TermList source, Kernel::TermList target) {
+    if (!source.isApplication() || !target.isApplication()) {
+      return false;
+    }
+    Kernel::TermStack sourceArgs;
+    Kernel::TermStack targetArgs;
+    Kernel::TermList sourceHead = HOL::getHeadAndArgs(source, sourceArgs);
+    Kernel::TermList targetHead = HOL::getHeadAndArgs(target, targetArgs);
+    return sourceHead == targetHead && sourceArgs.size() == targetArgs.size();
+  };
+  auto sameRenderedTerm = [&](Kernel::TermList source, Kernel::TermList target) {
+    std::string sourceSexpr;
+    std::string targetSexpr;
+    return certificateTermSexpr(source, sourceSexpr)
+      && certificateTermSexpr(target, targetSexpr)
+      && sourceSexpr == targetSexpr;
+  };
+
+  std::function<bool(Kernel::TermList, Kernel::TermList, std::vector<unsigned>&, Kernel::TermList&, Kernel::TermList&)> termDiff =
+    [&](Kernel::TermList source, Kernel::TermList target, std::vector<unsigned>& position, Kernel::TermList& from, Kernel::TermList& to) -> bool {
+      if (source == target) {
+        return false;
+      }
+      if (source.isVar()) {
+        return false;
+      }
+      if (source.isApplication() || target.isApplication()) {
+        if (!source.isApplication() || !target.isApplication() || !sameApplicationSpine(source, target)) {
+          if (Kernel::SortHelper::getResultSort(source.term()).isBoolSort()) {
+            from = source;
+            to = target;
+            return true;
+          }
+          return false;
+        }
+        std::vector<unsigned> lhsPosition;
+        Kernel::TermList lhsFrom;
+        Kernel::TermList lhsTo;
+        if (termDiff(source.lhs(), target.lhs(), lhsPosition, lhsFrom, lhsTo)) {
+          position.push_back(0);
+          position.insert(position.end(), lhsPosition.begin(), lhsPosition.end());
+          from = lhsFrom;
+          to = lhsTo;
+          return true;
+        }
+        std::vector<unsigned> rhsPosition;
+        Kernel::TermList rhsFrom;
+        Kernel::TermList rhsTo;
+        if (termDiff(source.rhs(), target.rhs(), rhsPosition, rhsFrom, rhsTo)) {
+          position.push_back(1);
+          position.insert(position.end(), rhsPosition.begin(), rhsPosition.end());
+          from = rhsFrom;
+          to = rhsTo;
+          return true;
+        }
+        if (Kernel::SortHelper::getResultSort(source.term()).isBoolSort()) {
+          from = source;
+          to = target;
+          return true;
+        }
+        return false;
+      }
+      if (target.isVar()) {
+        if (Kernel::SortHelper::getResultSort(source.term()).isBoolSort()) {
+          from = source;
+          to = target;
+          return true;
+        }
+        return false;
+      }
+      Kernel::Term* sourceTerm = source.term();
+      Kernel::Term* targetTerm = target.term();
+      if (sourceTerm->functor() != targetTerm->functor()
+        || sourceTerm->arity() != targetTerm->arity()) {
+        if (Kernel::SortHelper::getResultSort(source.term()).isBoolSort()) {
+          from = source;
+          to = target;
+          return true;
+        }
+        return false;
+      }
+      bool found = false;
+      for (unsigned i = 0; i < sourceTerm->numTermArguments(); ++i) {
+        std::vector<unsigned> childPosition;
+        Kernel::TermList childFrom;
+        Kernel::TermList childTo;
+        if (!termDiff(sourceTerm->termArg(i), targetTerm->termArg(i), childPosition, childFrom, childTo)) {
+          continue;
+        }
+        if (found) {
+          return false;
+        }
+        found = true;
+        position.push_back(i);
+        position.insert(position.end(), childPosition.begin(), childPosition.end());
+        from = childFrom;
+        to = childTo;
+      }
+      if (found) {
+        return true;
+      }
+      if (Kernel::SortHelper::getResultSort(source.term()).isBoolSort()) {
+        from = source;
+        to = target;
+        return true;
+      }
+      return false;
+    };
+
+  std::size_t changedLiteral = sourceClause->length();
+  std::vector<unsigned> position;
+  Kernel::TermList from;
+  Kernel::TermList to;
+  for (unsigned literalIndex = 0; literalIndex < sourceClause->length(); ++literalIndex) {
+    Kernel::Literal* sourceLiteral = (*sourceClause)[literalIndex];
+    Kernel::Literal* targetLiteral = (*targetClause)[literalIndex];
+    std::string sourceSexpr;
+    std::string targetSexpr;
+    if (!certificateLiteralSexpr(sourceLiteral, sourceSexpr) || !certificateLiteralSexpr(targetLiteral, targetSexpr)) {
+      return false;
+    }
+    if (sourceSexpr == targetSexpr) {
+      continue;
+    }
+    if (changedLiteral != sourceClause->length()) {
+      return false;
+    }
+    Kernel::Literal* sourcePositive = sourceLiteral->isPositive()
+      ? sourceLiteral
+      : Kernel::Literal::complementaryLiteral(sourceLiteral);
+    Kernel::Literal* targetPositive = targetLiteral->isPositive()
+      ? targetLiteral
+      : Kernel::Literal::complementaryLiteral(targetLiteral);
+    if (sourceLiteral->polarity() == targetLiteral->polarity()
+      && sourcePositive->isEquality()
+      && targetPositive->isEquality()
+      && sourcePositive->arity() == 2
+      && targetPositive->arity() == 2) {
+      int swappedChangedSide = -1;
+      std::vector<unsigned> swappedPosition;
+      Kernel::TermList swappedFrom;
+      Kernel::TermList swappedTo;
+      bool swappedMatch = true;
+      for (unsigned sourceSide = 0; sourceSide < 2; ++sourceSide) {
+        unsigned targetSide = 1 - sourceSide;
+        Kernel::TermList sourceTerm = *sourcePositive->nthArgument(sourceSide);
+        Kernel::TermList targetTerm = *targetPositive->nthArgument(targetSide);
+        if (sameRenderedTerm(sourceTerm, targetTerm)) {
+          continue;
+        }
+        std::vector<unsigned> sidePosition;
+        Kernel::TermList sideFrom;
+        Kernel::TermList sideTo;
+        if (swappedChangedSide != -1 || !termDiff(sourceTerm, targetTerm, sidePosition, sideFrom, sideTo)) {
+          swappedMatch = false;
+          break;
+        }
+        swappedChangedSide = static_cast<int>(sourceSide);
+        swappedPosition.push_back(sourceSide);
+        swappedPosition.insert(swappedPosition.end(), sidePosition.begin(), sidePosition.end());
+        swappedFrom = sideFrom;
+        swappedTo = sideTo;
+      }
+      if (swappedMatch && swappedChangedSide != -1) {
+        Kernel::TermList intermediateLeft = swappedChangedSide == 0
+          ? *targetPositive->nthArgument(1)
+          : *sourcePositive->nthArgument(0);
+        Kernel::TermList intermediateRight = swappedChangedSide == 1
+          ? *targetPositive->nthArgument(0)
+          : *sourcePositive->nthArgument(1);
+        Kernel::Literal* intermediateLiteral = Kernel::Literal::createEquality(
+          sourceLiteral->isPositive(),
+          intermediateLeft,
+          intermediateRight,
+          Kernel::SortHelper::getEqualityArgumentSort(sourcePositive));
+
+        std::ostringstream intermediateClause;
+        intermediateClause << "(clause";
+        for (unsigned i = 0; i < sourceClause->length(); ++i) {
+          std::string renderedLiteral;
+          if (!certificateLiteralSexpr(i == literalIndex ? intermediateLiteral : (*sourceClause)[i], renderedLiteral)) {
+            return false;
+          }
+          intermediateClause << ' ' << renderedLiteral;
+        }
+        intermediateClause << ')';
+
+        std::string fromSexpr;
+        std::string toSexpr;
+        std::string targetClauseSexpr;
+        if (!certificateTermSexpr(swappedFrom, fromSexpr)
+          || !certificateTermSexpr(swappedTo, toSexpr)
+          || !certificateClauseSexpr(targetClause, targetClauseSexpr)) {
+          return false;
+        }
+
+        std::string intermediateId = "u" + std::to_string(unit->number()) + "_bool_simplify0";
+        std::string stepId = intermediateClause.str() == targetClauseSexpr
+          ? "u" + std::to_string(unit->number())
+          : intermediateId;
+        result =
+          "  (bool_simplify \"" + stepId
+          + "\" (parent \"u" + std::to_string(parents[0]->number()) + "\")"
+          + " (literal " + std::to_string(literalIndex) + ") "
+          + certificatePositionSexpr(swappedPosition)
+          + " (from " + fromSexpr + ")"
+          + " (to " + toSexpr + ")"
+          + " (result " + intermediateClause.str() + "))";
+        if (stepId == intermediateId) {
+          result +=
+            "\n  (equality_symmetry \"u" + std::to_string(unit->number())
+            + "\" (parent \"" + intermediateId + "\")"
+            + " (literal " + std::to_string(literalIndex) + ")"
+            + " (result " + targetClauseSexpr + "))";
+        }
+        return true;
+      }
+    }
+    if (sourceLiteral->functor() != targetLiteral->functor()
+      || sourceLiteral->arity() != targetLiteral->arity()
+      || sourceLiteral->polarity() != targetLiteral->polarity()) {
+      return false;
+    }
+    bool found = false;
+    for (unsigned argumentIndex = 0; argumentIndex < sourceLiteral->arity(); ++argumentIndex) {
+      std::vector<unsigned> argumentPosition;
+      Kernel::TermList argumentFrom;
+      Kernel::TermList argumentTo;
+      if (!termDiff(*sourceLiteral->nthArgument(argumentIndex), *targetLiteral->nthArgument(argumentIndex), argumentPosition, argumentFrom, argumentTo)) {
+        continue;
+      }
+      if (found) {
+        return false;
+      }
+      found = true;
+      position.push_back(argumentIndex);
+      position.insert(position.end(), argumentPosition.begin(), argumentPosition.end());
+      from = argumentFrom;
+      to = argumentTo;
+    }
+    if (!found) {
+      return false;
+    }
+    changedLiteral = literalIndex;
+  }
+  if (changedLiteral == sourceClause->length()) {
+    return false;
+  }
+
+  std::string fromSexpr;
+  std::string toSexpr;
+  std::string resultClause;
+  if (!certificateTermSexpr(from, fromSexpr)
+    || !certificateTermSexpr(to, toSexpr)
+    || !certificateClauseSexpr(targetClause, resultClause)) {
+    return false;
+  }
+
+  result =
+    "  (bool_simplify \"u" + std::to_string(unit->number())
+    + "\" (parent \"u" + std::to_string(parents[0]->number()) + "\")"
+    + " (literal " + std::to_string(changedLiteral) + ") "
+    + certificatePositionSexpr(position)
+    + " (from " + fromSexpr + ")"
+    + " (to " + toSexpr + ")"
+    + " (result " + resultClause + "))";
   return true;
 }
 
