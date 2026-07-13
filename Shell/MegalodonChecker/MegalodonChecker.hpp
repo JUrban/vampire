@@ -131,6 +131,9 @@ private:
   bool appendCertificateSplitLiteralsSexpr(Kernel::Clause* clause, std::vector<std::string>& literals);
   bool appendCertificateClauseLiteralsSexpr(Kernel::Clause* clause, std::vector<std::string>& literals);
   bool certificateClauseSexpr(Kernel::Clause* clause, std::string& result);
+  bool certificateRewriteTermAtMegalodonPosition(Kernel::TermList term, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::TermList& rewritten);
+  bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, std::string& rendered);
+  std::string certificatePositionSexpr(const std::vector<unsigned>& position) const;
   bool certificateSource(Kernel::Unit* unit, std::string& result);
   bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result);
   bool certificateFormulaNativeLiteralSexpr(Kernel::Formula* formula, bool& positive, std::string& atom);
@@ -143,6 +146,7 @@ private:
   bool certificateFoolBoolStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFoolFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateEnnfFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateCnfLiteralStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateCnfFormulaClauseStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateDefinitionInputStepSexpr(Kernel::Unit* unit, std::string& result);
@@ -152,6 +156,7 @@ private:
   bool certificateSubstitutedResolutionStepsSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateFactorStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateEqualityResolutionStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
+  bool certificateTruthConflictStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateParamodulateStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateSuperpositionStepsSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   std::string certificateJsonWithStepIds(Kernel::Unit* unit, const std::string& certificateJson);
