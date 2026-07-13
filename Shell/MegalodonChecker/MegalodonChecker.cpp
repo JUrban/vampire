@@ -1046,14 +1046,22 @@ std::string MegalodonChecker::certificatePositionSexpr(const std::vector<unsigne
 
 bool MegalodonChecker::certificateSource(Kernel::Unit* unit, std::string& result)
 {
-  std::string sourceName = "u" + std::to_string(unit->number());
-  std::string axiomName;
-  if (Parse::TPTP::findAxiomName(unit, axiomName) && !axiomName.empty()) {
-    sourceName = axiomName;
-  }
+  Kernel::Unit* sourceUnit = unit;
   std::string sourceKind = "axiom";
-  if (unit->inputType() == Kernel::UnitInputType::NEGATED_CONJECTURE) {
+  if (unit->inference().rule() == Kernel::InferenceRule::NEGATED_CONJECTURE) {
     sourceKind = "negated_conjecture";
+    UnitIterator parentIterator = unit->getParents();
+    if (parentIterator.hasNext()) {
+      sourceUnit = parentIterator.next();
+    }
+  } else if (unit->inputType() == Kernel::UnitInputType::NEGATED_CONJECTURE) {
+    sourceKind = "negated_conjecture";
+  }
+
+  std::string sourceName = "u" + std::to_string(sourceUnit->number());
+  std::string axiomName;
+  if (Parse::TPTP::findAxiomName(sourceUnit, axiomName) && !axiomName.empty()) {
+    sourceName = axiomName;
   }
   result = "(source " + sourceKind + " " + sexprQuote(sourceName) + ")";
   return true;
