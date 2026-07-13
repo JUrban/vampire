@@ -6559,13 +6559,30 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
         || swappedUnitJson != selectedComplementJson) {
         return false;
       }
+      std::vector<std::string> symmetryClause;
+      bool replacedUnitLiteral = false;
+      for (Kernel::Literal* literal : unitParent->iterLits()) {
+        if (!replacedUnitLiteral && literal == unitLiteral) {
+          symmetryClause.push_back(swappedUnitJson);
+          replacedUnitLiteral = true;
+          continue;
+        }
+        std::string rendered;
+        if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, unitSubstitution, rendered)) {
+          return false;
+        }
+        symmetryClause.push_back(rendered);
+      }
+      if (!replacedUnitLiteral || !appendCertificateSplitLiteralsJson(unitParent, symmetryClause)) {
+        return false;
+      }
       std::string symmetryStepId = stepBase + "_unit_symmetry" + std::to_string(traceIndex);
       steps.push_back(
         "{\"id\":" + quote(symmetryStepId) + ","
         "\"rule\":\"equality_symmetry\","
         "\"parents\":[" + quote(unitParentId) + "],"
         "\"literal\":" + unitJson + ","
-        "\"clause\":[" + swappedUnitJson + "]}");
+        "\"clause\":" + jsonArray(symmetryClause) + "}");
       unitParentId = symmetryStepId;
       unitJson = swappedUnitJson;
     }
@@ -6929,12 +6946,8 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepsJson(Kernel::Unit
     return true;
   };
   auto normalizedActualClause = [&](std::vector<std::string>& actual) {
-    for (Kernel::Literal* literal : unit->asClause()->iterLits()) {
-      std::string rendered;
-      if (!certificateLiteralJson(literal, rendered)) {
-        return false;
-      }
-      actual.push_back(rendered);
+    if (!appendCertificateClauseLiteralsJson(unit->asClause(), actual)) {
+      return false;
     }
     std::sort(actual.begin(), actual.end());
     actual.erase(std::unique(actual.begin(), actual.end()), actual.end());
@@ -7158,6 +7171,10 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepsJson(Kernel::Unit
         if (expected.empty() && mainParent->length() > 1) {
           continue;
         }
+        if (!appendCertificateSplitLiteralsJson(mainParent, expected)
+          || !appendCertificateSplitLiteralsJson(sideParent, expected)) {
+          continue;
+        }
         normalize(expected);
         if (expected != actual) {
           continue;
@@ -7190,6 +7207,9 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepsJson(Kernel::Unit
           }
           resolvedExpected.push_back(rendered);
         }
+        if (!appendCertificateSplitLiteralsJson(mainParent, resolvedExpected)) {
+          continue;
+        }
         if (canExpandAsPrimitiveSteps) {
           for (Kernel::Literal* literal : sideParent->iterLits()) {
             std::string rendered;
@@ -7217,6 +7237,10 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepsJson(Kernel::Unit
               continue;
             }
             resolvedExpected.push_back(current);
+          }
+          if (!appendCertificateSplitLiteralsJson(sideParent, sideCurrent)
+            || !appendCertificateSplitLiteralsJson(sideParent, resolvedExpected)) {
+            canExpandAsPrimitiveSteps = false;
           }
         }
         if (canExpandAsPrimitiveSteps && skippedSidePivot) {
