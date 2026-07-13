@@ -2994,6 +2994,10 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
       return false;
     }
     const std::vector<std::string> actualNormalized = normalized(actual);
+    auto literalMultiplicity =
+      [](const std::vector<std::string>& literals, const std::string& literal) {
+        return static_cast<unsigned>(std::count(literals.begin(), literals.end(), literal));
+      };
 
     auto emitDuplicateFactors =
       [&](std::vector<std::string>& candidateSteps,
@@ -3007,6 +3011,9 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
           for (unsigned left = 0; left < current.size() && !changed; ++left) {
             for (unsigned right = left + 1; right < current.size(); ++right) {
               if (current[left] != current[right]) {
+                continue;
+              }
+              if (literalMultiplicity(current, current[left]) <= literalMultiplicity(actual, current[left])) {
                 continue;
               }
               std::vector<std::string> factored = removeAt(current, right);
