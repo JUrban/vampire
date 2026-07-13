@@ -171,6 +171,15 @@ std::string MegalodonChecker::sexprQuote(const std::string& value) const
 
 bool MegalodonChecker::certificateTypeSexpr(Kernel::TermList sort, std::string& result)
 {
+  if (sort.isArrowSort()) {
+    std::string domain;
+    std::string range;
+    if (!certificateTypeSexpr(sort.domain(), domain) || !certificateTypeSexpr(sort.result(), range)) {
+      return false;
+    }
+    result = "(AR " + domain + " " + range + ")";
+    return true;
+  }
   std::string rendered;
   if (!sortToMegalodon(sort, rendered)) {
     return false;
@@ -733,6 +742,29 @@ bool MegalodonChecker::certificateFormulaTermCopyStepSexpr(Kernel::Unit* unit, s
   return true;
 }
 
+bool MegalodonChecker::certificateRectifyFormulaStepSexpr(Kernel::Unit* unit, std::string& result)
+{
+  if (unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::RECTIFY) {
+    return false;
+  }
+  UnitIterator parentIterator = unit->getParents();
+  if (!parentIterator.hasNext()) {
+    return false;
+  }
+  Kernel::Unit* parent = parentIterator.next();
+  if (parent->isClause()) {
+    return false;
+  }
+  std::string resultFormula;
+  if (!certificateFormulaTermSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), resultFormula)) {
+    return false;
+  }
+  result = "(rectify_formula " + sexprQuote("u" + std::to_string(unit->number()))
+    + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
+    + " (result (formula " + resultFormula + ")))";
+  return true;
+}
+
 bool MegalodonChecker::certificateFoolBoolStepSexpr(Kernel::Unit* unit, std::string& result)
 {
   if (unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::FOOL_ELIMINATION) {
@@ -827,9 +859,75 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std
     return false;
   }
 
-  unsigned skolemFunctor = 0;
-  unsigned replacedVar = 0;
-  bool foundSymbol = false;
+  auto hasHeadFunctor = [&](Kernel::TermList term, unsigned skolemFunctor) {
+    while (term.isApplication()) {
+      term = term.lhs();
+    }
+    return term.isTerm() && !term.term()->isSpecial() && term.term()->functor() == skolemFunctor;
+  };
+
+  auto findTerm = [&](auto& self, Kernel::TermList term, unsigned skolemFunctor, Kernel::TermList& found) -> bool {
+    if (term.isVar()) {
+      return false;
+    }
+    if (term.isApplication()) {
+      if (hasHeadFunctor(term, skolemFunctor)) {
+        found = term;
+        return true;
+      }
+      return self(self, term.lhs(), skolemFunctor, found) || self(self, term.rhs(), skolemFunctor, found);
+    }
+    Kernel::Term* t = term.term();
+    if (t->functor() == skolemFunctor) {
+      found = term;
+      return true;
+    }
+    for (unsigned i = 0; i < t->arity(); ++i) {
+      if (self(self, *t->nthArgument(i), skolemFunctor, found)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  auto findFormulaTerm = [&](auto& self, Kernel::Formula* formula, unsigned skolemFunctor, Kernel::TermList& found) -> bool {
+    switch (formula->connective()) {
+    case Kernel::LITERAL: {
+      Kernel::Literal* literal = formula->literal();
+      for (unsigned i = 0; i < literal->arity(); ++i) {
+        if (findTerm(findTerm, *literal->nthArgument(i), skolemFunctor, found)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    case Kernel::BOOL_TERM:
+      return findTerm(findTerm, formula->getBooleanTerm(), skolemFunctor, found);
+    case Kernel::NOT:
+      return self(self, formula->uarg(), skolemFunctor, found);
+    case Kernel::IMP:
+    case Kernel::IFF:
+    case Kernel::XOR:
+      return self(self, formula->left(), skolemFunctor, found) || self(self, formula->right(), skolemFunctor, found);
+    case Kernel::AND:
+    case Kernel::OR: {
+      auto iterator = formula->args()->iter();
+      while (iterator.hasNext()) {
+        if (self(self, iterator.next(), skolemFunctor, found)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    case Kernel::FORALL:
+    case Kernel::EXISTS:
+      return self(self, formula->qarg(), skolemFunctor, found);
+    default:
+      return false;
+    }
+  };
+
+  std::vector<std::pair<unsigned, std::string>> bindings;
   for (auto symbol : iterTraits(Kernel::InferenceStore::SymbolStack::ConstIterator(_is->getIntroducedSymbols(unit)))) {
     if (symbol.first != Kernel::SymbolType::FUNC) {
       continue;
@@ -838,97 +936,40 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std
     if (var < 0) {
       continue;
     }
-    skolemFunctor = symbol.second;
-    replacedVar = static_cast<unsigned>(var);
-    foundSymbol = true;
-    break;
+    Kernel::TermList skolemTerm;
+    if (!findFormulaTerm(findFormulaTerm, static_cast<Kernel::FormulaUnit*>(unit)->formula(), symbol.second, skolemTerm)) {
+      return false;
+    }
+    std::string skolemTermSexpr;
+    if (!certificateTermSexpr(skolemTerm, skolemTermSexpr)) {
+      return false;
+    }
+    bindings.push_back({static_cast<unsigned>(var), skolemTermSexpr});
   }
-  if (!foundSymbol) {
+  if (bindings.empty()) {
     return false;
   }
+  std::sort(bindings.begin(), bindings.end(), [](const auto& left, const auto& right) {
+    return left.first < right.first;
+  });
 
-  auto hasHeadFunctor = [&](Kernel::TermList term) {
-    while (term.isApplication()) {
-      term = term.lhs();
-    }
-    return term.isTerm() && !term.term()->isSpecial() && term.term()->functor() == skolemFunctor;
-  };
-
-  auto findTerm = [&](auto& self, Kernel::TermList term, Kernel::TermList& found) -> bool {
-    if (term.isVar()) {
-      return false;
-    }
-    if (term.isApplication()) {
-      if (hasHeadFunctor(term)) {
-        found = term;
-        return true;
-      }
-      return self(self, term.lhs(), found) || self(self, term.rhs(), found);
-    }
-    Kernel::Term* t = term.term();
-    if (t->functor() == skolemFunctor) {
-      found = term;
-      return true;
-    }
-    for (unsigned i = 0; i < t->arity(); ++i) {
-      if (self(self, *t->nthArgument(i), found)) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  auto findFormulaTerm = [&](auto& self, Kernel::Formula* formula, Kernel::TermList& found) -> bool {
-    switch (formula->connective()) {
-    case Kernel::LITERAL: {
-      Kernel::Literal* literal = formula->literal();
-      for (unsigned i = 0; i < literal->arity(); ++i) {
-        if (findTerm(findTerm, *literal->nthArgument(i), found)) {
-          return true;
-        }
-      }
-      return false;
-    }
-    case Kernel::BOOL_TERM:
-      return findTerm(findTerm, formula->getBooleanTerm(), found);
-    case Kernel::NOT:
-      return self(self, formula->uarg(), found);
-    case Kernel::IMP:
-    case Kernel::IFF:
-    case Kernel::XOR:
-      return self(self, formula->left(), found) || self(self, formula->right(), found);
-    case Kernel::AND:
-    case Kernel::OR: {
-      auto iterator = formula->args()->iter();
-      while (iterator.hasNext()) {
-        if (self(self, iterator.next(), found)) {
-          return true;
-        }
-      }
-      return false;
-    }
-    case Kernel::FORALL:
-    case Kernel::EXISTS:
-      return self(self, formula->qarg(), found);
-    default:
-      return false;
-    }
-  };
-
-  Kernel::TermList skolemTerm;
-  if (!findFormulaTerm(findFormulaTerm, static_cast<Kernel::FormulaUnit*>(unit)->formula(), skolemTerm)) {
-    return false;
+  std::string subst = "(subst";
+  for (const auto& binding : bindings) {
+    subst += " (" + sexprQuote(variableName(binding.first)) + " " + binding.second + ")";
   }
-  std::string skolemTermSexpr;
+  subst += ")";
+
   std::string resultFormula;
-  if (!certificateTermSexpr(skolemTerm, skolemTermSexpr)
-    || !certificateFormulaTermSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), resultFormula)) {
-    return false;
+  if (!certificateFormulaTermSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), resultFormula)) {
+    result = "(skolem_formula_computed " + sexprQuote("u" + std::to_string(unit->number()))
+      + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
+      + " " + subst + ")";
+    return true;
   }
 
   result = "(skolem_formula " + sexprQuote("u" + std::to_string(unit->number()))
     + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
-    + " (subst (" + sexprQuote(variableName(replacedVar)) + " " + skolemTermSexpr + "))"
+    + " " + subst
     + " (result (formula " + resultFormula + ")))";
   return true;
 }
@@ -3168,6 +3209,7 @@ bool MegalodonChecker::certificateNativeStepSexpr(
   return certificateInputStepSexpr(unit, result)
     || certificateFormulaInputStepSexpr(unit, result)
     || certificateFormulaTermInputStepSexpr(unit, result)
+    || certificateRectifyFormulaStepSexpr(unit, result)
     || certificateFormulaCopyStepSexpr(unit, result)
     || certificateFormulaTermCopyStepSexpr(unit, result)
     || certificateFoolBoolStepSexpr(unit, result)

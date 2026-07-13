@@ -143,6 +143,7 @@ private:
   bool certificateFormulaTermInputStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFormulaCopyStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFormulaTermCopyStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateRectifyFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFoolBoolStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFoolFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateEnnfFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
