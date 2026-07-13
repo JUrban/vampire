@@ -6348,7 +6348,10 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
 
 bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit* unit, std::string& result)
 {
-  auto fail = [&](const char*) {
+  auto fail = [&](const char* reason) {
+    if (std::getenv("MEGALODON_CERT_DEBUG")) {
+      std::cerr << "megalodon URR certificate failed for u" << unit->number() << ": " << reason << std::endl;
+    }
     return false;
   };
   if (!unit->isClause()
@@ -6791,24 +6794,42 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
 
     std::vector<Kernel::Clause*> nextSplitSources = splitSources;
     nextSplitSources.push_back(unitParent);
-    std::vector<std::string> nextCurrentClause;
-    for (Kernel::Literal* literal : trace.remainingAfter) {
-      std::string rendered;
-      if (!certificateLiteralJson(literal, rendered)) {
-        return fail("post-resolve remaining literal render failed");
-      }
-      nextCurrentClause.push_back(rendered);
-    }
-    for (Kernel::Clause* splitSource : nextSplitSources) {
-      if (!appendCertificateSplitLiteralsJson(splitSource, nextCurrentClause)) {
-        return fail("post-resolve remaining split append failed");
-      }
-    }
-    normalizeJsonClause(nextCurrentClause);
-
     auto selectedIt = std::find(currentClause.begin(), currentClause.end(), selectedJson);
     if (selectedIt == currentClause.end()) {
       return fail("selected literal missing from current clause");
+    }
+    std::vector<std::string> nextCurrentClause = currentClause;
+    nextCurrentClause.erase(nextCurrentClause.begin() + std::distance(currentClause.begin(), selectedIt));
+    if (!appendCertificateSplitLiteralsJson(unitParent, nextCurrentClause)) {
+      return fail("post-resolve split append failed");
+    }
+    normalizeJsonClause(nextCurrentClause);
+
+    std::vector<Kernel::Literal*> nextCurrentLiterals;
+    bool removedSelectedLiteral = false;
+    for (Kernel::Literal* literal : currentLiterals) {
+      if (!removedSelectedLiteral) {
+        std::string rendered;
+        if (!certificateLiteralJson(literal, rendered)) {
+          return fail("post-resolve current literal render failed");
+        }
+        bool matchesSelected = rendered == selectedJson;
+        if (!matchesSelected && literal->isEquality()) {
+          std::string swapped;
+          if (!certificateSubstitutedEqualityLiteralJson(literal, Kernel::Substitution(), true, swapped)) {
+            return fail("post-resolve current literal symmetry render failed");
+          }
+          matchesSelected = swapped == selectedJson;
+        }
+        if (matchesSelected) {
+          removedSelectedLiteral = true;
+          continue;
+        }
+      }
+      nextCurrentLiterals.push_back(literal);
+    }
+    if (!removedSelectedLiteral) {
+      return fail("selected literal missing from current literal state");
     }
     std::string resolveStepId = stepBase + "_resolve" + std::to_string(traceIndex);
     steps.push_back(
@@ -6819,7 +6840,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
       "\"clause\":" + jsonArray(nextCurrentClause) + "}");
     currentStepId = resolveStepId;
 
-    currentLiterals = trace.remainingAfter;
+    currentLiterals = nextCurrentLiterals;
     currentClause = nextCurrentClause;
     splitSources = nextSplitSources;
   }
