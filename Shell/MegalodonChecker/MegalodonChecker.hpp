@@ -116,6 +116,8 @@ private:
   std::string variableName(unsigned var) const;
   std::string parenthesize(const std::string& value) const;
   std::string quote(const std::string& value) const;
+  std::string certificateJsonWithStepIds(Kernel::Unit* unit, const std::string& certificateJson);
+  void printMegalodonCertificateJson() const;
   std::string parents(Kernel::Unit* u) const;
   std::string unitKind(Kernel::Unit* u) const;
   std::string replayKind(const Kernel::InferenceRule& rule) const;
@@ -142,6 +144,7 @@ private:
   bool _renderingReplayExtra = false;
   unsigned _proofSearchCalls = 0;
   unsigned _renderDepth = 0;
+  std::vector<std::string> _certificateSteps;
 };
 
 } // namespace Shell
