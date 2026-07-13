@@ -1049,10 +1049,13 @@ bool MegalodonChecker::certificateSource(Kernel::Unit* unit, std::string& result
   Kernel::Unit* sourceUnit = unit;
   std::string sourceKind = "axiom";
   if (unit->inference().rule() == Kernel::InferenceRule::NEGATED_CONJECTURE) {
-    sourceKind = "negated_conjecture";
     UnitIterator parentIterator = unit->getParents();
     if (parentIterator.hasNext()) {
       sourceUnit = parentIterator.next();
+    }
+    if (sourceUnit->inputType() == Kernel::UnitInputType::CONJECTURE
+      || sourceUnit->inputType() == Kernel::UnitInputType::NEGATED_CONJECTURE) {
+      sourceKind = "negated_conjecture";
     }
   } else if (unit->inputType() == Kernel::UnitInputType::NEGATED_CONJECTURE) {
     sourceKind = "negated_conjecture";
