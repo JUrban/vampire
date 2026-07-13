@@ -122,9 +122,25 @@ private:
   std::string variableName(unsigned var) const;
   std::string parenthesize(const std::string& value) const;
   std::string quote(const std::string& value) const;
+  std::string sexprQuote(const std::string& value) const;
+  bool certificateTermSexpr(Kernel::TermList term, std::string& result);
+  bool certificateAtomSexpr(Kernel::Literal* literal, std::string& result);
+  bool certificateLiteralSexpr(Kernel::Literal* literal, std::string& result);
+  bool certificateSplitLiteralSexpr(unsigned split, std::string& result);
+  bool appendCertificateSplitLiteralsSexpr(Kernel::Clause* clause, std::vector<std::string>& literals);
+  bool appendCertificateClauseLiteralsSexpr(Kernel::Clause* clause, std::vector<std::string>& literals);
+  bool certificateClauseSexpr(Kernel::Clause* clause, std::string& result);
+  bool certificateInputStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateNativeStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
+  bool certificateResolveStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateSubstitutedResolutionStepsSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
+  bool certificateFactorStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateEqualityResolutionStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
+  bool certificateParamodulateStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   std::string certificateJsonWithStepIds(Kernel::Unit* unit, const std::string& certificateJson);
   std::string certificateFallbackSourceJson(Kernel::Unit* unit);
   void printMegalodonCertificateJson() const;
+  void printMegalodonCertificateNativeSexpr() const;
   std::string parents(Kernel::Unit* u) const;
   std::string unitKind(Kernel::Unit* u) const;
   std::string replayKind(const Kernel::InferenceRule& rule) const;
@@ -152,6 +168,7 @@ private:
   unsigned _proofSearchCalls = 0;
   unsigned _renderDepth = 0;
   std::vector<std::string> _certificateSteps;
+  std::vector<std::string> _certificateNativeSteps;
 };
 
 } // namespace Shell
