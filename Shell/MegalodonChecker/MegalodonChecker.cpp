@@ -2070,6 +2070,90 @@ std::string MegalodonChecker::parents(Kernel::Unit* u) const
   return out.str();
 }
 
+std::string MegalodonChecker::certificateFallbackSourceJson(Kernel::Unit* u)
+{
+  Kernel::InferenceRule rule = u->inference().rule();
+  bool hasParents = u->getParents().hasNext();
+  std::string sourceKind = hasParents ? "vampire_unexpanded_derived_clause" : "vampire_input_clause";
+  switch (rule) {
+    case Kernel::InferenceRule::CLAUSIFY:
+      sourceKind = "vampire_cnf_clause";
+      break;
+    case Kernel::InferenceRule::AVATAR_COMPONENT:
+      sourceKind = "vampire_avatar_component_clause";
+      break;
+    case Kernel::InferenceRule::SKOLEMIZE:
+      sourceKind = "vampire_skolemized_formula";
+      break;
+    default:
+      break;
+  }
+
+  std::ostringstream source;
+  source << "{\"kind\":" << quote(sourceKind)
+         << ",\"name\":" << quote("u" + std::to_string(u->number()))
+         << ",\"vampire_rule\":" << quote(Kernel::ruleName(rule))
+         << ",\"replay_kind\":" << quote(replayKind(rule))
+         << ",\"target_unit_kind\":" << quote(unitKind(u))
+         << ",\"vampire_parents\":[";
+
+  bool firstParent = true;
+  for (Kernel::Unit* parent : iterTraits(u->getParents())) {
+    if (!firstParent) {
+      source << ',';
+    }
+    firstParent = false;
+    source << quote("u" + std::to_string(parent->number()));
+  }
+  source << "],\"vampire_clause_parents\":[";
+
+  bool firstClauseParent = true;
+  for (Kernel::Unit* parent : iterTraits(u->getParents())) {
+    if (!parent->isClause()) {
+      continue;
+    }
+    if (!firstClauseParent) {
+      source << ',';
+    }
+    firstClauseParent = false;
+    source << quote("u" + std::to_string(parent->number()));
+  }
+  source << "]";
+
+  if (u->isClause()) {
+    std::string targetClause;
+    if (certificateClauseJson(u->asClause(), targetClause)) {
+      source << ",\"target_clause\":" << targetClause;
+    }
+  }
+
+  if (rule == Kernel::InferenceRule::CLAUSIFY && u->isClause()) {
+    source << ",\"cnf\":{\"rule\":" << quote(Kernel::ruleName(rule));
+    UnitIterator parentIterator = u->getParents();
+    if (parentIterator.hasNext()) {
+      Kernel::Unit* parent = parentIterator.next();
+      source << ",\"parent\":" << quote("u" + std::to_string(parent->number()))
+             << ",\"parent_kind\":" << quote(unitKind(parent));
+      const auto* parentExtra = env.proofExtra.find(parent);
+      if (parentExtra != nullptr) {
+        const auto* cnfExtra = static_cast<const Inferences::CNFTransformationInferenceExtra*>(parentExtra);
+        source << ",\"parent_clause_count\":" << cnfExtra->number;
+      }
+    }
+    const auto* extra = env.proofExtra.find(u);
+    if (extra != nullptr) {
+      const auto* clauseExtra = static_cast<const Inferences::CNFClauseInferenceExtra*>(extra);
+      source << ",\"clause_parent_unit\":" << quote("u" + std::to_string(clauseExtra->parentNumber))
+             << ",\"clause_index\":" << clauseExtra->index
+             << ",\"clause_count\":" << clauseExtra->count;
+    }
+    source << "}";
+  }
+
+  source << "}";
+  return source.str();
+}
+
 std::string MegalodonChecker::unitKind(Kernel::Unit* u) const
 {
   return u->isClause() ? "clause" : "formula";
@@ -10517,23 +10601,7 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
     if (!emittedCertificate) {
       std::ostringstream fallback;
       fallback << "{\"rule\":\"input\","
-               << "\"source\":{\"kind\":\""
-               << (parents(u) == "[]" ? "vampire_input_clause" : "vampire_unexpanded_derived_clause")
-               << "\",\"name\":" << quote("u" + std::to_string(u->number()))
-               << ",\"vampire_rule\":" << quote(Kernel::ruleName(rule))
-               << ",\"vampire_parents\":[";
-      bool firstParent = true;
-      for (Kernel::Unit* parent : iterTraits(u->getParents())) {
-        if (!parent->isClause()) {
-          continue;
-        }
-        if (!firstParent) {
-          fallback << ',';
-        }
-        firstParent = false;
-        fallback << quote("u" + std::to_string(parent->number()));
-      }
-      fallback << "]}}";
+               << "\"source\":" << certificateFallbackSourceJson(u) << "}";
       std::string fallbackStep = certificateJsonWithStepIds(u, fallback.str());
       if (fallbackStep.find("\"clause\"") != std::string::npos) {
         _certificateSteps.push_back(fallbackStep);

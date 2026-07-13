@@ -121,6 +121,7 @@ private:
   std::string parenthesize(const std::string& value) const;
   std::string quote(const std::string& value) const;
   std::string certificateJsonWithStepIds(Kernel::Unit* unit, const std::string& certificateJson);
+  std::string certificateFallbackSourceJson(Kernel::Unit* unit);
   void printMegalodonCertificateJson() const;
   std::string parents(Kernel::Unit* u) const;
   std::string unitKind(Kernel::Unit* u) const;
