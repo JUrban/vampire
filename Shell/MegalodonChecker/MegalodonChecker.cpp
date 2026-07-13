@@ -4408,15 +4408,11 @@ bool MegalodonChecker::certificateAvatarRefutationStepJson(Kernel::Unit* unit, s
 bool MegalodonChecker::certificateDefinitionRewriteChainStepJson(Kernel::Unit* unit, std::string& result)
 {
   if (!unit->isClause()
-    || unit->inference().rule() != Kernel::InferenceRule::DEFINITION_FOLDING_TWEE) {
-    return false;
-  }
-  const auto* extra = env.proofExtra.find(unit);
-  if (extra == nullptr) {
-    return false;
-  }
-  const auto* foldingExtra = static_cast<const TweeDefinitionFoldingExtra*>(extra);
-  if (foldingExtra->steps.empty()) {
+    || (
+      unit->inference().rule() != Kernel::InferenceRule::DEFINITION_FOLDING_TWEE
+      && unit->inference().rule() != Kernel::InferenceRule::DEFINITION_UNFOLDING
+      && unit->inference().rule() != Kernel::InferenceRule::PREDICATE_DEFINITION_UNFOLDING
+    )) {
     return false;
   }
 
@@ -4428,6 +4424,7 @@ bool MegalodonChecker::certificateDefinitionRewriteChainStepJson(Kernel::Unit* u
     return false;
   }
 
+  const auto* extra = env.proofExtra.find(unit);
   auto jsonArray = [](const std::vector<std::string>& items) {
     std::ostringstream out;
     out << '[';
@@ -4441,40 +4438,80 @@ bool MegalodonChecker::certificateDefinitionRewriteChainStepJson(Kernel::Unit* u
     return out.str();
   };
 
+  auto appendEqualityDefinitionRewrite = [&](Kernel::Clause* definitionParent, std::size_t parentIndex, std::vector<std::string>& rewrites) {
+    for (Kernel::Literal* literal : definitionParent->iterLits()) {
+      if (!literal->isEquality() || !literal->isPositive() || literal->arity() != 2) {
+        continue;
+      }
+      std::string from;
+      std::string to;
+      if (!certificateTermJson(*literal->nthArgument(0), from)
+        || !certificateTermJson(*literal->nthArgument(1), to)) {
+        return false;
+      }
+      rewrites.push_back(
+        "{\"from\":" + from
+        + ",\"to\":" + to
+        + ",\"parent\":" + quote("u" + std::to_string(parents[parentIndex]->number()))
+        + "}");
+      return true;
+    }
+    return false;
+  };
+
   std::vector<std::string> parentIds;
   for (Kernel::Unit* parent : parents) {
     parentIds.push_back(quote("u" + std::to_string(parent->number())));
   }
 
   std::vector<std::string> rewrites;
-  for (std::size_t stepIndex = 0; stepIndex < foldingExtra->steps.size(); ++stepIndex) {
-    const auto& step = foldingExtra->steps[stepIndex];
-    std::string lhs;
-    std::string rhs;
-    if (!certificateTermJson(step.from, lhs) || !certificateTermJson(step.to, rhs)) {
+  if (unit->inference().rule() == Kernel::InferenceRule::DEFINITION_FOLDING_TWEE) {
+    if (extra == nullptr) {
       return false;
     }
-    std::ostringstream position;
-    position << '[';
-    for (std::size_t positionIndex = 0; positionIndex < step.position.size(); ++positionIndex) {
-      if (positionIndex) {
-        position << ',';
+    const auto* foldingExtra = static_cast<const TweeDefinitionFoldingExtra*>(extra);
+    if (foldingExtra->steps.empty()) {
+      return false;
+    }
+    for (std::size_t stepIndex = 0; stepIndex < foldingExtra->steps.size(); ++stepIndex) {
+      const auto& step = foldingExtra->steps[stepIndex];
+      std::string lhs;
+      std::string rhs;
+      if (!certificateTermJson(step.from, lhs) || !certificateTermJson(step.to, rhs)) {
+        return false;
       }
-      position << step.position[positionIndex];
+      std::ostringstream position;
+      position << '[';
+      for (std::size_t positionIndex = 0; positionIndex < step.position.size(); ++positionIndex) {
+        if (positionIndex) {
+          position << ',';
+        }
+        position << step.position[positionIndex];
+      }
+      position << ']';
+      std::string parentField;
+      if (parents.size() == foldingExtra->steps.size() + 1) {
+        std::size_t parentIndex = parents.size() - 1 - stepIndex;
+        parentField = ",\"parent\":" + quote("u" + std::to_string(parents[parentIndex]->number()));
+      }
+      rewrites.push_back(
+        "{\"from\":" + lhs
+        + ",\"to\":" + rhs
+        + parentField
+        + ",\"literal\":" + std::to_string(step.literal)
+        + ",\"position\":" + position.str()
+        + "}");
     }
-    position << ']';
-    std::string parentField;
-    if (parents.size() == foldingExtra->steps.size() + 1) {
-      std::size_t parentIndex = parents.size() - 1 - stepIndex;
-      parentField = ",\"parent\":" + quote("u" + std::to_string(parents[parentIndex]->number()));
+  } else {
+    for (std::size_t parentIndex = 1; parentIndex < parents.size(); ++parentIndex) {
+      if (!parents[parentIndex]->isClause()
+        || !appendEqualityDefinitionRewrite(parents[parentIndex]->asClause(), parentIndex, rewrites)) {
+        return false;
+      }
     }
-    rewrites.push_back(
-      "{\"from\":" + lhs
-      + ",\"to\":" + rhs
-      + parentField
-      + ",\"literal\":" + std::to_string(step.literal)
-      + ",\"position\":" + position.str()
-      + "}");
+  }
+  if (rewrites.empty()) {
+    return false;
   }
 
   std::string sourceClause;
