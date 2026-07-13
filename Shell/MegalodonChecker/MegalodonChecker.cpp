@@ -3374,17 +3374,16 @@ bool MegalodonChecker::certificateEqualityResolutionStepJson(
     if (!foundSelected) {
       return false;
     }
+    if (!appendCertificateSplitLiteralsJson(parent, expected)) {
+      return false;
+    }
     std::sort(expected.begin(), expected.end());
     expected.erase(std::unique(expected.begin(), expected.end()), expected.end());
     return true;
   };
   auto normalizedActualClause = [&](std::vector<std::string>& actual) {
-    for (Kernel::Literal* literal : unit->asClause()->iterLits()) {
-      std::string rendered;
-      if (!certificateLiteralJson(literal, rendered)) {
-        return false;
-      }
-      actual.push_back(rendered);
+    if (!appendCertificateClauseLiteralsJson(unit->asClause(), actual)) {
+      return false;
     }
     std::sort(actual.begin(), actual.end());
     actual.erase(std::unique(actual.begin(), actual.end()), actual.end());
