@@ -123,6 +123,7 @@ private:
   std::string parenthesize(const std::string& value) const;
   std::string quote(const std::string& value) const;
   std::string sexprQuote(const std::string& value) const;
+  bool certificateTypeSexpr(Kernel::TermList sort, std::string& result);
   bool certificateTermSexpr(Kernel::TermList term, std::string& result);
   bool certificateAtomSexpr(Kernel::Literal* literal, std::string& result);
   bool certificateLiteralSexpr(Kernel::Literal* literal, std::string& result);
@@ -131,13 +132,19 @@ private:
   bool appendCertificateClauseLiteralsSexpr(Kernel::Clause* clause, std::vector<std::string>& literals);
   bool certificateClauseSexpr(Kernel::Clause* clause, std::string& result);
   bool certificateSource(Kernel::Unit* unit, std::string& result);
+  bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result);
   bool certificateFormulaNativeLiteralSexpr(Kernel::Formula* formula, bool& positive, std::string& atom);
   bool certificateFormulaNativeLiteralSexpr(Kernel::Formula* formula, std::string& result);
   bool certificateInputStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFormulaInputStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateFormulaTermInputStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFormulaCopyStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateFormulaTermCopyStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFoolBoolStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateFoolFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateEnnfFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateCnfLiteralStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateCnfFormulaClauseStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateDefinitionInputStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFoolExhaustivenessStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateNativeStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
