@@ -498,6 +498,20 @@ bool MegalodonChecker::certificateDefinitionInputStepSexpr(Kernel::Unit* unit, s
   return true;
 }
 
+bool MegalodonChecker::certificateFoolExhaustivenessStepSexpr(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::FOOL_AXIOM_ALL_IS_TRUE_OR_FALSE) {
+    return false;
+  }
+  std::string clause;
+  if (!certificateClauseSexpr(unit->asClause(), clause)) {
+    return false;
+  }
+  result = "(fool_exhaustiveness " + sexprQuote("u" + std::to_string(unit->number()))
+    + " (result " + clause + "))";
+  return true;
+}
+
 bool MegalodonChecker::certificateResolveStepSexpr(Kernel::Unit* unit, std::string& result)
 {
   const Kernel::InferenceRule& rule = unit->inference().rule();
@@ -1325,10 +1339,22 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
   auto substitutedClauseLiterals = [&](Kernel::Clause* clause, const Kernel::Substitution& substitution, std::vector<std::string>& literals) {
     literals.clear();
     for (Kernel::Literal* literal : clause->iterLits()) {
-      Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
       std::string rendered;
-      if (!certificateLiteralSexpr(substituted, rendered)) {
-        return false;
+      if (literal->isEquality()) {
+        std::string lhs;
+        std::string rhs;
+        Kernel::TermList lhsTerm = Kernel::SubstHelper::apply(*literal->nthArgument(0), substitution);
+        Kernel::TermList rhsTerm = Kernel::SubstHelper::apply(*literal->nthArgument(1), substitution);
+        if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
+          return false;
+        }
+        rendered = std::string("(") + (literal->isPositive() ? "pos " : "neg ")
+          + "(AP (AP (TMH \"=\") " + lhs + ") " + rhs + "))";
+      } else {
+        Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
+        if (!certificateLiteralSexpr(substituted, rendered)) {
+          return false;
+        }
       }
       literals.push_back(rendered);
     }
@@ -1605,6 +1631,7 @@ bool MegalodonChecker::certificateNativeStepSexpr(
     || certificateFoolBoolStepSexpr(unit, result)
     || certificateCnfLiteralStepSexpr(unit, result)
     || certificateDefinitionInputStepSexpr(unit, result)
+    || certificateFoolExhaustivenessStepSexpr(unit, result)
     || certificateSubstitutedResolutionStepsSexpr(unit, replayInfo, result)
     || certificateResolveStepSexpr(unit, result)
     || certificateFactorStepSexpr(unit, result)
@@ -12899,7 +12926,6 @@ void MegalodonChecker::print()
   printMegalodonSymbolDeclarations();
   printMegalodonSourceCandidate();
   printMegalodonClaimSkeleton();
-  printMegalodonCertificateJson();
   printMegalodonCertificateNativeSexpr();
   out << "megalodon_final_step(" << (*proof.rbegin())->number() << ").\n";
   out << "megalodon_reconstruction_end.\n";

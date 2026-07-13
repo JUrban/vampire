@@ -139,6 +139,7 @@ private:
   bool certificateFoolBoolStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateCnfLiteralStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateDefinitionInputStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateFoolExhaustivenessStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateNativeStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateResolveStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateSubstitutedResolutionStepsSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);

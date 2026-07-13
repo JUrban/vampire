@@ -29,7 +29,7 @@ export:
 - duplicate deletion -> factoring,
 - empty-clause detection -> contradiction.
 
-The first JSON certificate version should contain only:
+The first native S-expression certificate version should contain only:
 
 - `input`,
 - `rename`,
@@ -63,24 +63,32 @@ state, or library-specific Megalodon names.
 
 ## Current Export Checkpoint
 
-The `vampire/megalodon1` branch now emits a transitional
-`megalodon_certificate_clause(step,[...]).` record for every first-order clause
-whose literals can be rendered in the structured JSON term format used by the
-Megalodon importer:
+The old JSON/rich-export path is a diagnostic prototype only. It should not be
+printed as part of the default `--proof megalodon` artifact and it must not be
+used for counted proof reconstruction.
+
+The current branch emits a native S-expression block:
 
 ```text
-{"var":"X0"}
-{"const":"a"}
-{"app":"f","args":[...]}
-{"polarity":true,"atom":{"pred":"p","args":[...]}}
-{"polarity":false,"atom":{"eq":[...,...]}}
+megalodon_certificate_native_sexpr_start.
+(certificate vampire-megalodon 1 ...)
+megalodon_certificate_native_sexpr_end.
 ```
 
-This is not yet the full certificate object: rule constructors, pivots,
-substitutions, positions, and source-map references still have to be emitted as
-versioned JSON steps. The point of this checkpoint is to stop relying only on
-Megalodon proof-script strings and to make Vampire expose the same structured
-clause representation that the new Megalodon-side certificate checker consumes.
+Literals use Megalodon's S-expression term syntax, for example:
+
+```text
+(TMH "X0")
+(TMH "a")
+(AP (TMH "f") (TMH "a"))
+(pos (AP (TMH "p") (TMH "a")))
+(neg (AP (AP (TMH "=") (TMH "a")) (TMH "b")))
+```
+
+Every promoted rule constructor must be emitted directly by Vampire in this
+native format and checked by the Megalodon OCaml importer. Python and JSON may
+still be used for corpus statistics or experiments, but not for accepted proof
+reconstruction.
 
 ## Non-Goals
 
