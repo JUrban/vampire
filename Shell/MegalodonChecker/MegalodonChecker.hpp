@@ -70,6 +70,7 @@ private:
   bool certificateCondensationStepsJson(Kernel::Unit* unit, std::string& result);
   bool certificateAvatarRefutationStepJson(Kernel::Unit* unit, std::string& result);
   bool certificateDefinitionRewriteChainStepJson(Kernel::Unit* unit, std::string& result);
+  bool certificateBoolSimplificationStepJson(Kernel::Unit* unit, std::string& result);
   bool certificateInequalitySplittingStepJson(Kernel::Unit* unit, std::string& result);
   bool certificateSuperpositionStepsJson(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool signedNameToMegalodon(const std::string& name, std::string& result);

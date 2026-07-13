@@ -4802,6 +4802,214 @@ bool MegalodonChecker::certificateDefinitionRewriteChainStepJson(Kernel::Unit* u
   return true;
 }
 
+bool MegalodonChecker::certificateBoolSimplificationStepJson(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::BOOL_SIMP) {
+    return false;
+  }
+
+  std::vector<Kernel::Unit*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    parents.push_back(parent);
+  }
+  if (parents.size() != 1 || !parents[0]->isClause()) {
+    return false;
+  }
+
+  Kernel::Clause* sourceClause = parents[0]->asClause();
+  Kernel::Clause* targetClause = unit->asClause();
+  if (sourceClause->length() != targetClause->length()) {
+    return false;
+  }
+
+  auto positionJson = [](const std::vector<unsigned>& position) {
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t i = 0; i < position.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << position[i];
+    }
+    out << ']';
+    return out.str();
+  };
+
+  auto sameApplicationSpine = [](Kernel::TermList source, Kernel::TermList target) {
+    if (!source.isApplication() || !target.isApplication()) {
+      return false;
+    }
+    Kernel::TermStack sourceArgs;
+    Kernel::TermStack targetArgs;
+    Kernel::TermList sourceHead = HOL::getHeadAndArgs(source, sourceArgs);
+    Kernel::TermList targetHead = HOL::getHeadAndArgs(target, targetArgs);
+    return sourceHead == targetHead && sourceArgs.size() == targetArgs.size();
+  };
+
+  std::function<bool(Kernel::TermList, Kernel::TermList, std::vector<unsigned>&, Kernel::TermList&, Kernel::TermList&)> termDiff =
+    [&](Kernel::TermList source, Kernel::TermList target, std::vector<unsigned>& position, Kernel::TermList& from, Kernel::TermList& to) -> bool {
+      if (source == target) {
+        return false;
+      }
+      if (source.isVar()) {
+        return false;
+      }
+      if (source.isApplication() || target.isApplication()) {
+        if (!source.isApplication() || !target.isApplication() || !sameApplicationSpine(source, target)) {
+          if (Kernel::SortHelper::getResultSort(source.term()).isBoolSort()) {
+            from = source;
+            to = target;
+            return true;
+          }
+          return false;
+        }
+        std::vector<unsigned> lhsPosition;
+        Kernel::TermList lhsFrom;
+        Kernel::TermList lhsTo;
+        if (termDiff(source.lhs(), target.lhs(), lhsPosition, lhsFrom, lhsTo)) {
+          position.push_back(0);
+          position.insert(position.end(), lhsPosition.begin(), lhsPosition.end());
+          from = lhsFrom;
+          to = lhsTo;
+          return true;
+        }
+        std::vector<unsigned> rhsPosition;
+        Kernel::TermList rhsFrom;
+        Kernel::TermList rhsTo;
+        if (termDiff(source.rhs(), target.rhs(), rhsPosition, rhsFrom, rhsTo)) {
+          position.push_back(1);
+          position.insert(position.end(), rhsPosition.begin(), rhsPosition.end());
+          from = rhsFrom;
+          to = rhsTo;
+          return true;
+        }
+        if (Kernel::SortHelper::getResultSort(source.term()).isBoolSort()) {
+          from = source;
+          to = target;
+          return true;
+        }
+        return false;
+      }
+      if (target.isVar()) {
+        if (Kernel::SortHelper::getResultSort(source.term()).isBoolSort()) {
+          from = source;
+          to = target;
+          return true;
+        }
+        return false;
+      }
+      Kernel::Term* sourceTerm = source.term();
+      Kernel::Term* targetTerm = target.term();
+      if (sourceTerm->functor() != targetTerm->functor()
+        || sourceTerm->arity() != targetTerm->arity()) {
+        if (Kernel::SortHelper::getResultSort(source.term()).isBoolSort()) {
+          from = source;
+          to = target;
+          return true;
+        }
+        return false;
+      }
+      bool found = false;
+      for (unsigned i = 0; i < sourceTerm->numTermArguments(); ++i) {
+        std::vector<unsigned> childPosition;
+        Kernel::TermList childFrom;
+        Kernel::TermList childTo;
+        if (!termDiff(sourceTerm->termArg(i), targetTerm->termArg(i), childPosition, childFrom, childTo)) {
+          continue;
+        }
+        if (found) {
+          return false;
+        }
+        found = true;
+        position.push_back(i);
+        position.insert(position.end(), childPosition.begin(), childPosition.end());
+        from = childFrom;
+        to = childTo;
+      }
+      if (found) {
+        return true;
+      }
+      if (Kernel::SortHelper::getResultSort(source.term()).isBoolSort()) {
+        from = source;
+        to = target;
+        return true;
+      }
+      return false;
+    };
+
+  std::size_t changedLiteral = sourceClause->length();
+  std::vector<unsigned> position;
+  Kernel::TermList from;
+  Kernel::TermList to;
+  for (unsigned literalIndex = 0; literalIndex < sourceClause->length(); ++literalIndex) {
+    Kernel::Literal* sourceLiteral = (*sourceClause)[literalIndex];
+    Kernel::Literal* targetLiteral = (*targetClause)[literalIndex];
+    std::string sourceJson;
+    std::string targetJson;
+    if (!certificateLiteralJson(sourceLiteral, sourceJson) || !certificateLiteralJson(targetLiteral, targetJson)) {
+      return false;
+    }
+    if (sourceJson == targetJson) {
+      continue;
+    }
+    if (changedLiteral != sourceClause->length()
+      || sourceLiteral->functor() != targetLiteral->functor()
+      || sourceLiteral->arity() != targetLiteral->arity()
+      || sourceLiteral->polarity() != targetLiteral->polarity()) {
+      return false;
+    }
+    bool found = false;
+    for (unsigned argumentIndex = 0; argumentIndex < sourceLiteral->arity(); ++argumentIndex) {
+      std::vector<unsigned> argumentPosition;
+      Kernel::TermList argumentFrom;
+      Kernel::TermList argumentTo;
+      if (!termDiff(*sourceLiteral->nthArgument(argumentIndex), *targetLiteral->nthArgument(argumentIndex), argumentPosition, argumentFrom, argumentTo)) {
+        continue;
+      }
+      if (found) {
+        return false;
+      }
+      found = true;
+      position.push_back(argumentIndex);
+      position.insert(position.end(), argumentPosition.begin(), argumentPosition.end());
+      from = argumentFrom;
+      to = argumentTo;
+    }
+    if (!found) {
+      return false;
+    }
+    changedLiteral = literalIndex;
+  }
+  if (changedLiteral == sourceClause->length()) {
+    return false;
+  }
+
+  std::string fromJson;
+  std::string toJson;
+  std::string targetJson;
+  std::string rewrittenTargetJson;
+  std::string clauseJson;
+  if (!certificateTermJson(from, fromJson)
+    || !certificateTermJson(to, toJson)
+    || !certificateLiteralJson((*sourceClause)[changedLiteral], targetJson)
+    || !certificateLiteralJson((*targetClause)[changedLiteral], rewrittenTargetJson)
+    || !certificateClauseJson(targetClause, clauseJson)) {
+    return false;
+  }
+
+  result =
+    "{\"rule\":\"bool_simplify\","
+    "\"parents\":[" + quote("u" + std::to_string(parents[0]->number())) + "],"
+    "\"from\":" + fromJson + ","
+    "\"to\":" + toJson + ","
+    "\"target\":" + targetJson + ","
+    "\"rewritten_target\":" + rewrittenTargetJson + ","
+    "\"literal\":" + std::to_string(changedLiteral) + ","
+    "\"position\":" + positionJson(position) + ","
+    "\"clause\":" + clauseJson + "}";
+  return true;
+}
+
 bool MegalodonChecker::certificateInequalitySplittingStepJson(Kernel::Unit* unit, std::string& result)
 {
   if (!unit->isClause()
@@ -11359,6 +11567,8 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
     } else if (certificateAvatarRefutationStepJson(u, certificateStep)) {
       emitCertificateStep(certificateStep);
     } else if (certificateDefinitionRewriteChainStepJson(u, certificateStep)) {
+      emitCertificateStep(certificateStep);
+    } else if (certificateBoolSimplificationStepJson(u, certificateStep)) {
       emitCertificateStep(certificateStep);
     } else if (certificateInequalitySplittingStepJson(u, certificateStep)) {
       emitCertificateStep(certificateStep);
