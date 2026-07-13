@@ -5701,15 +5701,33 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
     out << ')';
     return out.str();
   };
+  auto constraintsSexprFromLiterals = [](const std::vector<std::string>& literals) {
+    std::ostringstream out;
+    out << "(constraints";
+    for (const std::string& literal : literals) {
+      out << ' ' << literal;
+    }
+    out << ')';
+    return out.str();
+  };
+  auto subtractMultiset = [](std::vector<std::string> minuend, const std::vector<std::string>& subtrahend, std::vector<std::string>& difference) {
+    for (const std::string& item : subtrahend) {
+      auto it = std::find(minuend.begin(), minuend.end(), item);
+      if (it == minuend.end()) {
+        return false;
+      }
+      minuend.erase(it);
+    }
+    difference = minuend;
+    return true;
+  };
+  auto isNegativeEqualityLiteral = [](const std::string& literal) {
+    return literal.rfind("(neg (AP (AP (TMH \"=\") ", 0) == 0;
+  };
   auto normalized = [](std::vector<std::string> literals) {
     std::sort(literals.begin(), literals.end());
     literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
     return literals;
-  };
-  auto sameMultiset = [](std::vector<std::string> left, std::vector<std::string> right) {
-    std::sort(left.begin(), left.end());
-    std::sort(right.begin(), right.end());
-    return left == right;
   };
   auto swappedEqualityLiteral = [&](const std::string& literal, std::string& swapped) {
     const std::string posPrefix = "(pos (AP (AP (TMH \"=\") ";
@@ -5774,6 +5792,7 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
   if (!appendCertificateSplitLiteralsSexpr(parent, expected)) {
     return fail("render split literals");
   }
+  const std::vector<std::string> baseExpected = expected;
 
   Kernel::TermList selectedLeft = Kernel::SubstHelper::apply(*selected->nthArgument(0), substitution);
   Kernel::TermList selectedRight = Kernel::SubstHelper::apply(*selected->nthArgument(1), substitution);
@@ -5870,10 +5889,8 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
       return normalized(current) == actualNormalized;
   };
   std::vector<std::pair<std::string, std::string>> finalSymmetryFlips;
-  if (normalized(expected) != actualNormalized
-    && !canNormalizeBySymmetry(finalSymmetryFlips)) {
-    return fail("expected clause does not normalize to actual");
-  }
+  const bool simpleFactoringMatches = normalized(expected) == actualNormalized
+    || canNormalizeBySymmetry(finalSymmetryFlips);
 
   std::string subst;
   if (!substitutionSexpr(subst)) {
@@ -5881,7 +5898,7 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
   }
   const std::string stepBase = "u" + std::to_string(unit->number());
   std::vector<std::string> steps;
-  if (sameMultiset(expected, actual)) {
+  if (simpleFactoringMatches) {
     steps.push_back(
       "(equality_factoring " + sexprQuote(stepBase)
       + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
@@ -5890,12 +5907,20 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
       + subst
       + " (result " + clauseSexprFromLiterals(actual) + "))");
   } else {
+    std::vector<std::string> constraints;
+    if (!subtractMultiset(actual, baseExpected, constraints) || constraints.empty()) {
+      return fail("expected clause does not normalize to actual");
+    }
+    if (!std::all_of(constraints.begin(), constraints.end(), isNegativeEqualityLiteral)) {
+      return fail("equality factoring residual contains a non-negative-equality constraint");
+    }
     steps.push_back(
-      "(equality_factoring " + sexprQuote(stepBase)
+      "(equality_factoring_constraints " + sexprQuote(stepBase)
       + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
       + " (selected " + std::to_string(selectedIndex) + ")"
       + " (other " + std::to_string(otherIndex) + ") "
       + subst
+      + " " + constraintsSexprFromLiterals(constraints)
       + " (result " + clauseSexprFromLiterals(actual) + "))");
   }
 
