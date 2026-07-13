@@ -7285,7 +7285,9 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
       }
     }
     unsigned candidateIndex = 0;
-    if (score == 0 || !literalIndex(equalityParent, candidate, candidateIndex) || score < bestEqualityScore) {
+    if (score == 0
+      || !literalIndex(equalityParent, candidate, candidateIndex)
+      || (foundEqualityCandidate && score <= bestEqualityScore)) {
       continue;
     }
     equalityLiteral = candidate;
