@@ -194,6 +194,47 @@ std::string MegalodonChecker::certificateJsonWithStepIds(Kernel::Unit* unit, con
     }
     return false;
   };
+  auto topLevelStringFieldEquals = [&](const std::string& object, const std::string& field, const std::string& expected) {
+    bool inString = false;
+    bool escaped = false;
+    unsigned depth = 0;
+    for (std::size_t i = 0; i < object.size(); ++i) {
+      char ch = object[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch == '\\') {
+          escaped = true;
+        } else if (ch == '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch == '"') {
+        if (depth == 1 && object.compare(i, field.size(), field) == 0) {
+          std::size_t cursor = i + field.size();
+          while (cursor < object.size() && std::isspace(static_cast<unsigned char>(object[cursor]))) {
+            ++cursor;
+          }
+          if (cursor >= object.size() || object[cursor] != ':') {
+            return false;
+          }
+          ++cursor;
+          while (cursor < object.size() && std::isspace(static_cast<unsigned char>(object[cursor]))) {
+            ++cursor;
+          }
+          std::string quotedExpected = quote(expected);
+          return object.compare(cursor, quotedExpected.size(), quotedExpected) == 0;
+        }
+        inString = true;
+      } else if (ch == '{' || ch == '[') {
+        ++depth;
+      } else if ((ch == '}' || ch == ']') && depth > 0) {
+        --depth;
+      }
+    }
+    return false;
+  };
 
   auto addFields = [&](const std::string& object, const std::string& id) {
     if (object.empty() || object.front() != '{') {
@@ -203,7 +244,8 @@ std::string MegalodonChecker::certificateJsonWithStepIds(Kernel::Unit* unit, con
     if (!hasTopLevelField(object, "\"id\"")) {
       fields.push_back("\"id\":" + quote(id));
     }
-    if (id == ("u" + std::to_string(unit->number()))
+    const std::string unitId = "u" + std::to_string(unit->number());
+    if ((id == unitId || topLevelStringFieldEquals(object, "\"id\"", unitId))
       && unit->isClause()
       && !hasTopLevelField(object, "\"clause\"")) {
       std::string clauseJson;
@@ -2883,25 +2925,80 @@ bool MegalodonChecker::certificateLiteralJson(Kernel::Literal* literal, std::str
   return true;
 }
 
-bool MegalodonChecker::certificateClauseJson(Kernel::Clause* clause, std::string& result)
+bool MegalodonChecker::certificateSplitLiteralJson(unsigned split, std::string& result)
 {
-  if (clause->splits() && !clause->splits()->isEmpty()) {
-    return false;
+  std::string rawName = Saturation::Splitter::getFormulaStringFromName(split, true);
+  bool negative = false;
+  if (!rawName.empty() && rawName[0] == '~') {
+    negative = true;
+    rawName = rawName.substr(1);
+  } else if (rawName.rfind("¬", 0) == 0) {
+    negative = true;
+    rawName = rawName.substr(2);
   }
+  result = std::string("{\"polarity\":")
+    + (negative ? "false" : "true")
+    + ",\"atom\":{\"pred\":"
+    + quote(sanitizeMegalodonName(rawName, "split"))
+    + ",\"args\":[]}}";
+  return true;
+}
 
-  std::ostringstream out;
-  out << '[';
-  bool first = true;
+bool MegalodonChecker::appendCertificateSplitLiteralsJson(Kernel::Clause* clause, std::vector<std::string>& literals)
+{
+  if (!clause->splits() || clause->splits()->isEmpty()) {
+    return true;
+  }
+  for (unsigned split : iterTraits(clause->splits()->iter())) {
+    std::string rendered;
+    if (!certificateSplitLiteralJson(split, rendered)) {
+      return false;
+    }
+    literals.push_back(rendered);
+  }
+  return true;
+}
+
+bool MegalodonChecker::appendCertificateClauseLiteralsJson(Kernel::Clause* clause, std::vector<std::string>& literals)
+{
   for (Kernel::Literal* literal : clause->iterLits()) {
     std::string rendered;
     if (!certificateLiteralJson(literal, rendered)) {
       return false;
     }
-    if (!first) {
+    literals.push_back(rendered);
+  }
+  return appendCertificateSplitLiteralsJson(clause, literals);
+}
+
+bool MegalodonChecker::appendCertificateSubstitutedClauseLiteralsPreservingEqualityJson(
+  Kernel::Clause* clause,
+  const Kernel::Substitution& substitution,
+  std::vector<std::string>& literals)
+{
+  for (Kernel::Literal* literal : clause->iterLits()) {
+    std::string rendered;
+    if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, substitution, rendered)) {
+      return false;
+    }
+    literals.push_back(rendered);
+  }
+  return appendCertificateSplitLiteralsJson(clause, literals);
+}
+
+bool MegalodonChecker::certificateClauseJson(Kernel::Clause* clause, std::string& result)
+{
+  std::vector<std::string> literals;
+  if (!appendCertificateClauseLiteralsJson(clause, literals)) {
+    return false;
+  }
+  std::ostringstream out;
+  out << '[';
+  for (std::size_t i = 0; i < literals.size(); ++i) {
+    if (i != 0) {
       out << ',';
     }
-    first = false;
-    out << rendered;
+    out << literals[i];
   }
   out << ']';
   result = out.str();
@@ -2958,17 +3055,17 @@ bool MegalodonChecker::certificateSubstitutedClausePreservingEqualityJson(
   const Kernel::Substitution& substitution,
   std::string& result)
 {
+  std::vector<std::string> literals;
+  if (!appendCertificateSubstitutedClauseLiteralsPreservingEqualityJson(clause, substitution, literals)) {
+    return false;
+  }
   std::ostringstream out;
   out << '[';
-  for (unsigned i = 0; i < clause->length(); ++i) {
+  for (std::size_t i = 0; i < literals.size(); ++i) {
     if (i != 0) {
       out << ',';
     }
-    std::string literalJson;
-    if (!certificateSubstitutedLiteralPreservingEqualityJson((*clause)[i], substitution, literalJson)) {
-      return false;
-    }
-    out << literalJson;
+    out << literals[i];
   }
   out << ']';
   result = out.str();
@@ -3081,17 +3178,10 @@ bool MegalodonChecker::certificateResolveStepJson(Kernel::Unit* unit, std::strin
       }
       literals.push_back(rendered);
     }
-    return excludedOne;
+    return excludedOne && appendCertificateSplitLiteralsJson(clause, literals);
   };
   auto renderedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
-    for (Kernel::Literal* literal : clause->iterLits()) {
-      std::string rendered;
-      if (!certificateLiteralJson(literal, rendered)) {
-        return false;
-      }
-      literals.push_back(rendered);
-    }
-    return true;
+    return appendCertificateClauseLiteralsJson(clause, literals);
   };
   auto complementary = [&](Kernel::Literal* left, Kernel::Literal* right) {
     if (left == nullptr || right == nullptr || left->isPositive() == right->isPositive()) {
@@ -3700,12 +3790,8 @@ bool MegalodonChecker::certificateFactorStepJson(Kernel::Unit* unit, std::string
   Kernel::Clause* parent = parents[0];
 
   auto normalizedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
-    for (Kernel::Literal* literal : clause->iterLits()) {
-      std::string rendered;
-      if (!certificateLiteralJson(literal, rendered)) {
-        return false;
-      }
-      literals.push_back(rendered);
+    if (!appendCertificateClauseLiteralsJson(clause, literals)) {
+      return false;
     }
     std::sort(literals.begin(), literals.end());
     literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
@@ -3791,12 +3877,8 @@ bool MegalodonChecker::certificateCondensationStepsJson(Kernel::Unit* unit, std:
     return true;
   };
   auto normalizedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
-    for (Kernel::Literal* literal : clause->iterLits()) {
-      std::string literalJson;
-      if (!certificateLiteralJson(literal, literalJson)) {
-        return false;
-      }
-      literals.push_back(literalJson);
+    if (!appendCertificateClauseLiteralsJson(clause, literals)) {
+      return false;
     }
     std::sort(literals.begin(), literals.end());
     literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
@@ -3818,6 +3900,9 @@ bool MegalodonChecker::certificateCondensationStepsJson(Kernel::Unit* unit, std:
           symmetryCandidates.push_back({literalJson, swappedJson});
         }
       }
+    }
+    if (!appendCertificateSplitLiteralsJson(parent, literals)) {
+      return false;
     }
     std::sort(literals.begin(), literals.end());
     literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
@@ -4477,7 +4562,7 @@ bool MegalodonChecker::certificateExtensionalityResolutionStepsJson(Kernel::Unit
         }
       }
     }
-    return skipped;
+    return skipped && appendCertificateSplitLiteralsJson(clause, literals);
   };
   auto normalizedActualClause = [&](std::vector<std::string>& literals) {
     for (Kernel::Literal* literal : unit->asClause()->iterLits()) {
@@ -4759,12 +4844,8 @@ bool MegalodonChecker::certificateEqualityFactoringStepJson(
     literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
   };
   auto normalizedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
-    for (Kernel::Literal* literal : clause->iterLits()) {
-      std::string literalJson;
-      if (!certificateLiteralJson(literal, literalJson)) {
-        return false;
-      }
-      literals.push_back(literalJson);
+    if (!appendCertificateClauseLiteralsJson(clause, literals)) {
+      return false;
     }
     normalizeLiterals(literals);
     return true;
@@ -4795,6 +4876,9 @@ bool MegalodonChecker::certificateEqualityFactoringStepJson(
     }
   }
   if (!skippedSelected) {
+    return false;
+  }
+  if (!appendCertificateSplitLiteralsJson(parent, expected)) {
     return false;
   }
 
@@ -4938,12 +5022,8 @@ bool MegalodonChecker::certificateParamodulateStepJson(Kernel::Unit* unit, std::
   }
 
   auto normalizedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
-    for (Kernel::Literal* literal : clause->iterLits()) {
-      std::string rendered;
-      if (!certificateLiteralJson(literal, rendered)) {
-        return false;
-      }
-      literals.push_back(rendered);
+    if (!appendCertificateClauseLiteralsJson(clause, literals)) {
+      return false;
     }
     std::sort(literals.begin(), literals.end());
     literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
@@ -4962,7 +5042,7 @@ bool MegalodonChecker::certificateParamodulateStepJson(Kernel::Unit* unit, std::
       }
       literals.push_back(rendered);
     }
-    return excludedOne;
+    return excludedOne && appendCertificateSplitLiteralsJson(clause, literals);
   };
   auto renderAtomWithTopLevelReplacement = [&](Kernel::Literal* literal, unsigned position, Kernel::TermList replacement, std::string& atom) {
     Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
@@ -5125,12 +5205,8 @@ bool MegalodonChecker::certificateParamodulateThenSymmetryStepsJson(Kernel::Unit
     return out.str();
   };
   auto normalizedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
-    for (Kernel::Literal* literal : clause->iterLits()) {
-      std::string rendered;
-      if (!certificateLiteralJson(literal, rendered)) {
-        return false;
-      }
-      literals.push_back(rendered);
+    if (!appendCertificateClauseLiteralsJson(clause, literals)) {
+      return false;
     }
     std::sort(literals.begin(), literals.end());
     literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
@@ -5149,7 +5225,7 @@ bool MegalodonChecker::certificateParamodulateThenSymmetryStepsJson(Kernel::Unit
       }
       literals.push_back(rendered);
     }
-    return excludedOne;
+    return excludedOne && appendCertificateSplitLiteralsJson(clause, literals);
   };
   auto renderEqualityAtom = [&](Kernel::Literal* literal, Kernel::TermList lhsTerm, Kernel::TermList rhsTerm, std::string& atom) {
     Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
@@ -5317,12 +5393,8 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
     literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
   };
   auto normalizedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
-    for (Kernel::Literal* literal : clause->iterLits()) {
-      std::string literalJson;
-      if (!certificateLiteralJson(literal, literalJson)) {
-        return false;
-      }
-      literals.push_back(literalJson);
+    if (!appendCertificateClauseLiteralsJson(clause, literals)) {
+      return false;
     }
     normalize(literals);
     return true;
@@ -5369,15 +5441,11 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
       }
       literals.push_back(literalJson);
     }
-    return skipped;
+    return skipped && appendCertificateSplitLiteralsJson(clause, literals);
   };
   auto substitutedClauseLiterals = [&](Kernel::Clause* clause, const Kernel::Substitution& substitution, std::vector<std::string>& literals) {
-    for (Kernel::Literal* literal : clause->iterLits()) {
-      std::string literalJson;
-      if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, substitution, literalJson)) {
-        return false;
-      }
-      literals.push_back(literalJson);
+    if (!appendCertificateSubstitutedClauseLiteralsPreservingEqualityJson(clause, substitution, literals)) {
+      return false;
     }
     normalize(literals);
     return true;
@@ -5418,6 +5486,9 @@ bool MegalodonChecker::certificateDemodulationStepsJson(
       literals.push_back(literalJson);
     }
     if (!skipped) {
+      return false;
+    }
+    if (!appendCertificateSplitLiteralsJson(clause, literals)) {
       return false;
     }
     rendered = jsonArray(literals);
@@ -5994,12 +6065,8 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
     return matchWithOrientation(false);
   };
   std::vector<std::string> actualClause;
-  for (Kernel::Literal* literal : unit->asClause()->iterLits()) {
-    std::string literalJson;
-    if (!certificateLiteralJson(literal, literalJson)) {
-      return fail("actual literal json failed");
-    }
-    actualClause.push_back(literalJson);
+  if (!appendCertificateClauseLiteralsJson(unit->asClause(), actualClause)) {
+    return fail("actual clause json failed");
   }
   std::sort(actualClause.begin(), actualClause.end());
   actualClause.erase(std::unique(actualClause.begin(), actualClause.end()), actualClause.end());
@@ -6051,6 +6118,14 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
     }
     if (!selectedLiterals.empty()) {
       return false;
+    }
+    if (!appendCertificateSplitLiteralsJson(mainParent, residualClause)) {
+      return false;
+    }
+    for (const auto& trace : urr->steps) {
+      if (!appendCertificateSplitLiteralsJson(trace.unitParent, residualClause)) {
+        return false;
+      }
     }
     std::sort(residualClause.begin(), residualClause.end());
     residualClause.erase(std::unique(residualClause.begin(), residualClause.end()), residualClause.end());
@@ -6244,6 +6319,9 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
       }
     }
   }
+  if (!appendCertificateSplitLiteralsJson(mainParent, initialClause)) {
+    return fail("initial split literal json failed");
+  }
   std::sort(initialClause.begin(), initialClause.end());
   initialClause.erase(std::unique(initialClause.begin(), initialClause.end()), initialClause.end());
 
@@ -6266,6 +6344,13 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
     removedSelectedLiterals.push_back(selectedJson);
     resolutionTraceIndexes.push_back(traceIndex);
   }
+  for (const auto& trace : urr->steps) {
+    if (!appendCertificateSplitLiteralsJson(trace.unitParent, preFinalClause)) {
+      return fail("pre-final unit split literal json failed");
+    }
+  }
+  std::sort(preFinalClause.begin(), preFinalClause.end());
+  preFinalClause.erase(std::unique(preFinalClause.begin(), preFinalClause.end()), preFinalClause.end());
   std::vector<Kernel::Literal*> preFinalLiterals;
   std::vector<std::string> literalsToRemove = removedSelectedLiterals;
   for (unsigned i = 0; i < mainParent->length(); ++i) {
@@ -6503,6 +6588,11 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
       return false;
     }
     currentClause.erase(selectedIt);
+    if (!appendCertificateSplitLiteralsJson(unitParent, currentClause)) {
+      return false;
+    }
+    std::sort(currentClause.begin(), currentClause.end());
+    currentClause.erase(std::unique(currentClause.begin(), currentClause.end()), currentClause.end());
     std::string resolveStepId = replayIndex + 1 == resolutionTraceIndexes.size() && finalSymmetryFlips.empty() && !needsFinalRename
       ? stepBase
       : stepBase + "_resolve" + std::to_string(replayIndex);
@@ -6632,12 +6722,8 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsJson(
     return true;
   };
   auto normalizedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
-    for (Kernel::Literal* literal : clause->iterLits()) {
-      std::string literalJson;
-      if (!certificateLiteralJson(literal, literalJson)) {
-        return false;
-      }
-      literals.push_back(literalJson);
+    if (!appendCertificateClauseLiteralsJson(clause, literals)) {
+      return false;
     }
     std::sort(literals.begin(), literals.end());
     literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
@@ -6678,6 +6764,9 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsJson(
         expected.push_back(literalJson);
       }
       if (!skipped) {
+        return false;
+      }
+      if (!appendCertificateSplitLiteralsJson(parents[parentIndex], expected)) {
         return false;
       }
     }
@@ -7279,12 +7368,8 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     return true;
   };
   auto normalizedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
-    for (Kernel::Literal* literal : clause->iterLits()) {
-      std::string literalJson;
-      if (!certificateLiteralJson(literal, literalJson)) {
-        return false;
-      }
-      literals.push_back(literalJson);
+    if (!appendCertificateClauseLiteralsJson(clause, literals)) {
+      return false;
     }
     std::sort(literals.begin(), literals.end());
     literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
@@ -7314,7 +7399,7 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
         }
       }
     }
-    return skipped;
+    return skipped && appendCertificateSplitLiteralsJson(clause, literals);
   };
   auto collectTermPositions = [&](auto&& self, Kernel::TermList term, Kernel::TermList needle, std::vector<unsigned>& current, std::vector<std::vector<unsigned>>& positions) -> void {
     if (term == needle) {
@@ -7572,27 +7657,34 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     return certificateLiteralJson(replaced, rendered);
   };
   auto substitutedClauseReplacingOneLiteralJson = [&](Kernel::Clause* clause, const Kernel::Substitution& substitution, Kernel::Literal* excluded, const std::string& replacement, std::string& rendered) {
-    std::ostringstream out;
-    out << '[';
+    std::vector<std::string> literals;
     bool skipped = false;
     for (unsigned i = 0; i < clause->length(); ++i) {
-      if (i != 0) {
-        out << ',';
-      }
       Kernel::Literal* literal = (*clause)[i];
       if (!skipped && literal == excluded) {
         skipped = true;
-        out << replacement;
+        literals.push_back(replacement);
         continue;
       }
       std::string literalJson;
       if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, substitution, literalJson)) {
         return false;
       }
-      out << literalJson;
+      literals.push_back(literalJson);
     }
     if (!skipped) {
       return false;
+    }
+    if (!appendCertificateSplitLiteralsJson(clause, literals)) {
+      return false;
+    }
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t i = 0; i < literals.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+      }
+      out << literals[i];
     }
     out << ']';
     rendered = out.str();
@@ -7647,15 +7739,14 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
         }
       }
     }
+    if (!appendCertificateSplitLiteralsJson(clause, literals)) {
+      return false;
+    }
     return true;
   };
   auto substitutedClauseLiterals = [&](Kernel::Clause* clause, const Kernel::Substitution& substitution, std::vector<std::string>& literals) {
-    for (Kernel::Literal* literal : clause->iterLits()) {
-      std::string literalJson;
-      if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, substitution, literalJson)) {
-        return false;
-      }
-      literals.push_back(literalJson);
+    if (!appendCertificateSubstitutedClauseLiteralsPreservingEqualityJson(clause, substitution, literals)) {
+      return false;
     }
     std::sort(literals.begin(), literals.end());
     literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
@@ -7676,6 +7767,9 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
       literals.push_back(literalJson);
     }
     if (!skipped) {
+      return false;
+    }
+    if (!appendCertificateSplitLiteralsJson(clause, literals)) {
       return false;
     }
     std::sort(literals.begin(), literals.end());

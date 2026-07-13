@@ -45,6 +45,10 @@ private:
   bool certificateTermJson(Kernel::TermList term, std::string& result);
   bool certificateAtomJson(Kernel::Literal* literal, std::string& result);
   bool certificateLiteralJson(Kernel::Literal* literal, std::string& result);
+  bool certificateSplitLiteralJson(unsigned split, std::string& result);
+  bool appendCertificateSplitLiteralsJson(Kernel::Clause* clause, std::vector<std::string>& literals);
+  bool appendCertificateClauseLiteralsJson(Kernel::Clause* clause, std::vector<std::string>& literals);
+  bool appendCertificateSubstitutedClauseLiteralsPreservingEqualityJson(Kernel::Clause* clause, const Kernel::Substitution& substitution, std::vector<std::string>& literals);
   bool certificateClauseJson(Kernel::Clause* clause, std::string& result);
   bool certificateSubstitutedEqualityLiteralJson(Kernel::Literal* literal, const Kernel::Substitution& substitution, bool swapEquality, std::string& result);
   bool certificateSubstitutedLiteralPreservingEqualityJson(Kernel::Literal* literal, const Kernel::Substitution& substitution, std::string& result);
