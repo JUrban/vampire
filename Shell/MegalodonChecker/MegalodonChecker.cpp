@@ -20,6 +20,7 @@
 #include "Lib/DHMap.hpp"
 #include "Lib/Environment.hpp"
 #include "Lib/SharedSet.hpp"
+#include "SAT/SATInference.hpp"
 #include "SATSubsumption/SATSubsumptionAndResolution.hpp"
 #include "Saturation/Splitter.hpp"
 #include "Shell/InferenceRecorder.hpp"
@@ -3894,19 +3895,9 @@ bool MegalodonChecker::certificateAvatarRefutationStepJson(Kernel::Unit* unit, s
 
   std::vector<std::string> parentIds;
   std::vector<std::string> satClauses;
-  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
-    const auto* extra = env.proofExtra.find(parent);
-    if (extra == nullptr) {
-      return false;
-    }
-    const auto* satExtra = static_cast<const Indexing::SATClauseExtra*>(extra);
-    if (satExtra->clause == nullptr) {
-      return false;
-    }
-    parentIds.push_back(quote("u" + std::to_string(parent->number())));
-
+  auto appendSatClause = [&](SAT::SATClause* clause) {
     std::vector<std::string> literals;
-    for (SATLiteral literal : satExtra->clause->iter()) {
+    for (SATLiteral literal : clause->iter()) {
       std::ostringstream lit;
       lit << "{\"var\":" << literal.var()
           << ",\"polarity\":" << (literal.positive() ? "true" : "false")
@@ -3914,6 +3905,29 @@ bool MegalodonChecker::certificateAvatarRefutationStepJson(Kernel::Unit* unit, s
       literals.push_back(lit.str());
     }
     satClauses.push_back(jsonArray(literals));
+  };
+
+  if (SAT::SATClause* refutation = unit->inference().satPremise()) {
+    SAT::SATInference::visitFOConversions(refutation, [&](SAT::SATClause* clause) {
+      Kernel::Unit* origin = clause->inference()->foConversion()->getOrigin();
+      parentIds.push_back(quote("u" + std::to_string(origin->number())));
+      appendSatClause(clause);
+    });
+  }
+
+  if (parentIds.empty()) {
+    for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+      const auto* extra = env.proofExtra.find(parent);
+      if (extra == nullptr) {
+        continue;
+      }
+      const auto* satExtra = static_cast<const Indexing::SATClauseExtra*>(extra);
+      if (satExtra->clause == nullptr) {
+        continue;
+      }
+      parentIds.push_back(quote("u" + std::to_string(parent->number())));
+      appendSatClause(satExtra->clause);
+    }
   }
   if (parentIds.empty()) {
     return false;
