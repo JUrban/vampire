@@ -6326,9 +6326,6 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
         if (baseTerm.isVar()) {
           Kernel::TermList existing;
           if (!subst.findBinding(baseTerm.var(), existing)) {
-            if (instanceTerm.isVar()) {
-              return true;
-            }
             subst.bindUnbound(baseTerm.var(), instanceTerm);
             return true;
           }
@@ -6373,13 +6370,6 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
     }
     return matchWithOrientation(false);
   };
-  std::vector<std::string> actualClause;
-  if (!appendCertificateClauseLiteralsJson(unit->asClause(), actualClause)) {
-    return fail("actual clause json failed");
-  }
-  std::sort(actualClause.begin(), actualClause.end());
-  actualClause.erase(std::unique(actualClause.begin(), actualClause.end()), actualClause.end());
-
   auto cloneSubstitution = [](const Kernel::Substitution& source) {
     Kernel::Substitution copy;
     Kernel::Substitution sourceCopy = source;
@@ -6387,134 +6377,6 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
       copy.bindUnbound(var, term);
     }
     return copy;
-  };
-
-  std::vector<Kernel::Literal*> selectedMainLiterals;
-  Kernel::Substitution mainSubstitution;
-  std::vector<Kernel::Literal*> candidateSelectedMainLiterals;
-
-  auto residualMatchesActual = [&](const std::vector<Kernel::Literal*>& selected, const Kernel::Substitution& substitution) {
-    std::vector<std::string> residualClause;
-    std::vector<std::pair<std::string, std::string>> residualSymmetryCandidates;
-    std::vector<std::string> selectedLiterals;
-    for (Kernel::Literal* literal : selected) {
-      std::string literalJson;
-      if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, substitution, literalJson)) {
-        return false;
-      }
-      selectedLiterals.push_back(literalJson);
-    }
-    for (Kernel::Literal* literal : mainParent->iterLits()) {
-      std::string literalJson;
-      if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, substitution, literalJson)) {
-        return false;
-      }
-      auto selectedIt = std::find(selectedLiterals.begin(), selectedLiterals.end(), literalJson);
-      if (selectedIt != selectedLiterals.end()) {
-        selectedLiterals.erase(selectedIt);
-        continue;
-      }
-      residualClause.push_back(literalJson);
-      if (literal->isEquality()) {
-        std::string swappedJson;
-        if (!certificateSubstitutedEqualityLiteralJson(literal, substitution, true, swappedJson)) {
-          return false;
-        }
-        if (literalJson != swappedJson) {
-          residualSymmetryCandidates.push_back({literalJson, swappedJson});
-        }
-      }
-    }
-    if (!selectedLiterals.empty()) {
-      return false;
-    }
-    if (!appendCertificateSplitLiteralsJson(mainParent, residualClause)) {
-      return false;
-    }
-    for (const auto& trace : urr->steps) {
-      if (!appendCertificateSplitLiteralsJson(trace.unitParent, residualClause)) {
-        return false;
-      }
-    }
-    std::sort(residualClause.begin(), residualClause.end());
-    residualClause.erase(std::unique(residualClause.begin(), residualClause.end()), residualClause.end());
-    if (residualClause == actualClause) {
-      return true;
-    }
-    for (std::size_t guard = 0; residualClause != actualClause && guard < residualSymmetryCandidates.size(); ++guard) {
-      bool changed = false;
-      for (const auto& candidate : residualSymmetryCandidates) {
-        if (std::find(actualClause.begin(), actualClause.end(), candidate.second) == actualClause.end()) {
-          continue;
-        }
-        auto residualIt = std::find(residualClause.begin(), residualClause.end(), candidate.first);
-        if (residualIt == residualClause.end()) {
-          continue;
-        }
-        *residualIt = candidate.second;
-        std::sort(residualClause.begin(), residualClause.end());
-        residualClause.erase(std::unique(residualClause.begin(), residualClause.end()), residualClause.end());
-        changed = true;
-        break;
-      }
-      if (!changed) {
-        break;
-      }
-    }
-    return residualClause == actualClause;
-  };
-  auto residualMatchesActualModuloRename = [&](const std::vector<Kernel::Literal*>& selected, const Kernel::Substitution& substitution) {
-    std::vector<Kernel::Literal*> selectedInstances;
-    for (Kernel::Literal* literal : selected) {
-      selectedInstances.push_back(Kernel::SubstHelper::apply(literal, substitution));
-    }
-    std::vector<Kernel::Literal*> residualLiterals;
-    for (Kernel::Literal* literal : mainParent->iterLits()) {
-      Kernel::Literal* literalInstance = Kernel::SubstHelper::apply(literal, substitution);
-      bool isSelected = false;
-      for (Kernel::Literal* selectedInstance : selectedInstances) {
-        if (literalInstance == selectedInstance) {
-          isSelected = true;
-          break;
-        }
-        std::string literalJson;
-        std::string selectedJson;
-        if (certificateLiteralJson(literalInstance, literalJson)
-          && certificateLiteralJson(selectedInstance, selectedJson)
-          && literalJson == selectedJson) {
-          isSelected = true;
-          break;
-        }
-      }
-      if (!isSelected) {
-        residualLiterals.push_back(literalInstance);
-      }
-    }
-    if (residualLiterals.size() != unit->asClause()->length()) {
-      return false;
-    }
-    Kernel::Substitution renameSubstitution;
-    std::vector<bool> usedActual(unit->asClause()->length(), false);
-    for (Kernel::Literal* residualLiteral : residualLiterals) {
-      bool matched = false;
-      for (unsigned actualIndex = 0; actualIndex < unit->asClause()->length(); ++actualIndex) {
-        if (usedActual[actualIndex]) {
-          continue;
-        }
-        Kernel::Substitution attempt = cloneSubstitution(renameSubstitution);
-        if (!matchLiteralWithoutReset(residualLiteral, (*unit->asClause())[actualIndex], attempt)) {
-          continue;
-        }
-        renameSubstitution = cloneSubstitution(attempt);
-        usedActual[actualIndex] = true;
-        matched = true;
-        break;
-      }
-      if (!matched) {
-        return false;
-      }
-    }
-    return true;
   };
 
   for (const auto& trace : urr->steps) {
@@ -6525,40 +6387,6 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
       || trace.unitParent->length() != 1) {
       return fail("bad trace entry");
     }
-  }
-
-  std::function<bool(std::size_t, const Kernel::Substitution&)> selectTraceLiterals =
-    [&](std::size_t traceIndex, const Kernel::Substitution& substitution) -> bool {
-    if (traceIndex == urr->steps.size()) {
-      if (!residualMatchesActual(candidateSelectedMainLiterals, substitution)
-        && !residualMatchesActualModuloRename(candidateSelectedMainLiterals, substitution)) {
-        return false;
-      }
-      selectedMainLiterals = candidateSelectedMainLiterals;
-      mainSubstitution = cloneSubstitution(substitution);
-      return true;
-    }
-    const auto& trace = urr->steps[traceIndex];
-    for (Kernel::Literal* candidate : mainParent->iterLits()) {
-      if (std::find(candidateSelectedMainLiterals.begin(), candidateSelectedMainLiterals.end(), candidate)
-        != candidateSelectedMainLiterals.end()) {
-        continue;
-      }
-      Kernel::Substitution attempt = cloneSubstitution(substitution);
-      if (!matchLiteralWithoutReset(candidate, trace.selectedSubstituted, attempt)) {
-        continue;
-      }
-      candidateSelectedMainLiterals.push_back(candidate);
-      if (selectTraceLiterals(traceIndex + 1, attempt)) {
-        return true;
-      }
-      candidateSelectedMainLiterals.pop_back();
-    }
-    return false;
-  };
-  Kernel::Substitution emptySubstitution;
-  if (!selectTraceLiterals(0, emptySubstitution)) {
-    return fail("selected main literal assignment not found");
   }
 
   auto jsonArray = [](const std::vector<std::string>& items) {
@@ -6573,6 +6401,12 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
     out << ']';
     return out.str();
   };
+
+  auto normalizeJsonClause = [](std::vector<std::string>& clause) {
+    std::sort(clause.begin(), clause.end());
+    clause.erase(std::unique(clause.begin(), clause.end()), clause.end());
+  };
+
   auto certificateSubstitutionJson = [&](const Kernel::Substitution& substitution, std::string& rendered) {
     std::vector<std::pair<unsigned, std::string>> items;
     Kernel::Substitution substitutionCopy = substitution;
@@ -6602,238 +6436,156 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
     return true;
   };
 
-  std::string mainSubstitutionJson;
-  std::string mainClauseJson;
-  if (!certificateSubstitutionJson(mainSubstitution, mainSubstitutionJson)
-    || !certificateSubstitutedClausePreservingEqualityJson(mainParent, mainSubstitution, mainClauseJson)) {
-    return fail("main substitution json failed");
-  }
-
-  std::vector<std::string> initialClause;
-  std::vector<std::pair<std::string, std::string>> symmetryCandidates;
-  for (unsigned i = 0; i < mainParent->length(); ++i) {
-    Kernel::Literal* literal = (*mainParent)[i];
-    std::string literalJson;
-    if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, mainSubstitution, literalJson)) {
-      return fail("initial literal json failed");
+  auto replaceAll = [](std::string& text, const std::string& from, const std::string& to) {
+    if (from.empty()) {
+      return;
     }
-    initialClause.push_back(literalJson);
-    if (literal->isEquality()) {
-      std::string swappedJson;
-      if (!certificateSubstitutedEqualityLiteralJson(literal, mainSubstitution, true, swappedJson)) {
-        return fail("initial swapped literal json failed");
-      }
-      if (literalJson != swappedJson) {
-        symmetryCandidates.push_back({literalJson, swappedJson});
-      }
+    std::size_t pos = 0;
+    while ((pos = text.find(from, pos)) != std::string::npos) {
+      text.replace(pos, from.size(), to);
+      pos += to.size();
     }
-  }
-  if (!appendCertificateSplitLiteralsJson(mainParent, initialClause)) {
-    return fail("initial split literal json failed");
-  }
-  std::sort(initialClause.begin(), initialClause.end());
-  initialClause.erase(std::unique(initialClause.begin(), initialClause.end()), initialClause.end());
-
-  std::vector<std::string> preFinalClause = initialClause;
-  std::vector<std::size_t> resolutionTraceIndexes;
-  std::vector<std::string> removedSelectedLiterals;
-  for (std::size_t traceIndex = 0; traceIndex < urr->steps.size(); ++traceIndex) {
-    std::string selectedJson;
-    if (!certificateSubstitutedLiteralPreservingEqualityJson(selectedMainLiterals[traceIndex], mainSubstitution, selectedJson)) {
-      return fail("selected json failed");
-    }
-    if (std::find(removedSelectedLiterals.begin(), removedSelectedLiterals.end(), selectedJson) != removedSelectedLiterals.end()) {
-      continue;
-    }
-    auto selectedIt = std::find(preFinalClause.begin(), preFinalClause.end(), selectedJson);
-    if (selectedIt == preFinalClause.end()) {
-      return fail("selected literal missing from pre-final clause");
-    }
-    preFinalClause.erase(selectedIt);
-    removedSelectedLiterals.push_back(selectedJson);
-    resolutionTraceIndexes.push_back(traceIndex);
-  }
-  for (const auto& trace : urr->steps) {
-    if (!appendCertificateSplitLiteralsJson(trace.unitParent, preFinalClause)) {
-      return fail("pre-final unit split literal json failed");
-    }
-  }
-  std::sort(preFinalClause.begin(), preFinalClause.end());
-  preFinalClause.erase(std::unique(preFinalClause.begin(), preFinalClause.end()), preFinalClause.end());
-  std::vector<Kernel::Literal*> preFinalLiterals;
-  std::vector<std::string> literalsToRemove = removedSelectedLiterals;
-  for (unsigned i = 0; i < mainParent->length(); ++i) {
-    Kernel::Literal* literal = Kernel::SubstHelper::apply((*mainParent)[i], mainSubstitution);
-    std::string literalJson;
-    if (!certificateLiteralJson(literal, literalJson)) {
-      return fail("pre-final literal json failed");
-    }
-    auto removeIt = std::find(literalsToRemove.begin(), literalsToRemove.end(), literalJson);
-    if (removeIt != literalsToRemove.end()) {
-      literalsToRemove.erase(removeIt);
-      continue;
-    }
-    preFinalLiterals.push_back(literal);
-  }
-
-  auto canNormalizeBySymmetry = [&](const std::vector<std::string>& source, std::vector<std::pair<std::string, std::string>>& flips) {
-    std::vector<std::string> current = source;
-    flips.clear();
-    for (std::size_t guard = 0; current != actualClause && guard < symmetryCandidates.size(); ++guard) {
-      bool changed = false;
-      for (const auto& candidate : symmetryCandidates) {
-        if (std::find(actualClause.begin(), actualClause.end(), candidate.second) == actualClause.end()) {
-          continue;
-        }
-        auto currentIt = std::find(current.begin(), current.end(), candidate.first);
-        if (currentIt == current.end()) {
-          continue;
-        }
-        *currentIt = candidate.second;
-        std::sort(current.begin(), current.end());
-        current.erase(std::unique(current.begin(), current.end()), current.end());
-        flips.push_back(candidate);
-        changed = true;
-        break;
-      }
-      if (!changed) {
-        break;
-      }
-    }
-    return current == actualClause;
   };
-  std::vector<std::pair<std::string, std::string>> finalSymmetryFlips;
-  bool needsFinalRename = false;
-  std::string finalRenameSubstitutionJson;
-  std::string finalRenameClauseJson;
-  if (!canNormalizeBySymmetry(preFinalClause, finalSymmetryFlips)) {
-    auto matchLiteralForRename = [&](Kernel::Literal* base, Kernel::Literal* instance, Kernel::Substitution& substitution) {
-      if (base == nullptr
-        || instance == nullptr
-        || !Kernel::Literal::headersMatch(base, instance, false)
-        || base->arity() != instance->arity()) {
+
+  auto applyJsonSubstitution = [&](const std::string& source,
+                                   const Kernel::Substitution& substitution,
+                                   std::string& rendered) {
+    std::vector<std::tuple<unsigned, std::string, std::string>> replacements;
+    Kernel::Substitution substitutionCopy = substitution;
+    for (auto [var, term] : iterTraits(substitutionCopy.items())) {
+      if (term.isVar() && term.var() == var) {
+        continue;
+      }
+      std::string termJson;
+      if (!certificateTermJson(term, termJson)) {
         return false;
       }
-      auto matchWithOrientation = [&](bool reverseInstance) {
-        Kernel::Substitution attempt;
-        for (auto [var, term] : iterTraits(substitution.items())) {
-          attempt.bindUnbound(var, term);
-        }
-        auto dereference = [&](Kernel::TermList term, Kernel::Substitution& subst) {
-          Kernel::TermList current = term;
-          Kernel::TermList binding;
-          while (current.isVar() && subst.findBinding(current.var(), binding) && binding != current) {
-            current = binding;
-          }
-          return current;
-        };
-        auto matchTerm = [&](auto&& self, Kernel::TermList baseTerm, Kernel::TermList instanceTerm, Kernel::Substitution& subst) -> bool {
-          if (baseTerm.isVar()) {
-            Kernel::TermList existing;
-            if (!subst.findBinding(baseTerm.var(), existing)) {
-              subst.bindUnbound(baseTerm.var(), instanceTerm);
-              return true;
-            }
-            existing = dereference(existing, subst);
-            if (existing == instanceTerm) {
-              return true;
-            }
-            if (existing.isVar()) {
-              subst.rebind(baseTerm.var(), instanceTerm);
-              return true;
-            }
-            return false;
-          }
-          if (!instanceTerm.isTerm() || baseTerm.term()->functor() != instanceTerm.term()->functor()) {
-            return false;
-          }
-          if (baseTerm.term()->arity() != instanceTerm.term()->arity()) {
-            return false;
-          }
-          for (unsigned i = 0; i < baseTerm.term()->arity(); ++i) {
-            if (!self(self, *baseTerm.term()->nthArgument(i), *instanceTerm.term()->nthArgument(i), subst)) {
-              return false;
-            }
-          }
-          return true;
-        };
-        for (unsigned i = 0; i < base->arity(); ++i) {
-          unsigned instanceIndex = reverseInstance ? base->arity() - 1 - i : i;
-          if (!matchTerm(matchTerm, *base->nthArgument(i), *instance->nthArgument(instanceIndex), attempt)) {
-            return false;
-          }
-        }
-        for (auto [var, term] : iterTraits(attempt.items())) {
-          substitution.rebind(var, term);
-        }
-        return true;
-      };
-      if (base->isEquality() && base->arity() == 2) {
-        if (matchWithOrientation(true)) {
-          return true;
-        }
-      }
-      return matchWithOrientation(false);
-    };
+      replacements.push_back({var, "{\"var\":" + quote(variableName(var)) + "}", termJson});
+    }
+    std::sort(replacements.begin(), replacements.end(), [](const auto& left, const auto& right) {
+      return std::get<0>(left) < std::get<0>(right);
+    });
+    rendered = source;
+    for (std::size_t i = 0; i < replacements.size(); ++i) {
+      replaceAll(rendered, std::get<1>(replacements[i]), quote("__mg_subst_" + std::to_string(i) + "__"));
+    }
+    for (std::size_t i = 0; i < replacements.size(); ++i) {
+      replaceAll(rendered, quote("__mg_subst_" + std::to_string(i) + "__"), std::get<2>(replacements[i]));
+    }
+    return true;
+  };
 
-    Kernel::Substitution finalRenameSubstitution;
-    std::vector<bool> usedActual(unit->asClause()->length(), false);
-    for (Kernel::Literal* expectedLiteral : preFinalLiterals) {
-      bool matched = false;
-      for (unsigned actualIndex = 0; actualIndex < unit->asClause()->length(); ++actualIndex) {
-        if (usedActual[actualIndex]) {
-          continue;
-        }
-        if (matchLiteralForRename(expectedLiteral, (*unit->asClause())[actualIndex], finalRenameSubstitution)) {
-          usedActual[actualIndex] = true;
-          matched = true;
-          break;
-        }
+  auto renderClause = [&](const std::vector<Kernel::Literal*>& literals,
+                          const std::vector<Kernel::Clause*>& splitSources,
+                          std::string& rendered) {
+    std::vector<std::string> items;
+    for (Kernel::Literal* literal : literals) {
+      std::string literalJson;
+      if (!certificateLiteralJson(literal, literalJson)) {
+        return false;
       }
-      if (!matched) {
+      items.push_back(literalJson);
+    }
+    for (Kernel::Clause* splitSource : splitSources) {
+      if (!appendCertificateSplitLiteralsJson(splitSource, items)) {
         return false;
       }
     }
-    if (!certificateSubstitutionJson(finalRenameSubstitution, finalRenameSubstitutionJson)
-      || finalRenameSubstitutionJson == "{}"
-      || !certificateClauseJson(unit->asClause(), finalRenameClauseJson)) {
+    normalizeJsonClause(items);
+    rendered = jsonArray(items);
+    return true;
+  };
+
+  auto renderSubstitutedClause = [&](Kernel::Clause* clause,
+                                     const Kernel::Substitution& substitution,
+                                     std::string& rendered) {
+    std::vector<std::string> items;
+    if (!appendCertificateSubstitutedClauseLiteralsPreservingEqualityJson(clause, substitution, items)) {
       return false;
     }
-    needsFinalRename = true;
+    normalizeJsonClause(items);
+    rendered = jsonArray(items);
+    return true;
+  };
+
+  std::string actualClauseJson;
+  std::vector<std::string> actualClause;
+  if (!certificateClauseJson(unit->asClause(), actualClauseJson)
+    || !appendCertificateClauseLiteralsJson(unit->asClause(), actualClause)) {
+    return fail("actual clause json failed");
   }
+  normalizeJsonClause(actualClause);
 
   std::vector<std::string> steps;
   std::string stepBase = "u" + std::to_string(unit->number());
-  std::string mainParentId = "u" + std::to_string(mainParent->number());
-  if (mainSubstitutionJson != "{}") {
-    std::string substituteId = stepBase + "_subst0";
-    steps.push_back(
-      "{\"id\":" + quote(substituteId) + ","
-      "\"rule\":\"substitute\","
-      "\"parents\":[" + quote(mainParentId) + "],"
-      "\"substitution\":" + mainSubstitutionJson + ","
-      "\"clause\":" + mainClauseJson + "}");
-	    mainParentId = substituteId;
-	  }
+  std::string currentStepId = "u" + std::to_string(mainParent->number());
+  std::vector<Kernel::Literal*> currentLiterals;
+  for (Kernel::Literal* literal : mainParent->iterLits()) {
+    currentLiterals.push_back(literal);
+  }
+  std::vector<Kernel::Clause*> splitSources;
+  splitSources.push_back(mainParent);
+  std::vector<std::string> currentClause;
+  {
+    std::string currentClauseJson;
+    if (!renderClause(currentLiterals, splitSources, currentClauseJson)) {
+      return fail("initial clause render failed");
+    }
+    if (!appendCertificateClauseLiteralsJson(mainParent, currentClause)) {
+      return fail("initial clause literals failed");
+    }
+    normalizeJsonClause(currentClause);
+  }
 
-  std::string currentStepId = mainParentId;
-  std::vector<std::string> currentClause = initialClause;
-  for (std::size_t replayIndex = 0; replayIndex < resolutionTraceIndexes.size(); ++replayIndex) {
-    std::size_t traceIndex = resolutionTraceIndexes[replayIndex];
+  for (std::size_t traceIndex = 0; traceIndex < urr->steps.size(); ++traceIndex) {
     const auto& trace = urr->steps[traceIndex];
     Kernel::Clause* unitParent = trace.unitParent;
     Kernel::Literal* unitLiteral = (*unitParent)[0];
-    Kernel::Literal* selectedComplementForUnit =
-      Kernel::SubstHelper::apply(Kernel::Literal::complementaryLiteral(selectedMainLiterals[traceIndex]), mainSubstitution);
+
+    Kernel::Substitution currentSubstitution;
+    if (!matchLiteralWithoutReset(trace.selected, trace.selectedSubstituted, currentSubstitution)) {
+      return fail("current substitution match failed");
+    }
+    std::string currentSubstitutionJson;
+    if (!certificateSubstitutionJson(currentSubstitution, currentSubstitutionJson)) {
+      return fail("current substitution json failed");
+    }
+    std::vector<std::string> substitutedCurrentClause;
+    for (const std::string& literalJson : currentClause) {
+      std::string rendered;
+      if (!applyJsonSubstitution(literalJson, currentSubstitution, rendered)) {
+        return fail("current substituted literal render failed");
+      }
+      substitutedCurrentClause.push_back(rendered);
+    }
+    normalizeJsonClause(substitutedCurrentClause);
+    std::vector<Kernel::Literal*> substitutedCurrentLiterals;
+    for (Kernel::Literal* literal : currentLiterals) {
+      substitutedCurrentLiterals.push_back(Kernel::SubstHelper::apply(literal, currentSubstitution));
+    }
+    std::string currentSubstitutedClauseJson = jsonArray(substitutedCurrentClause);
+    if (currentSubstitutionJson != "{}") {
+      std::string substituteId = stepBase + "_current_subst" + std::to_string(traceIndex);
+      steps.push_back(
+        "{\"id\":" + quote(substituteId) + ","
+        "\"rule\":\"substitute\","
+        "\"parents\":[" + quote(currentStepId) + "],"
+        "\"substitution\":" + currentSubstitutionJson + ","
+        "\"clause\":" + currentSubstitutedClauseJson + "}");
+      currentStepId = substituteId;
+    }
+    currentLiterals = substitutedCurrentLiterals;
+    currentClause = substitutedCurrentClause;
+
     Kernel::Substitution unitSubstitution;
-    if (!Kernel::MatchingUtils::match(unitLiteral, selectedComplementForUnit, false, unitSubstitution)) {
-      return false;
+    if (!matchLiteralWithoutReset(unitLiteral, trace.unitSubstituted, unitSubstitution)) {
+      return fail("unit substitution match failed");
     }
     std::string unitSubstitutionJson;
     std::string unitClauseJson;
     if (!certificateSubstitutionJson(unitSubstitution, unitSubstitutionJson)
-      || !certificateSubstitutedClausePreservingEqualityJson(unitParent, unitSubstitution, unitClauseJson)) {
-      return false;
+      || !renderSubstitutedClause(unitParent, unitSubstitution, unitClauseJson)) {
+      return fail("unit substitution json failed");
     }
 
     std::string unitParentId = "u" + std::to_string(unitParent->number());
@@ -6848,25 +6600,60 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
       unitParentId = substituteId;
     }
 
-    Kernel::Literal* selectedSubstituted = Kernel::SubstHelper::apply(selectedMainLiterals[traceIndex], mainSubstitution);
+    Kernel::Literal* selectedSubstituted = trace.selectedSubstituted;
     Kernel::Literal* unitSubstituted = Kernel::SubstHelper::apply(unitLiteral, unitSubstitution);
     std::string selectedJson;
-    std::string selectedComplementJson;
+    std::string selectedCurrentJson;
     std::string unitJson;
-    if (!certificateSubstitutedLiteralPreservingEqualityJson(selectedMainLiterals[traceIndex], mainSubstitution, selectedJson)
-      || !certificateSubstitutedLiteralPreservingEqualityJson(Kernel::Literal::complementaryLiteral(selectedMainLiterals[traceIndex]), mainSubstitution, selectedComplementJson)
+    std::string selectedBaseJson;
+    if (!certificateLiteralJson(selectedSubstituted, selectedJson)
+      || !certificateLiteralJson(trace.selected, selectedBaseJson)
+      || !applyJsonSubstitution(selectedBaseJson, currentSubstitution, selectedCurrentJson)
       || !certificateSubstitutedLiteralPreservingEqualityJson(unitLiteral, unitSubstitution, unitJson)) {
-      return false;
+      return fail("selected/unit literal json failed");
+    }
+    std::string selectedSourceJson = selectedCurrentJson;
+    if (std::find(currentClause.begin(), currentClause.end(), selectedJson) == currentClause.end()) {
+      if (!selectedSubstituted->isEquality()) {
+        return fail("selected pivot orientation is not equality");
+      }
+      std::string swappedSelectedJson;
+      if (!certificateSubstitutedEqualityLiteralJson(trace.selected, currentSubstitution, true, swappedSelectedJson)) {
+        return fail("selected pivot symmetry render failed");
+      }
+      auto selectedIt = std::find(currentClause.begin(), currentClause.end(), selectedCurrentJson);
+      if (selectedIt == currentClause.end()) {
+        selectedIt = std::find(currentClause.begin(), currentClause.end(), swappedSelectedJson);
+        selectedSourceJson = swappedSelectedJson;
+      }
+      if (selectedIt == currentClause.end()) {
+        return fail("selected symmetry literal missing");
+      }
+      *selectedIt = selectedJson;
+      normalizeJsonClause(currentClause);
+      std::string symmetryStepId = stepBase + "_current_symmetry" + std::to_string(traceIndex);
+      steps.push_back(
+        "{\"id\":" + quote(symmetryStepId) + ","
+        "\"rule\":\"equality_symmetry\","
+        "\"parents\":[" + quote(currentStepId) + "],"
+        "\"literal\":" + selectedSourceJson + ","
+        "\"clause\":" + jsonArray(currentClause) + "}");
+      currentStepId = symmetryStepId;
+      selectedCurrentJson = selectedJson;
     }
 
+    std::string selectedComplementJson;
+    if (!certificateLiteralJson(Kernel::Literal::complementaryLiteral(selectedSubstituted), selectedComplementJson)) {
+      return fail("selected complement json failed");
+    }
     if (unitJson != selectedComplementJson) {
       if (!unitSubstituted->isEquality()) {
-        return false;
+        return fail("unit pivot orientation is not equality");
       }
       std::string swappedUnitJson;
       if (!certificateSubstitutedEqualityLiteralJson(unitLiteral, unitSubstitution, true, swappedUnitJson)
         || swappedUnitJson != selectedComplementJson) {
-        return false;
+        return fail("unit pivot symmetry mismatch");
       }
       std::vector<std::string> symmetryClause;
       bool replacedUnitLiteral = false;
@@ -6878,12 +6665,12 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
         }
         std::string rendered;
         if (!certificateSubstitutedLiteralPreservingEqualityJson(literal, unitSubstitution, rendered)) {
-          return false;
+          return fail("unit pivot symmetry mismatch");
         }
         symmetryClause.push_back(rendered);
       }
       if (!replacedUnitLiteral || !appendCertificateSplitLiteralsJson(unitParent, symmetryClause)) {
-        return false;
+        return fail("unit symmetry clause failed");
       }
       std::string symmetryStepId = stepBase + "_unit_symmetry" + std::to_string(traceIndex);
       steps.push_back(
@@ -6911,17 +6698,14 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
 
     auto selectedIt = std::find(currentClause.begin(), currentClause.end(), selectedJson);
     if (selectedIt == currentClause.end()) {
-      return false;
+      return fail("selected literal missing from current clause");
     }
     currentClause.erase(selectedIt);
     if (!appendCertificateSplitLiteralsJson(unitParent, currentClause)) {
-      return false;
+      return fail("current clause unit split append failed");
     }
-    std::sort(currentClause.begin(), currentClause.end());
-    currentClause.erase(std::unique(currentClause.begin(), currentClause.end()), currentClause.end());
-    std::string resolveStepId = replayIndex + 1 == resolutionTraceIndexes.size() && finalSymmetryFlips.empty() && !needsFinalRename
-      ? stepBase
-      : stepBase + "_resolve" + std::to_string(replayIndex);
+    normalizeJsonClause(currentClause);
+    std::string resolveStepId = stepBase + "_resolve" + std::to_string(traceIndex);
     steps.push_back(
       "{\"id\":" + quote(resolveStepId) + ","
       "\"rule\":\"resolve\","
@@ -6929,36 +6713,151 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsJson(Kernel::Unit*
       "\"pivot\":" + pivotJson + ","
       "\"clause\":" + jsonArray(currentClause) + "}");
     currentStepId = resolveStepId;
-  }
 
-  for (std::size_t index = 0; index < finalSymmetryFlips.size(); ++index) {
-    const auto& flip = finalSymmetryFlips[index];
-    auto literalIt = std::find(currentClause.begin(), currentClause.end(), flip.first);
-    if (literalIt == currentClause.end()) {
-      return false;
+    std::vector<Kernel::Literal*> nextCurrentLiterals;
+    bool removedSelected = false;
+    for (Kernel::Literal* literal : currentLiterals) {
+      std::string rendered;
+      if (!certificateLiteralJson(literal, rendered)) {
+        return fail("post-resolve literal render failed");
+      }
+      if (!removedSelected && rendered == selectedSourceJson) {
+        removedSelected = true;
+        continue;
+      }
+      if (!removedSelected && rendered == selectedJson) {
+        removedSelected = true;
+        continue;
+      }
+      nextCurrentLiterals.push_back(literal);
     }
-    *literalIt = flip.second;
-    std::sort(currentClause.begin(), currentClause.end());
-    currentClause.erase(std::unique(currentClause.begin(), currentClause.end()), currentClause.end());
-    std::string normalizeStepId = index + 1 == finalSymmetryFlips.size()
-      ? stepBase
-      : stepBase + "_normalize" + std::to_string(index);
-    steps.push_back(
-      "{\"id\":" + quote(normalizeStepId) + ","
-      "\"rule\":\"equality_symmetry\","
-      "\"parents\":[" + quote(currentStepId) + "],"
-      "\"literal\":" + flip.first + ","
-      "\"clause\":" + jsonArray(currentClause) + "}");
-    currentStepId = normalizeStepId;
+    if (!removedSelected) {
+      return fail("selected literal not removed from current literals");
+    }
+    currentLiterals = nextCurrentLiterals;
+    splitSources.push_back(unitParent);
   }
 
-  if (needsFinalRename) {
+  if (currentClause != actualClause) {
+    Kernel::Substitution finalRenameSubstitution;
+    std::vector<bool> usedActual(unit->asClause()->length(), false);
+    if (currentLiterals.size() != unit->asClause()->length()) {
+      return fail("final literal count mismatch");
+    }
+    for (Kernel::Literal* currentLiteral : currentLiterals) {
+      bool matched = false;
+      for (unsigned actualIndex = 0; actualIndex < unit->asClause()->length(); ++actualIndex) {
+        if (usedActual[actualIndex]) {
+          continue;
+        }
+        Kernel::Substitution attempt = cloneSubstitution(finalRenameSubstitution);
+        if (!matchLiteralWithoutReset(currentLiteral, (*unit->asClause())[actualIndex], attempt)) {
+          continue;
+        }
+        finalRenameSubstitution = cloneSubstitution(attempt);
+        usedActual[actualIndex] = true;
+        matched = true;
+        break;
+      }
+      if (!matched) {
+        return fail("final rename match failed");
+      }
+    }
+    std::string finalRenameSubstitutionJson;
+    if (!certificateSubstitutionJson(finalRenameSubstitution, finalRenameSubstitutionJson)) {
+      return fail("final rename substitution json failed");
+    }
+    if (finalRenameSubstitutionJson != "{}") {
+      std::vector<Kernel::Literal*> renamedLiterals;
+      for (Kernel::Literal* literal : currentLiterals) {
+        renamedLiterals.push_back(Kernel::SubstHelper::apply(literal, finalRenameSubstitution));
+      }
+      currentLiterals = renamedLiterals;
+      std::vector<std::string> renamedClause;
+      for (const std::string& literalJson : currentClause) {
+        std::string rendered;
+        if (!applyJsonSubstitution(literalJson, finalRenameSubstitution, rendered)) {
+          return fail("final rename literal render failed");
+        }
+        renamedClause.push_back(rendered);
+      }
+      normalizeJsonClause(renamedClause);
+      std::string finalRenameClauseJson = jsonArray(renamedClause);
+      std::string renameStepId = stepBase + "_final_rename";
+      steps.push_back(
+        "{\"id\":" + quote(renameStepId) + ","
+        "\"rule\":\"substitute\","
+        "\"parents\":[" + quote(currentStepId) + "],"
+        "\"substitution\":" + finalRenameSubstitutionJson + ","
+        "\"clause\":" + finalRenameClauseJson + "}");
+      currentStepId = renameStepId;
+      currentClause = renamedClause;
+    }
+  }
+
+  for (std::size_t guard = 0; currentClause != actualClause && guard < currentLiterals.size(); ++guard) {
+    bool changed = false;
+    for (Kernel::Literal* literal : currentLiterals) {
+      if (!literal->isEquality()) {
+        continue;
+      }
+      std::string literalJson;
+      std::string swappedJson;
+      if (!certificateLiteralJson(literal, literalJson)
+        || !certificateSubstitutedEqualityLiteralJson(literal, Kernel::Substitution(), true, swappedJson)) {
+        return fail("final symmetry render failed");
+      }
+      if (std::find(actualClause.begin(), actualClause.end(), literalJson) != actualClause.end()) {
+        auto swappedCurrentIt = std::find(currentClause.begin(), currentClause.end(), swappedJson);
+        if (swappedCurrentIt != currentClause.end()) {
+          *swappedCurrentIt = literalJson;
+          normalizeJsonClause(currentClause);
+          std::string symmetryStepId = stepBase + "_final_symmetry" + std::to_string(guard);
+          steps.push_back(
+            "{\"id\":" + quote(symmetryStepId) + ","
+            "\"rule\":\"equality_symmetry\","
+            "\"parents\":[" + quote(currentStepId) + "],"
+            "\"literal\":" + swappedJson + ","
+            "\"clause\":" + jsonArray(currentClause) + "}");
+          currentStepId = symmetryStepId;
+          changed = true;
+          break;
+        }
+      }
+      if (std::find(actualClause.begin(), actualClause.end(), swappedJson) == actualClause.end()) {
+        continue;
+      }
+      auto currentIt = std::find(currentClause.begin(), currentClause.end(), literalJson);
+      if (currentIt == currentClause.end()) {
+        continue;
+      }
+      *currentIt = swappedJson;
+      normalizeJsonClause(currentClause);
+      std::string symmetryStepId = stepBase + "_final_symmetry" + std::to_string(guard);
+      steps.push_back(
+        "{\"id\":" + quote(symmetryStepId) + ","
+        "\"rule\":\"equality_symmetry\","
+        "\"parents\":[" + quote(currentStepId) + "],"
+        "\"literal\":" + literalJson + ","
+        "\"clause\":" + jsonArray(currentClause) + "}");
+      currentStepId = symmetryStepId;
+      changed = true;
+      break;
+    }
+    if (!changed) {
+      break;
+    }
+  }
+  if (currentClause != actualClause) {
+    return fail("sequential urr replay did not reach conclusion");
+  }
+  if (currentStepId != stepBase) {
     steps.push_back(
       "{\"id\":" + quote(stepBase) + ","
       "\"rule\":\"substitute\","
       "\"parents\":[" + quote(currentStepId) + "],"
-      "\"substitution\":" + finalRenameSubstitutionJson + ","
-      "\"clause\":" + finalRenameClauseJson + "}");
+      "\"substitution\":{},"
+      "\"clause\":" + actualClauseJson + "}");
   }
 
   result = jsonArray(steps);
