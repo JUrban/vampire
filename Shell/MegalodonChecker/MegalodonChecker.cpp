@@ -435,6 +435,232 @@ bool MegalodonChecker::certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, 
   return true;
 }
 
+bool MegalodonChecker::certificateCondensationStepSexpr(Kernel::Unit* unit, std::string& result)
+{
+  if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::CONDENSATION) {
+    return false;
+  }
+  std::vector<Kernel::Clause*> parents;
+  for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    if (parent->isClause()) {
+      parents.push_back(parent->asClause());
+    }
+  }
+  if (parents.size() != 1) {
+    return false;
+  }
+  Kernel::Clause* parent = parents[0];
+  Kernel::Clause* child = unit->asClause();
+  if (parent->length() <= child->length()) {
+    return false;
+  }
+
+  auto substitutionSexpr = [&](const Kernel::Substitution& substitution, std::string& rendered) {
+    std::vector<std::pair<unsigned, std::string>> items;
+    Kernel::Substitution substitutionCopy = substitution;
+    for (auto [var, term] : iterTraits(substitutionCopy.items())) {
+      if (term.isVar() && term.var() == var) {
+        continue;
+      }
+      std::string termSexpr;
+      if (!certificateTermSexpr(term, termSexpr)) {
+        return false;
+      }
+      items.push_back({var, "(" + sexprQuote(variableName(var)) + " " + termSexpr + ")"});
+    }
+    std::sort(items.begin(), items.end(), [](const auto& left, const auto& right) {
+      return left.first < right.first;
+    });
+    std::ostringstream out;
+    out << "(subst";
+    for (const auto& item : items) {
+      out << ' ' << item.second;
+    }
+    out << ')';
+    rendered = out.str();
+    return true;
+  };
+  auto substitutedAtomSexpr = [&](Kernel::Literal* literal, const Kernel::Substitution& substitution, std::string& rendered) {
+    Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
+    if (positive->isEquality()) {
+      std::string lhs;
+      std::string rhs;
+      Kernel::TermList lhsTerm = Kernel::SubstHelper::apply(*positive->nthArgument(0), substitution);
+      Kernel::TermList rhsTerm = Kernel::SubstHelper::apply(*positive->nthArgument(1), substitution);
+      if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
+        return false;
+      }
+      rendered = "(AP (AP (TMH \"=\") " + lhs + ") " + rhs + ")";
+      return true;
+    }
+    Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
+    return certificateAtomSexpr(substituted, rendered);
+  };
+  auto substitutedLiteralSexpr = [&](Kernel::Literal* literal, const Kernel::Substitution& substitution, std::string& rendered) {
+    std::string atom;
+    if (!substitutedAtomSexpr(literal, substitution, atom)) {
+      return false;
+    }
+    rendered = std::string("(") + (literal->isPositive() ? "pos " : "neg ") + atom + ")";
+    return true;
+  };
+  auto substitutedParentLiterals = [&](const Kernel::Substitution& substitution, std::vector<std::string>& literals) {
+    for (Kernel::Literal* literal : parent->iterLits()) {
+      std::string literalSexpr;
+      if (!substitutedLiteralSexpr(literal, substitution, literalSexpr)) {
+        return false;
+      }
+      literals.push_back(literalSexpr);
+    }
+    return appendCertificateSplitLiteralsSexpr(parent, literals);
+  };
+  auto normalizedClause = [&](Kernel::Clause* clause, std::vector<std::string>& literals) {
+    if (!appendCertificateClauseLiteralsSexpr(clause, literals)) {
+      return false;
+    }
+    std::sort(literals.begin(), literals.end());
+    literals.erase(std::unique(literals.begin(), literals.end()), literals.end());
+    return true;
+  };
+
+  auto matchTerm = [&](auto&& self, Kernel::TermList pattern, Kernel::TermList target, std::map<unsigned, Kernel::TermList>& bindings) -> bool {
+    if (pattern.isVar()) {
+      auto existing = bindings.find(pattern.var());
+      if (existing == bindings.end()) {
+        bindings.emplace(pattern.var(), target);
+        return true;
+      }
+      return existing->second == target;
+    }
+    if (!pattern.isTerm() || !target.isTerm()) {
+      return pattern == target;
+    }
+    Kernel::Term* patternTerm = pattern.term();
+    Kernel::Term* targetTerm = target.term();
+    if (patternTerm->functor() != targetTerm->functor()
+      || patternTerm->arity() != targetTerm->arity()) {
+      return false;
+    }
+    for (unsigned index = 0; index < patternTerm->arity(); ++index) {
+      if (!self(self, *patternTerm->nthArgument(index), *targetTerm->nthArgument(index), bindings)) {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto matchLiteralOriented = [&](Kernel::Literal* pattern, Kernel::Literal* target, bool reverseEquality, std::map<unsigned, Kernel::TermList>& bindings) {
+    if (pattern->polarity() != target->polarity()
+      || pattern->isEquality() != target->isEquality()) {
+      return false;
+    }
+    if (pattern->isEquality()) {
+      if (!matchTerm(matchTerm,
+          Kernel::SortHelper::getEqualityArgumentSort(pattern),
+          Kernel::SortHelper::getEqualityArgumentSort(target),
+          bindings)) {
+        return false;
+      }
+      Kernel::TermList targetLeft = *target->nthArgument(reverseEquality ? 1 : 0);
+      Kernel::TermList targetRight = *target->nthArgument(reverseEquality ? 0 : 1);
+      return matchTerm(matchTerm, *pattern->nthArgument(0), targetLeft, bindings)
+        && matchTerm(matchTerm, *pattern->nthArgument(1), targetRight, bindings);
+    }
+    if (pattern->functor() != target->functor()
+      || pattern->arity() != target->arity()) {
+      return false;
+    }
+    for (unsigned index = 0; index < pattern->arity(); ++index) {
+      if (!matchTerm(matchTerm, *pattern->nthArgument(index), *target->nthArgument(index), bindings)) {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto matchLiteral = [&](Kernel::Literal* pattern, Kernel::Literal* target, std::map<unsigned, Kernel::TermList>& bindings) {
+    std::map<unsigned, Kernel::TermList> trial = bindings;
+    if (matchLiteralOriented(pattern, target, false, trial)) {
+      bindings = std::move(trial);
+      return true;
+    }
+    if (pattern->isEquality()) {
+      trial = bindings;
+      if (matchLiteralOriented(pattern, target, true, trial)) {
+        bindings = std::move(trial);
+        return true;
+      }
+    }
+    return false;
+  };
+
+  std::vector<std::string> actual;
+  if (!normalizedClause(child, actual)) {
+    return false;
+  }
+
+  for (unsigned omitted = 0; omitted < parent->length(); ++omitted) {
+    std::vector<Kernel::Literal*> baseLiterals;
+    baseLiterals.reserve(parent->length() - 1);
+    for (unsigned parentIndex = 0; parentIndex < parent->length(); ++parentIndex) {
+      if (parentIndex != omitted) {
+        baseLiterals.push_back((*parent)[parentIndex]);
+      }
+    }
+
+    std::function<bool(std::size_t, std::map<unsigned, Kernel::TermList>&)> matchRest =
+      [&](std::size_t baseIndex, std::map<unsigned, Kernel::TermList>& bindings) {
+        if (baseIndex == baseLiterals.size()) {
+          return true;
+        }
+        Kernel::Literal* pattern = baseLiterals[baseIndex];
+        for (Kernel::Literal* target : child->iterLits()) {
+          std::map<unsigned, Kernel::TermList> trial = bindings;
+          if (!matchLiteral(pattern, target, trial)) {
+            continue;
+          }
+          if (matchRest(baseIndex + 1, trial)) {
+            bindings = std::move(trial);
+            return true;
+          }
+        }
+        return false;
+      };
+
+    std::map<unsigned, Kernel::TermList> bindings;
+    if (!matchRest(0, bindings)) {
+      continue;
+    }
+
+    Kernel::Substitution substitution;
+    for (const auto& binding : bindings) {
+      substitution.rebind(binding.first, binding.second);
+    }
+
+    std::vector<std::string> substituted;
+    if (!substitutedParentLiterals(substitution, substituted)) {
+      continue;
+    }
+    std::sort(substituted.begin(), substituted.end());
+    substituted.erase(std::unique(substituted.begin(), substituted.end()), substituted.end());
+    if (substituted != actual) {
+      continue;
+    }
+
+    std::string subst;
+    std::string renderedClause;
+    if (!substitutionSexpr(substitution, subst)
+      || !certificateClauseSexpr(child, renderedClause)) {
+      return false;
+    }
+    result = "(condensation " + sexprQuote("u" + std::to_string(unit->number()))
+      + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ") "
+      + subst
+      + " (result " + renderedClause + "))";
+    return true;
+  }
+
+  return false;
+}
+
 bool MegalodonChecker::certificateRewriteTermAtMegalodonPosition(
   Kernel::TermList term,
   Kernel::TermList needle,
@@ -5020,6 +5246,7 @@ bool MegalodonChecker::certificateNativeStepSexpr(
     || certificateDefinitionInputStepSexpr(unit, result)
     || certificateAvatarComponentStepSexpr(unit, result)
     || certificateAvatarRefutationStepSexpr(unit, result)
+    || certificateCondensationStepSexpr(unit, result)
     || certificateDefinitionFoldingStepsSexpr(unit, result)
     || certificateFoolExhaustivenessStepSexpr(unit, result)
     || certificateFoolDistinctnessStepSexpr(unit, result)
