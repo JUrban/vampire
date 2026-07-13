@@ -3322,6 +3322,39 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
         }
       }
     }
+    if (!trace.remainingAfter.empty() || currentLiterals.size() == 1) {
+      std::vector<std::string> expectedRemaining;
+      if (!renderedLiterals(trace.remainingAfter, expectedRemaining)) {
+        return fail("trace remaining render failed");
+      }
+      const std::vector<std::string> normalizedExpectedRemaining = normalized(expectedRemaining);
+      for (std::size_t i = 0; i < currentLiterals.size(); ++i) {
+        Kernel::Substitution attempt;
+        if (!matchLiteral(currentLiterals[i], trace.selectedSubstituted, attempt)) {
+          continue;
+        }
+        std::vector<Kernel::Literal*> substituted;
+        for (Kernel::Literal* literal : currentLiterals) {
+          substituted.push_back(applyLiteralPreservingEquality(literal, attempt));
+        }
+        std::vector<std::string> remaining;
+        for (std::size_t j = 0; j < substituted.size(); ++j) {
+          if (i == j) {
+            continue;
+          }
+          std::string literalSexpr;
+          if (!certificateLiteralSexpr(substituted[j], literalSexpr)) {
+            return fail("candidate remaining render failed");
+          }
+          remaining.push_back(literalSexpr);
+        }
+        if (normalized(remaining) == normalizedExpectedRemaining) {
+          currentSubstitution = cloneSubstitution(attempt);
+          selectedIndex = static_cast<int>(i);
+          break;
+        }
+      }
+    }
     if (selectedIndex < 0) {
       if (std::getenv("MEGALODON_CERT_DEBUG")) {
         std::cerr << "megalodon native URR trace " << traceIndex
@@ -8458,18 +8491,54 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
     Kernel::TermList preferredRedex = Kernel::SubstHelper::apply(
       rewrite->rewrite.rewritten,
       replayInfo->substitutionForBanksSub[targetParentIndex]);
+    auto substitutionSexprWithExtras =
+      [&](const Kernel::Substitution& substitution,
+          const std::vector<std::pair<unsigned, Kernel::TermList>>& extraBindings,
+          std::string& rendered) {
+        std::map<unsigned, std::string> items;
+        Kernel::Substitution substitutionCopy = substitution;
+        for (auto [var, term] : iterTraits(substitutionCopy.items())) {
+          if (term.isVar() && term.var() == var) {
+            continue;
+          }
+          std::string termSexpr;
+          if (!certificateTermSexpr(term, termSexpr)) {
+            return false;
+          }
+          items[var] = "(" + sexprQuote(variableName(var)) + " " + termSexpr + ")";
+        }
+        for (const auto& binding : extraBindings) {
+          if (binding.second.isVar() && binding.second.var() == binding.first) {
+            continue;
+          }
+          std::string termSexpr;
+          if (!certificateTermSexpr(binding.second, termSexpr)) {
+            return false;
+          }
+          items[binding.first] = "(" + sexprQuote(variableName(binding.first)) + " " + termSexpr + ")";
+        }
+        std::ostringstream out;
+        out << "(subst";
+        for (const auto& item : items) {
+          out << ' ' << item.second;
+        }
+        out << ')';
+        rendered = out.str();
+        return true;
+    };
     auto emitSuperposition =
       [&](Kernel::TermList from,
           Kernel::TermList to,
           const std::vector<unsigned>& position,
-          const Kernel::Substitution& equalitySubstitution) {
+          const Kernel::Substitution& equalitySubstitution,
+          const std::vector<std::pair<unsigned, Kernel::TermList>>& extraEqualityBindings) {
       std::string targetSubst;
       std::string equalitySubst;
       std::string fromSexpr;
       std::string toSexpr;
       std::string resultClause;
       if (!certificateSubstitutionSexpr(replayInfo->substitutionForBanksSub[targetParentIndex], targetSubst)
-        || !certificateSubstitutionSexpr(equalitySubstitution, equalitySubst)
+        || !substitutionSexprWithExtras(equalitySubstitution, extraEqualityBindings, equalitySubst)
         || !certificateTermSexpr(from, fromSexpr)
         || !certificateTermSexpr(to, toSexpr)
         || !certificateClauseSexpr(unit->asClause(), resultClause)) {
@@ -8506,10 +8575,23 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
           }
           Kernel::Substitution equalityOutputSubstitution = replayInfo->substitutionForBanksSub[equalityParentIndex];
           Kernel::Substitution matcherCopy = matcherSubstitution;
+          std::vector<std::pair<unsigned, Kernel::TermList>> extraEqualityBindings;
+          Kernel::TermList originalFrom = *equalityLiteralCandidate->nthArgument(direction == 0 ? 0 : 1);
+          Kernel::TermList originalTo = *equalityLiteralCandidate->nthArgument(direction == 0 ? 1 : 0);
+          if (originalFrom.isVar() && originalFrom != preferredRedex) {
+            extraEqualityBindings.push_back({originalFrom.var(), preferredRedex});
+          }
+          if (originalTo.isVar() && originalTo != instantiatedTo) {
+            extraEqualityBindings.push_back({originalTo.var(), instantiatedTo});
+          }
           for (auto [var, term] : iterTraits(matcherCopy.items())) {
             equalityOutputSubstitution.rebind(var, term);
+            extraEqualityBindings.push_back({var, term});
           }
-          if (emitSuperposition(preferredRedex, instantiatedTo, position, equalityOutputSubstitution)) {
+          if (from.isVar() && from != preferredRedex) {
+            extraEqualityBindings.push_back({from.var(), preferredRedex});
+          }
+          if (emitSuperposition(preferredRedex, instantiatedTo, position, equalityOutputSubstitution, extraEqualityBindings)) {
             return true;
           }
           return false;
@@ -8517,7 +8599,7 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
         if (!certificateRewriteLiteralAtMegalodonPosition(targetSubstituted, from, to, position, rewrittenTarget)) {
           continue;
         }
-        if (emitSuperposition(from, to, position, replayInfo->substitutionForBanksSub[equalityParentIndex])) {
+        if (emitSuperposition(from, to, position, replayInfo->substitutionForBanksSub[equalityParentIndex], {})) {
           return true;
         }
         return false;
