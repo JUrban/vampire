@@ -8019,9 +8019,6 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     return true;
   };
 
-  Kernel::Literal* substitutedEquality = Kernel::SubstHelper::apply(equalityLiteral, replayInfo->substitutionForBanksSub[equalityParentIndex]);
-  Kernel::TermList equalityLeft = *substitutedEquality->nthArgument(0);
-  Kernel::TermList equalityRight = *substitutedEquality->nthArgument(1);
   Kernel::TermList preferredRedex = Kernel::SubstHelper::apply(
     rewrite->rewrite.rewritten,
     replayInfo->substitutionForBanksSub[targetParentIndex]);
@@ -8030,44 +8027,96 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     replayInfo->substitutionForBanksSub[equalityParentIndex]);
   Kernel::TermList from;
   Kernel::TermList to;
-  std::vector<std::vector<unsigned>> leftRedexPositions;
-  std::vector<std::vector<unsigned>> rightRedexPositions;
-  collectPrintedSubstitutedLiteralAtomPositions(
-    targetLiteral,
-    replayInfo->substitutionForBanksSub[targetParentIndex],
-    equalityLeft,
-    leftRedexPositions);
-  collectPrintedSubstitutedLiteralAtomPositions(
-    targetLiteral,
-    replayInfo->substitutionForBanksSub[targetParentIndex],
-    equalityRight,
-    rightRedexPositions);
   std::vector<std::vector<unsigned>> redexPositions;
-  if (preferredRedex == equalityLeft && !leftRedexPositions.empty()) {
-    from = equalityLeft;
-    to = equalityRight;
-    redexPositions = leftRedexPositions;
-  } else if (preferredRedex == equalityRight && !rightRedexPositions.empty()) {
-    from = equalityRight;
-    to = equalityLeft;
-    redexPositions = rightRedexPositions;
-  } else if (preferredEqualitySide == equalityLeft && !leftRedexPositions.empty()) {
-    from = equalityLeft;
-    to = equalityRight;
-    redexPositions = leftRedexPositions;
-  } else if (preferredEqualitySide == equalityRight && !rightRedexPositions.empty()) {
-    from = equalityRight;
-    to = equalityLeft;
-    redexPositions = rightRedexPositions;
-  } else if (!leftRedexPositions.empty()) {
-    from = equalityLeft;
-    to = equalityRight;
-    redexPositions = leftRedexPositions;
-  } else if (!rightRedexPositions.empty()) {
-    from = equalityRight;
-    to = equalityLeft;
-    redexPositions = rightRedexPositions;
-  } else {
+  auto chooseEqualitySource = [&](Kernel::Literal* candidate) {
+    if (candidate == nullptr || !candidate->isEquality() || !candidate->isPositive()) {
+      return false;
+    }
+    Kernel::Literal* substituted = Kernel::SubstHelper::apply(candidate, replayInfo->substitutionForBanksSub[equalityParentIndex]);
+    Kernel::TermList left = *substituted->nthArgument(0);
+    Kernel::TermList right = *substituted->nthArgument(1);
+    std::vector<std::vector<unsigned>> leftPositions;
+    std::vector<std::vector<unsigned>> rightPositions;
+    collectPrintedSubstitutedLiteralAtomPositions(
+      targetLiteral,
+      replayInfo->substitutionForBanksSub[targetParentIndex],
+      left,
+      leftPositions);
+    collectPrintedSubstitutedLiteralAtomPositions(
+      targetLiteral,
+      replayInfo->substitutionForBanksSub[targetParentIndex],
+      right,
+      rightPositions);
+
+    if (preferredRedex == left && !leftPositions.empty()) {
+      from = left;
+      to = right;
+      redexPositions = leftPositions;
+    } else if (preferredRedex == right && !rightPositions.empty()) {
+      from = right;
+      to = left;
+      redexPositions = rightPositions;
+    } else if (preferredEqualitySide == left && !leftPositions.empty()) {
+      from = left;
+      to = right;
+      redexPositions = leftPositions;
+    } else if (preferredEqualitySide == right && !rightPositions.empty()) {
+      from = right;
+      to = left;
+      redexPositions = rightPositions;
+    } else if (!leftPositions.empty()) {
+      from = left;
+      to = right;
+      redexPositions = leftPositions;
+    } else if (!rightPositions.empty()) {
+      from = right;
+      to = left;
+      redexPositions = rightPositions;
+    } else {
+      return false;
+    }
+    equalityLiteral = candidate;
+    return true;
+  };
+  bool foundSource = chooseEqualitySource(equalityLiteral);
+  if (!foundSource || to.isVar()) {
+    bool foundConcreteAlternative = false;
+    bool foundFallbackAlternative = false;
+    Kernel::Literal* fallbackLiteral = nullptr;
+    Kernel::TermList fallbackFrom;
+    Kernel::TermList fallbackTo;
+    std::vector<std::vector<unsigned>> fallbackPositions;
+    for (unsigned i = 0; i < equalityParent->length(); ++i) {
+      Kernel::Literal* candidate = (*equalityParent)[i];
+      if (candidate == equalityLiteral || !chooseEqualitySource(candidate)) {
+        continue;
+      }
+      if (!to.isVar()) {
+        foundConcreteAlternative = true;
+        break;
+      }
+      if (!foundFallbackAlternative) {
+        foundFallbackAlternative = true;
+        fallbackLiteral = equalityLiteral;
+        fallbackFrom = from;
+        fallbackTo = to;
+        fallbackPositions = redexPositions;
+      }
+    }
+    if (!foundConcreteAlternative) {
+      if (foundSource) {
+        chooseEqualitySource(equalityLiteral);
+      } else if (foundFallbackAlternative) {
+        equalityLiteral = fallbackLiteral;
+        from = fallbackFrom;
+        to = fallbackTo;
+        redexPositions = fallbackPositions;
+      } else {
+        return false;
+      }
+    }
+  }
+  if (!containsLiteral(equalityParent, equalityLiteral)) {
     return false;
   }
   Kernel::TermList targetRedex = from;
@@ -8100,6 +8149,96 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     return false;
   }
 
+  auto replaceAll = [](std::string& text, const std::string& from, const std::string& to) {
+    if (from.empty()) {
+      return;
+    }
+    std::size_t pos = 0;
+    while ((pos = text.find(from, pos)) != std::string::npos) {
+      text.replace(pos, from.size(), to);
+      pos += to.size();
+    }
+  };
+  auto collectJsonVariables = [&](const std::vector<std::string>& clause) {
+    std::vector<std::string> variables;
+    const std::string marker = "{\"var\":\"";
+    for (const std::string& literal : clause) {
+      std::size_t pos = 0;
+      while ((pos = literal.find(marker, pos)) != std::string::npos) {
+        pos += marker.size();
+        std::size_t end = literal.find("\"}", pos);
+        if (end == std::string::npos) {
+          break;
+        }
+        variables.push_back(literal.substr(pos, end - pos));
+        pos = end + 2;
+      }
+    }
+    std::sort(variables.begin(), variables.end());
+    variables.erase(std::unique(variables.begin(), variables.end()), variables.end());
+    return variables;
+  };
+  auto applyJsonVariableRenaming =
+    [&](const std::vector<std::string>& source,
+        const std::vector<std::pair<std::string, std::string>>& renaming) {
+      std::vector<std::string> renamed = source;
+      for (std::string& literal : renamed) {
+        for (std::size_t i = 0; i < renaming.size(); ++i) {
+          replaceAll(literal, "{\"var\":" + quote(renaming[i].first) + "}", quote("__mg_var_rename_" + std::to_string(i) + "__"));
+        }
+        for (std::size_t i = 0; i < renaming.size(); ++i) {
+          replaceAll(literal, quote("__mg_var_rename_" + std::to_string(i) + "__"), "{\"var\":" + quote(renaming[i].second) + "}");
+        }
+      }
+      std::sort(renamed.begin(), renamed.end());
+      renamed.erase(std::unique(renamed.begin(), renamed.end()), renamed.end());
+      return renamed;
+    };
+  auto findJsonVariableRenaming =
+    [&](const std::vector<std::string>& source,
+        const std::vector<std::string>& target,
+        std::vector<std::pair<std::string, std::string>>& renaming) {
+      std::vector<std::string> sourceVars = collectJsonVariables(source);
+      std::vector<std::string> targetVars = collectJsonVariables(target);
+      renaming.clear();
+      if (sourceVars.size() != targetVars.size() || sourceVars.empty() || sourceVars.size() > 7) {
+        return false;
+      }
+
+      std::vector<std::string> candidateTargets = targetVars;
+      do {
+        std::vector<std::pair<std::string, std::string>> candidate;
+        candidate.reserve(sourceVars.size());
+        bool nontrivial = false;
+        for (std::size_t i = 0; i < sourceVars.size(); ++i) {
+          candidate.push_back({sourceVars[i], candidateTargets[i]});
+          nontrivial = nontrivial || sourceVars[i] != candidateTargets[i];
+        }
+        if (nontrivial && applyJsonVariableRenaming(source, candidate) == target) {
+          renaming = candidate;
+          return true;
+        }
+      } while (std::next_permutation(candidateTargets.begin(), candidateTargets.end()));
+      return false;
+    };
+  auto renamingSubstitutionJson = [&](const std::vector<std::pair<std::string, std::string>>& renaming) {
+    std::ostringstream out;
+    out << '{';
+    bool first = true;
+    for (const auto& item : renaming) {
+      if (item.first == item.second) {
+        continue;
+      }
+      if (!first) {
+        out << ',';
+      }
+      first = false;
+      out << quote(item.first) << ":{\"var\":" << quote(item.second) << '}';
+    }
+    out << '}';
+    return out.str();
+  };
+
   auto canNormalizeBySymmetry = [&](const std::vector<std::string>& source, std::vector<std::pair<std::string, std::string>>& flips) {
     std::vector<std::string> current = source;
     flips.clear();
@@ -8127,33 +8266,40 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     return current == actual;
   };
   std::vector<std::pair<std::string, std::string>> finalSymmetryFlips;
+  std::vector<std::pair<std::string, std::string>> finalRenaming;
   bool clauseWideParamodulation = false;
   std::vector<TargetRewrite> targetRewrites;
   if (!canNormalizeBySymmetry(paramClause, finalSymmetryFlips)) {
-    std::vector<std::string> clauseWideParamClause;
-    std::vector<TargetRewrite> clauseWideTargetRewrites;
-    if (!appendClauseWithAllReplacements(
-          clauseWideParamClause,
-          targetParent,
-          replayInfo->substitutionForBanksSub[targetParentIndex],
-          targetRedex,
-          to,
-          clauseWideTargetRewrites)
-      || !appendSubstitutedClauseExcept(
-          clauseWideParamClause,
-          equalityParent,
-          replayInfo->substitutionForBanksSub[equalityParentIndex],
-          equalityLiteral)) {
-      return false;
+    finalSymmetryFlips.clear();
+    if (!findJsonVariableRenaming(paramClause, actual, finalRenaming)) {
+      std::vector<std::string> clauseWideParamClause;
+      std::vector<TargetRewrite> clauseWideTargetRewrites;
+      if (!appendClauseWithAllReplacements(
+            clauseWideParamClause,
+            targetParent,
+            replayInfo->substitutionForBanksSub[targetParentIndex],
+            targetRedex,
+            to,
+            clauseWideTargetRewrites)
+        || !appendSubstitutedClauseExcept(
+            clauseWideParamClause,
+            equalityParent,
+            replayInfo->substitutionForBanksSub[equalityParentIndex],
+            equalityLiteral)) {
+        return false;
+      }
+      std::sort(clauseWideParamClause.begin(), clauseWideParamClause.end());
+      clauseWideParamClause.erase(std::unique(clauseWideParamClause.begin(), clauseWideParamClause.end()), clauseWideParamClause.end());
+      if (!canNormalizeBySymmetry(clauseWideParamClause, finalSymmetryFlips)) {
+        finalSymmetryFlips.clear();
+        if (!findJsonVariableRenaming(clauseWideParamClause, actual, finalRenaming)) {
+          return false;
+        }
+      }
+      clauseWideParamodulation = true;
+      paramClause = clauseWideParamClause;
+      targetRewrites = clauseWideTargetRewrites;
     }
-    std::sort(clauseWideParamClause.begin(), clauseWideParamClause.end());
-    clauseWideParamClause.erase(std::unique(clauseWideParamClause.begin(), clauseWideParamClause.end()), clauseWideParamClause.end());
-    if (!canNormalizeBySymmetry(clauseWideParamClause, finalSymmetryFlips)) {
-      return false;
-    }
-    clauseWideParamodulation = true;
-    paramClause = clauseWideParamClause;
-    targetRewrites = clauseWideTargetRewrites;
   }
 
   std::string stepBase = "u" + std::to_string(unit->number());
@@ -8208,8 +8354,10 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
       "\"clause\":" + symmetryClauseJson + "}");
     equalityParentId = symmetryStepId;
   }
-  std::string paramodulateStepId = finalSymmetryFlips.empty() ? stepBase : stepBase + "_paramodulate";
-  std::string paramodulateClauseJson = finalSymmetryFlips.empty() ? conclusionJson : jsonArray(paramClause);
+  bool finalRenamingNeeded = !finalRenaming.empty();
+  bool finalNormalizationNeeded = !finalSymmetryFlips.empty() || finalRenamingNeeded;
+  std::string paramodulateStepId = finalNormalizationNeeded ? stepBase + "_paramodulate" : stepBase;
+  std::string paramodulateClauseJson = finalNormalizationNeeded ? jsonArray(paramClause) : conclusionJson;
   std::string rewriteFields = "\"target\":" + targetJson + ",";
   if (clauseWideParamodulation) {
     if (targetRewrites.empty()) {
@@ -8235,12 +8383,12 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
       currentClause.erase(std::unique(currentClause.begin(), currentClause.end()), currentClause.end());
 
       bool lastRewrite = rewriteIndex + 1 == targetRewrites.size();
-      std::string rewriteStepId = lastRewrite && finalSymmetryFlips.empty()
+      std::string rewriteStepId = lastRewrite && !finalNormalizationNeeded
         ? stepBase
         : stepBase + "_paramodulate" + std::to_string(rewriteIndex);
       std::string rewriteScopeFields;
       rewriteScopeJson(targetLiteral, replayInfo->substitutionForBanksSub[targetParentIndex], rewrite.position, rewriteScopeFields);
-      std::string rewriteClauseJson = lastRewrite && finalSymmetryFlips.empty()
+      std::string rewriteClauseJson = lastRewrite && !finalNormalizationNeeded
         ? conclusionJson
         : jsonArray(currentClause);
       steps.push_back(
@@ -8296,10 +8444,10 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
         currentParamClause.erase(std::unique(currentParamClause.begin(), currentParamClause.end()), currentParamClause.end());
 
         bool lastRewrite = rewriteIndex + 1 == redexPositions.size();
-        std::string rewriteStepId = lastRewrite && finalSymmetryFlips.empty()
+        std::string rewriteStepId = lastRewrite && !finalNormalizationNeeded
           ? stepBase
           : stepBase + "_paramodulate" + std::to_string(rewriteIndex);
-        std::string rewriteClauseJson = lastRewrite && finalSymmetryFlips.empty()
+        std::string rewriteClauseJson = lastRewrite && !finalNormalizationNeeded
           ? conclusionJson
           : jsonArray(currentParamClause);
         std::string rewriteScopeFields;
@@ -8357,6 +8505,7 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
     std::sort(currentClause.begin(), currentClause.end());
     currentClause.erase(std::unique(currentClause.begin(), currentClause.end()), currentClause.end());
     std::string normalizeStepId = index + 1 == finalSymmetryFlips.size()
+      && !finalRenamingNeeded
       ? stepBase
       : stepBase + "_normalize" + std::to_string(index);
     steps.push_back(
@@ -8366,6 +8515,18 @@ bool MegalodonChecker::certificateSuperpositionStepsJson(
       "\"literal\":" + flip.first + ","
       "\"clause\":" + jsonArray(currentClause) + "}");
     currentStepId = normalizeStepId;
+  }
+  if (finalRenamingNeeded) {
+    std::vector<std::string> renamedClause = applyJsonVariableRenaming(currentClause, finalRenaming);
+    if (renamedClause != actual) {
+      return false;
+    }
+    steps.push_back(
+      "{\"id\":" + quote(stepBase) + ","
+      "\"rule\":\"substitute\","
+      "\"parents\":[" + quote(currentStepId) + "],"
+      "\"substitution\":" + renamingSubstitutionJson(finalRenaming) + ","
+      "\"clause\":" + conclusionJson + "}");
   }
   result = jsonArray(steps);
   return true;
