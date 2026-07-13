@@ -3983,13 +3983,19 @@ bool MegalodonChecker::certificateDefinitionRewriteChainStepJson(Kernel::Unit* u
   }
 
   std::vector<std::string> rewrites;
-  for (const auto& step : foldingExtra->steps) {
+  for (std::size_t stepIndex = 0; stepIndex < foldingExtra->steps.size(); ++stepIndex) {
+    const auto& step = foldingExtra->steps[stepIndex];
     std::string lhs;
     std::string rhs;
     if (!certificateTermJson(step.first, lhs) || !certificateTermJson(step.second, rhs)) {
       return false;
     }
-    rewrites.push_back("{\"from\":" + lhs + ",\"to\":" + rhs + "}");
+    std::string parentField;
+    if (parents.size() == foldingExtra->steps.size() + 1) {
+      std::size_t parentIndex = parents.size() - 1 - stepIndex;
+      parentField = ",\"parent\":" + quote("u" + std::to_string(parents[parentIndex]->number()));
+    }
+    rewrites.push_back("{\"from\":" + lhs + ",\"to\":" + rhs + parentField + "}");
   }
 
   std::string sourceClause;
