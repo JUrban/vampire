@@ -1622,15 +1622,6 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std
     }
   };
 
-  auto arrowDomainCount = [](Kernel::TermList sort) {
-    unsigned count = 0;
-    while (sort.isArrowSort()) {
-      ++count;
-      sort = sort.result();
-    }
-    return count;
-  };
-
   auto trimTrailingApplications = [](Kernel::TermList term, unsigned count, Kernel::TermList& trimmed) {
     while (count > 0) {
       if (!term.isApplication()) {
@@ -1643,8 +1634,75 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std
     return true;
   };
 
-  Lib::DHMap<unsigned, Kernel::TermList> parentVarSorts;
-  Kernel::SortHelper::collectVariableSorts(static_cast<Kernel::FormulaUnit*>(parent)->formula(), parentVarSorts);
+  auto variableApplicationCount = [](Kernel::TermList term, unsigned var, unsigned& count) {
+    unsigned applications = 0;
+    Kernel::TermList head = term;
+    while (head.isApplication()) {
+      ++applications;
+      head = head.lhs();
+    }
+    if (head.isVar() && head.var() == var) {
+      count = applications;
+      return true;
+    }
+    return false;
+  };
+
+  auto findTermVariableApplicationCount = [&](auto& self, Kernel::TermList term, unsigned var, unsigned& count) -> bool {
+    if (variableApplicationCount(term, var, count)) {
+      return true;
+    }
+    if (term.isVar()) {
+      return false;
+    }
+    if (term.isApplication()) {
+      return self(self, term.lhs(), var, count) || self(self, term.rhs(), var, count);
+    }
+    Kernel::Term* t = term.term();
+    for (unsigned i = 0; i < t->arity(); ++i) {
+      if (self(self, *t->nthArgument(i), var, count)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  auto findFormulaVariableApplicationCount = [&](auto& self, Kernel::Formula* formula, unsigned var, unsigned& count) -> bool {
+    switch (formula->connective()) {
+    case Kernel::LITERAL: {
+      Kernel::Literal* literal = formula->literal();
+      for (unsigned i = 0; i < literal->arity(); ++i) {
+        if (findTermVariableApplicationCount(findTermVariableApplicationCount, *literal->nthArgument(i), var, count)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    case Kernel::BOOL_TERM:
+      return findTermVariableApplicationCount(findTermVariableApplicationCount, formula->getBooleanTerm(), var, count);
+    case Kernel::NOT:
+      return self(self, formula->uarg(), var, count);
+    case Kernel::IMP:
+    case Kernel::IFF:
+    case Kernel::XOR:
+      return self(self, formula->left(), var, count) || self(self, formula->right(), var, count);
+    case Kernel::AND:
+    case Kernel::OR: {
+      auto iterator = formula->args()->iter();
+      while (iterator.hasNext()) {
+        if (self(self, iterator.next(), var, count)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    case Kernel::FORALL:
+    case Kernel::EXISTS:
+      return self(self, formula->qarg(), var, count);
+    default:
+      return false;
+    }
+  };
 
   std::vector<std::pair<unsigned, std::string>> bindings;
   for (auto symbol : iterTraits(Kernel::InferenceStore::SymbolStack::ConstIterator(_is->getIntroducedSymbols(unit)))) {
@@ -1660,12 +1718,16 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std
     if (!findFormulaTerm(findFormulaTerm, static_cast<Kernel::FormulaUnit*>(unit)->formula(), symbol.second, skolemTerm)) {
       skolemTermSexpr = "(TMH " + sexprQuote(functionName(symbol.second)) + ")";
     } else {
-      Kernel::TermList varSort;
-      if (!parentVarSorts.find(static_cast<unsigned>(var), varSort)) {
+      unsigned parentApplicationCount = 0;
+      if (!findFormulaVariableApplicationCount(
+          findFormulaVariableApplicationCount,
+          static_cast<Kernel::FormulaUnit*>(parent)->formula(),
+          static_cast<unsigned>(var),
+          parentApplicationCount)) {
         return false;
       }
       Kernel::TermList trimmedSkolemTerm;
-      if (!trimTrailingApplications(skolemTerm, arrowDomainCount(varSort), trimmedSkolemTerm)) {
+      if (!trimTrailingApplications(skolemTerm, parentApplicationCount, trimmedSkolemTerm)) {
         skolemTermSexpr = "(TMH " + sexprQuote(functionName(symbol.second)) + ")";
       } else {
         skolemTerm = trimmedSkolemTerm;
