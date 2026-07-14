@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -40,6 +41,15 @@
 #include <vector>
 
 namespace Shell {
+
+namespace {
+
+bool emitLegacyMegalodonJsonDiagnostics()
+{
+  return std::getenv("VAMPIRE_MEGALODON_LEGACY_JSON") != nullptr;
+}
+
+}
 
 MegalodonChecker::MegalodonChecker(std::ostream& out, Kernel::InferenceStore* is)
   : AbstractProofPrinter(out, is), _replayer(out)
@@ -21207,118 +21217,120 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
     }
   }
   if (u->isClause()) {
-    std::string certificateClause;
-    if (certificateClauseJson(u->asClause(), certificateClause)) {
-      out << "megalodon_certificate_clause("
-          << u->number() << ','
-          << certificateClause
-          << ").\n";
-    } else {
-      out << "megalodon_step_extra("
-          << u->number() << ','
-          << quote("certificate_clause") << ",["
-          << quote("conversion_failed=1")
-          << "]).\n";
-    }
-    std::string certificateStep;
-    bool emittedCertificate = false;
-    auto emitCertificateStep = [&](const std::string& stepJson) {
-      emittedCertificate = true;
-      std::string identifiedStepJson = certificateJsonWithStepIds(u, stepJson);
-      _certificateSteps.push_back(identifiedStepJson);
-      out << "megalodon_certificate_step("
-          << u->number() << ','
-          << stepJson
-          << ").\n";
-    };
-    auto emitCertificateSteps = [&](const std::string& stepsJson) {
-      emittedCertificate = true;
-      std::string identifiedStepsJson = certificateJsonWithStepIds(u, stepsJson);
-      _certificateSteps.push_back(identifiedStepsJson);
-      out << "megalodon_certificate_steps("
-          << u->number() << ','
-          << stepsJson
-          << ").\n";
-    };
-    if (certificateDefinitionInputStepJson(u, certificateStep)) {
-      emitCertificateStep(certificateStep);
-    } else if (hasNontrivialReplaySubstitution
-      && certificateSubstitutedResolutionStepsJson(u, replayInfo, certificateStep)) {
-      emitCertificateSteps(certificateStep);
-    } else if ((rule == Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION
-        || rule == Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION)
-      && certificateSubstitutedResolutionStepsJson(u, replayInfo, certificateStep)) {
-      emitCertificateSteps(certificateStep);
-    } else if ((rule == Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION
-        || rule == Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION)
-      && certificateSatSubsumptionResolutionStepsJson(u, certificateStep)) {
-      if (!certificateStep.empty() && certificateStep.front() == '[') {
-        emitCertificateSteps(certificateStep);
+    if (emitLegacyMegalodonJsonDiagnostics()) {
+      std::string certificateClause;
+      if (certificateClauseJson(u->asClause(), certificateClause)) {
+        out << "megalodon_certificate_clause("
+            << u->number() << ','
+            << certificateClause
+            << ").\n";
       } else {
-        emitCertificateStep(certificateStep);
+        out << "megalodon_step_extra("
+            << u->number() << ','
+            << quote("certificate_clause") << ",["
+            << quote("conversion_failed=1")
+            << "]).\n";
       }
-    } else if (certificateResolveStepJson(u, certificateStep)) {
-      emitCertificateStep(certificateStep);
-    } else if (certificateUnitResultingResolutionStepsJson(u, certificateStep)) {
-      emitCertificateSteps(certificateStep);
-    } else if (certificateSubstitutedResolutionStepsJson(u, replayInfo, certificateStep)) {
-      emitCertificateSteps(certificateStep);
-    } else if (certificateExtensionalityResolutionStepsJson(u, certificateStep)) {
-      emitCertificateSteps(certificateStep);
-    } else if (certificateSatSubsumptionResolutionStepsJson(u, certificateStep)) {
-      if (!certificateStep.empty() && certificateStep.front() == '[') {
+      std::string certificateStep;
+      bool emittedCertificate = false;
+      auto emitCertificateStep = [&](const std::string& stepJson) {
+        emittedCertificate = true;
+        std::string identifiedStepJson = certificateJsonWithStepIds(u, stepJson);
+        _certificateSteps.push_back(identifiedStepJson);
+        out << "megalodon_certificate_step("
+            << u->number() << ','
+            << stepJson
+            << ").\n";
+      };
+      auto emitCertificateSteps = [&](const std::string& stepsJson) {
+        emittedCertificate = true;
+        std::string identifiedStepsJson = certificateJsonWithStepIds(u, stepsJson);
+        _certificateSteps.push_back(identifiedStepsJson);
+        out << "megalodon_certificate_steps("
+            << u->number() << ','
+            << stepsJson
+            << ").\n";
+      };
+      if (certificateDefinitionInputStepJson(u, certificateStep)) {
+        emitCertificateStep(certificateStep);
+      } else if (hasNontrivialReplaySubstitution
+        && certificateSubstitutedResolutionStepsJson(u, replayInfo, certificateStep)) {
         emitCertificateSteps(certificateStep);
-      } else {
-        emitCertificateStep(certificateStep);
-      }
-    } else if (certificateTruthConflictResolutionStepJson(u, replayInfo, certificateStep)) {
-      if (!certificateStep.empty() && certificateStep.front() == '[') {
+      } else if ((rule == Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION
+          || rule == Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION)
+        && certificateSubstitutedResolutionStepsJson(u, replayInfo, certificateStep)) {
         emitCertificateSteps(certificateStep);
-      } else {
+      } else if ((rule == Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION
+          || rule == Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION)
+        && certificateSatSubsumptionResolutionStepsJson(u, certificateStep)) {
+        if (!certificateStep.empty() && certificateStep.front() == '[') {
+          emitCertificateSteps(certificateStep);
+        } else {
+          emitCertificateStep(certificateStep);
+        }
+      } else if (certificateResolveStepJson(u, certificateStep)) {
         emitCertificateStep(certificateStep);
-      }
-    } else if (certificateTrivialInequalityRemovalStepsJson(u, certificateStep)) {
-      emitCertificateSteps(certificateStep);
-    } else if (certificateEqualityResolutionStepJson(u, replayInfo, certificateStep)) {
-      if (!certificateStep.empty() && certificateStep.front() == '[') {
+      } else if (certificateUnitResultingResolutionStepsJson(u, certificateStep)) {
         emitCertificateSteps(certificateStep);
-      } else {
-        emitCertificateStep(certificateStep);
-      }
-    } else if (certificateFactorStepJson(u, certificateStep)) {
-      emitCertificateStep(certificateStep);
-    } else if (certificateCondensationStepsJson(u, certificateStep)) {
-      emitCertificateSteps(certificateStep);
-    } else if (certificateAvatarRefutationStepJson(u, certificateStep)) {
-      emitCertificateStep(certificateStep);
-    } else if (certificateDefinitionRewriteChainStepJson(u, certificateStep)) {
-      emitCertificateStep(certificateStep);
-    } else if (certificateBoolSimplificationStepJson(u, certificateStep)) {
-      emitCertificateStep(certificateStep);
-    } else if (certificateInequalitySplittingStepJson(u, certificateStep)) {
-      emitCertificateStep(certificateStep);
-    } else if (certificateEqualityFactoringStepJson(u, replayInfo, certificateStep)) {
-      if (!certificateStep.empty() && certificateStep.front() == '[') {
+      } else if (certificateSubstitutedResolutionStepsJson(u, replayInfo, certificateStep)) {
         emitCertificateSteps(certificateStep);
-      } else {
+      } else if (certificateExtensionalityResolutionStepsJson(u, certificateStep)) {
+        emitCertificateSteps(certificateStep);
+      } else if (certificateSatSubsumptionResolutionStepsJson(u, certificateStep)) {
+        if (!certificateStep.empty() && certificateStep.front() == '[') {
+          emitCertificateSteps(certificateStep);
+        } else {
+          emitCertificateStep(certificateStep);
+        }
+      } else if (certificateTruthConflictResolutionStepJson(u, replayInfo, certificateStep)) {
+        if (!certificateStep.empty() && certificateStep.front() == '[') {
+          emitCertificateSteps(certificateStep);
+        } else {
+          emitCertificateStep(certificateStep);
+        }
+      } else if (certificateTrivialInequalityRemovalStepsJson(u, certificateStep)) {
+        emitCertificateSteps(certificateStep);
+      } else if (certificateEqualityResolutionStepJson(u, replayInfo, certificateStep)) {
+        if (!certificateStep.empty() && certificateStep.front() == '[') {
+          emitCertificateSteps(certificateStep);
+        } else {
+          emitCertificateStep(certificateStep);
+        }
+      } else if (certificateFactorStepJson(u, certificateStep)) {
         emitCertificateStep(certificateStep);
+      } else if (certificateCondensationStepsJson(u, certificateStep)) {
+        emitCertificateSteps(certificateStep);
+      } else if (certificateAvatarRefutationStepJson(u, certificateStep)) {
+        emitCertificateStep(certificateStep);
+      } else if (certificateDefinitionRewriteChainStepJson(u, certificateStep)) {
+        emitCertificateStep(certificateStep);
+      } else if (certificateBoolSimplificationStepJson(u, certificateStep)) {
+        emitCertificateStep(certificateStep);
+      } else if (certificateInequalitySplittingStepJson(u, certificateStep)) {
+        emitCertificateStep(certificateStep);
+      } else if (certificateEqualityFactoringStepJson(u, replayInfo, certificateStep)) {
+        if (!certificateStep.empty() && certificateStep.front() == '[') {
+          emitCertificateSteps(certificateStep);
+        } else {
+          emitCertificateStep(certificateStep);
+        }
+      } else if (certificateDemodulationStepsJson(u, replayInfo, certificateStep)) {
+        emitCertificateSteps(certificateStep);
+      } else if (certificateParamodulateStepJson(u, replayInfo, certificateStep)) {
+        emitCertificateStep(certificateStep);
+      } else if (certificateParamodulateThenSymmetryStepsJson(u, certificateStep)) {
+        emitCertificateSteps(certificateStep);
+      } else if (certificateSuperpositionStepsJson(u, replayInfo, certificateStep)) {
+        emitCertificateSteps(certificateStep);
       }
-    } else if (certificateDemodulationStepsJson(u, replayInfo, certificateStep)) {
-      emitCertificateSteps(certificateStep);
-    } else if (certificateParamodulateStepJson(u, replayInfo, certificateStep)) {
-      emitCertificateStep(certificateStep);
-    } else if (certificateParamodulateThenSymmetryStepsJson(u, certificateStep)) {
-      emitCertificateSteps(certificateStep);
-    } else if (certificateSuperpositionStepsJson(u, replayInfo, certificateStep)) {
-      emitCertificateSteps(certificateStep);
-    }
-    if (!emittedCertificate) {
-      std::ostringstream fallback;
-      fallback << "{\"rule\":\"input\","
-               << "\"source\":" << certificateFallbackSourceJson(u) << "}";
-      std::string fallbackStep = certificateJsonWithStepIds(u, fallback.str());
-      if (fallbackStep.find("\"clause\"") != std::string::npos) {
-        _certificateSteps.push_back(fallbackStep);
+      if (!emittedCertificate) {
+        std::ostringstream fallback;
+        fallback << "{\"rule\":\"input\","
+                 << "\"source\":" << certificateFallbackSourceJson(u) << "}";
+        std::string fallbackStep = certificateJsonWithStepIds(u, fallback.str());
+        if (fallbackStep.find("\"clause\"") != std::string::npos) {
+          _certificateSteps.push_back(fallbackStep);
+        }
       }
     }
     std::string nativeStep;

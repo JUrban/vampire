@@ -63,9 +63,10 @@ state, or library-specific Megalodon names.
 
 ## Current Export Checkpoint
 
-The old JSON/rich-export path is a diagnostic prototype only. It should not be
-printed as part of the default `--proof megalodon` artifact and it must not be
-used for counted proof reconstruction.
+The old JSON/rich-export path is a diagnostic prototype only. It is not printed
+as part of the default `--proof megalodon` artifact and it must not be used for
+counted proof reconstruction. Set `VAMPIRE_MEGALODON_LEGACY_JSON=1` only for
+explicit legacy diagnostics.
 
 The current branch emits a native S-expression block:
 
