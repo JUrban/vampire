@@ -138,6 +138,7 @@ private:
   std::string certificatePositionSexpr(const std::vector<unsigned>& position) const;
   bool certificateSource(Kernel::Unit* unit, std::string& result);
   bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result);
+  bool certificatePredicateDefinitionSymbol(Kernel::Formula* formula, std::string& result);
   bool certificateFormulaNativeLiteralSexpr(Kernel::Formula* formula, bool& positive, std::string& atom);
   bool certificateFormulaNativeLiteralSexpr(Kernel::Formula* formula, std::string& result);
   bool certificateInputStepSexpr(Kernel::Unit* unit, std::string& result);

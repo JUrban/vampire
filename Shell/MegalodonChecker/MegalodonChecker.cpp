@@ -1707,6 +1707,82 @@ bool MegalodonChecker::certificateCnfFormulaClauseStepSexpr(Kernel::Unit* unit, 
   return true;
 }
 
+bool MegalodonChecker::certificatePredicateDefinitionSymbol(Kernel::Formula* formula, std::string& result)
+{
+  auto isFalseFormula = [](Kernel::Formula* candidate) {
+    return candidate != nullptr && candidate->connective() == Kernel::FALSE;
+  };
+  auto isFoolConstant = [](Kernel::TermList term, bool value) {
+    return term.isTerm()
+      && !term.term()->isSpecial()
+      && env.signature->isFoolConstantSymbol(value, term.term()->functor());
+  };
+  auto termHeadSymbol = [&](Kernel::TermList term, std::string& symbol) {
+    while (term.isApplication()) {
+      term = term.lhs();
+    }
+    if (!term.isTerm() || term.term()->isSpecial()) {
+      return false;
+    }
+    symbol = functionName(term.term()->functor());
+    return true;
+  };
+  auto atomHeadSymbol = [&](Kernel::Formula* atom, std::string& symbol) {
+    if (atom == nullptr) {
+      return false;
+    }
+    if (atom->connective() == Kernel::BOOL_TERM) {
+      return termHeadSymbol(atom->getBooleanTerm(), symbol);
+    }
+    if (atom->connective() != Kernel::LITERAL) {
+      return false;
+    }
+    Kernel::Literal* literal = atom->literal();
+    Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
+    if (!positive->isEquality()) {
+      symbol = predicateName(positive->functor());
+      return true;
+    }
+    Kernel::TermList left = *positive->nthArgument(0);
+    Kernel::TermList right = *positive->nthArgument(1);
+    if (isFoolConstant(left, true) || isFoolConstant(left, false)) {
+      return termHeadSymbol(right, symbol);
+    }
+    if (isFoolConstant(right, true) || isFoolConstant(right, false)) {
+      return termHeadSymbol(left, symbol);
+    }
+    return false;
+  };
+  std::function<bool(Kernel::Formula*, std::string&)> negativeDefiniendumSymbol =
+    [&](Kernel::Formula* candidate, std::string& symbol) -> bool {
+      if (candidate == nullptr) {
+        return false;
+      }
+      switch (candidate->connective()) {
+      case Kernel::FORALL:
+        return negativeDefiniendumSymbol(candidate->qarg(), symbol);
+      case Kernel::OR: {
+        auto args = candidate->args()->iter();
+        while (args.hasNext()) {
+          if (negativeDefiniendumSymbol(args.next(), symbol)) {
+            return true;
+          }
+        }
+        return false;
+      }
+      case Kernel::IMP:
+        return isFalseFormula(candidate->right()) && atomHeadSymbol(candidate->left(), symbol);
+      case Kernel::NOT:
+        return atomHeadSymbol(candidate->uarg(), symbol);
+      case Kernel::LITERAL:
+        return candidate->literal()->isNegative() && atomHeadSymbol(candidate, symbol);
+      default:
+        return false;
+      }
+    };
+  return negativeDefiniendumSymbol(formula, result);
+}
+
 bool MegalodonChecker::certificatePredicateDefinitionStepSexpr(Kernel::Unit* unit, std::string& result)
 {
   if (unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::PREDICATE_DEFINITION) {
@@ -1723,7 +1799,10 @@ bool MegalodonChecker::certificatePredicateDefinitionStepSexpr(Kernel::Unit* uni
   if (!certificateFormulaTermSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), formula)) {
     return false;
   }
-  const std::string symbolName = predicateName(symbols.top().second);
+  std::string symbolName;
+  if (!certificatePredicateDefinitionSymbol(static_cast<Kernel::FormulaUnit*>(unit)->formula(), symbolName)) {
+    symbolName = predicateName(symbols.top().second);
+  }
   result = "(predicate_definition " + sexprQuote("u" + std::to_string(unit->number()))
     + " (symbol " + sexprQuote(symbolName) + ")"
     + " (result (formula " + formula + ")))";
