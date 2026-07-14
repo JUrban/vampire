@@ -213,6 +213,7 @@ private:
   unsigned _proofSearchCalls = 0;
   unsigned _renderDepth = 0;
   std::vector<std::string> _certificateSteps;
+  std::vector<std::string> _certificateNativeMetadata;
   std::vector<std::string> _certificateNativeSteps;
 };
 
