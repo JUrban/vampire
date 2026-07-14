@@ -552,15 +552,72 @@ bool MegalodonChecker::certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, 
     return out.str();
   };
 
+  auto satClauseAsSplitClauseSexpr = [&](SAT::SATClause* clause, std::string& rendered) {
+    if (clause == nullptr) {
+      return false;
+    }
+    std::ostringstream out;
+    out << "(clause";
+    for (SATLiteral literal : clause->iter()) {
+      out << " (" << (literal.positive() ? "pos" : "neg")
+          << " (TMH " << sexprQuote("split_" + std::to_string(literal.var())) << "))";
+    }
+    out << ')';
+    rendered = out.str();
+    return true;
+  };
+
+  auto syntheticAvatarOriginStepSexpr = [&](Kernel::Unit* origin, SAT::SATClause* clause, std::string& rendered) {
+    std::string resultClause;
+    if (origin == nullptr || !satClauseAsSplitClauseSexpr(clause, resultClause)) {
+      return false;
+    }
+    std::ostringstream out;
+    out << "(avatar_split " << sexprQuote("u" + std::to_string(origin->number())) << " (parents";
+    for (Kernel::Unit* parent : iterTraits(origin->getParents())) {
+      if (_certificateNativeStepIds.find(parent->number()) != _certificateNativeStepIds.end()) {
+        out << ' ' << sexprQuote("u" + std::to_string(parent->number()));
+      }
+    }
+    out << ") (result " << resultClause << "))";
+    rendered = out.str();
+    return true;
+  };
+
   std::vector<std::string> satClauses;
   std::vector<std::string> parentIds;
+  std::vector<std::string> originSteps;
   std::string satProof;
   if (SAT::SATClause* refutation = unit->inference().satPremise()) {
     satProof = satProofSexpr(refutation);
     SAT::SATInference::visitFOConversions(refutation, [&](SAT::SATClause* clause) {
       Kernel::Unit* origin = clause->inference()->foConversion()->getOrigin();
+      if (origin == nullptr) {
+        return;
+      }
       parentIds.push_back("u" + std::to_string(origin->number()));
       satClauses.push_back(satClauseSexpr(clause));
+      if (origin != nullptr
+        && origin != unit
+        && _certificateNativeStepIds.find(origin->number()) == _certificateNativeStepIds.end()) {
+        std::string originStep;
+        const Kernel::InferenceRule& originRule = origin->inference().rule();
+        bool emitted =
+          certificateAvatarSplitStepSexpr(origin, originStep)
+          || certificateAvatarContradictionStepSexpr(origin, originStep);
+        if (!emitted) {
+          emitted = syntheticAvatarOriginStepSexpr(origin, clause, originStep);
+        }
+        if (!emitted
+          && originRule != Kernel::InferenceRule::AVATAR_REFUTATION
+          && originRule != Kernel::InferenceRule::AVATAR_REFUTATION_SMT) {
+          emitted = certificateNativeStepSexpr(origin, nullptr, originStep);
+        }
+        if (emitted) {
+          _certificateNativeStepIds.insert(origin->number());
+          originSteps.push_back(originStep);
+        }
+      }
     });
   }
 
@@ -583,6 +640,9 @@ bool MegalodonChecker::certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, 
   }
 
   std::ostringstream out;
+  for (const std::string& originStep : originSteps) {
+    out << originStep << "\n  ";
+  }
   out << "(avatar_refutation " << sexprQuote("u" + std::to_string(unit->number()));
   if (!parentIds.empty()) {
     out << " (parents";
@@ -21326,7 +21386,9 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
       }
     }
     if (emittedNativeStep) {
-      _certificateNativeSteps.push_back(nativeStep);
+      if (_certificateNativeStepIds.insert(u->number()).second) {
+        _certificateNativeSteps.push_back(nativeStep);
+      }
     }
   }
   if (u->isClause()) {
@@ -21448,7 +21510,9 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
     }
     std::string nativeStep;
     if (certificateNativeStepSexpr(u, replayInfo, nativeStep)) {
-      _certificateNativeSteps.push_back(nativeStep);
+      if (_certificateNativeStepIds.insert(u->number()).second) {
+        _certificateNativeSteps.push_back(nativeStep);
+      }
     }
   }
   out << "megalodon_step_replay_kind("

@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <ostream>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -217,6 +218,7 @@ private:
   std::vector<std::string> _certificateSteps;
   std::vector<std::string> _certificateNativeMetadata;
   std::vector<std::string> _certificateNativeSteps;
+  std::set<unsigned> _certificateNativeStepIds;
 };
 
 } // namespace Shell
