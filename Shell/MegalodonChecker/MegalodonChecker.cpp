@@ -3357,6 +3357,22 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     if (!certificateClauseSexpr(unit->asClause(), clause)) {
       return fail("urr macro final clause render failed");
     }
+    std::vector<std::string> splitLiterals;
+    auto appendUniqueSplitLiterals = [&](Kernel::Clause* clause) {
+      std::vector<std::string> rendered;
+      if (!appendCertificateSplitLiteralsSexpr(clause, rendered)) {
+        return false;
+      }
+      for (const std::string& literal : rendered) {
+        if (std::find(splitLiterals.begin(), splitLiterals.end(), literal) == splitLiterals.end()) {
+          splitLiterals.push_back(literal);
+        }
+      }
+      return true;
+    };
+    if (!appendUniqueSplitLiterals(urr->mainParent)) {
+      return fail("urr macro main split render failed");
+    }
     std::ostringstream out;
     out << "(unit_resulting_resolution " << sexprQuote(unitId)
         << " (main " << sexprQuote("u" + std::to_string(urr->mainParent->number())) << ")"
@@ -3369,9 +3385,11 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
       if (!certificateLiteralSexpr(trace.selected, selected)
         || !certificateLiteralSexpr(trace.selectedSubstituted, selectedSubstituted)
         || !certificateLiteralSexpr(trace.unitSubstituted, unitSubstituted)
-        || !renderedLiterals(trace.remainingAfter, remaining)) {
+        || !renderedLiterals(trace.remainingAfter, remaining)
+        || !appendUniqueSplitLiterals(trace.unitParent)) {
         return fail("urr macro trace render failed");
       }
+      remaining.insert(remaining.end(), splitLiterals.begin(), splitLiterals.end());
       out << " (step"
           << " (unit " << sexprQuote("u" + std::to_string(trace.unitParent->number())) << ")"
           << " (selected " << selected << ")"
@@ -3952,6 +3970,7 @@ bool MegalodonChecker::certificateResolveStepSexpr(Kernel::Unit* unit, std::stri
       rule != Kernel::InferenceRule::RESOLUTION
       && rule != Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION
       && rule != Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION
+      && rule != Kernel::InferenceRule::FORWARD_LITERAL_REWRITING
     )) {
     return false;
   }
@@ -4287,6 +4306,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
       rule != Kernel::InferenceRule::RESOLUTION
       && rule != Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION
       && rule != Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION
+      && rule != Kernel::InferenceRule::FORWARD_LITERAL_REWRITING
     )) {
     return false;
   }
@@ -4761,7 +4781,8 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
   }
 
   if (rule == Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION
-    || rule == Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION) {
+    || rule == Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION
+    || rule == Kernel::InferenceRule::FORWARD_LITERAL_REWRITING) {
     struct ResolutionPivotCandidate {
       std::size_t mainParentIndex;
       unsigned selectedIndex;
