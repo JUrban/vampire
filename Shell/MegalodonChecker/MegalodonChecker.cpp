@@ -3651,6 +3651,9 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
         std::cerr << "megalodon native URR current for u" << unit->number()
                   << ": " << clauseSexprFromRendered(currentRendered) << std::endl;
       }
+      if (traceMacroSexpr()) {
+        return true;
+      }
       return fail("current substitution match failed");
     }
     previousTraceSelectedLiteralSexpr = traceSelectedLiteralSexpr;
