@@ -429,8 +429,63 @@ bool MegalodonChecker::certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, 
     return out.str();
   };
 
+  auto satProofSexpr = [&](SAT::SATClause* root) {
+    struct CompareSATClauses {
+      bool operator()(SAT::SATClause* left, SAT::SATClause* right) const
+      {
+        return left->number < right->number;
+      }
+    };
+
+    std::set<SAT::SATClause*, CompareSATClauses> proof;
+    std::vector<SAT::SATClause*> todo;
+    todo.push_back(root);
+    while (!todo.empty()) {
+      SAT::SATClause* current = todo.back();
+      todo.pop_back();
+      if (current == nullptr || !proof.insert(current).second) {
+        continue;
+      }
+      SAT::SATInference* inference = current->inference();
+      if (inference == nullptr || inference->getType() != SAT::SATInference::PROP_INF) {
+        continue;
+      }
+      SAT::PropInference* prop = static_cast<SAT::PropInference*>(inference);
+      for (SAT::SATClause* parent : iterTraits(prop->getPremises()->iter())) {
+        todo.push_back(parent);
+      }
+    }
+
+    std::ostringstream out;
+    out << "(sat_proof";
+    for (SAT::SATClause* clause : proof) {
+      SAT::SATInference* inference = clause->inference();
+      if (inference == nullptr) {
+        return std::string();
+      }
+      switch (inference->getType()) {
+        case SAT::SATInference::FO_CONVERSION:
+          out << " (sat_input " << clause->number << ' ' << satClauseSexpr(clause) << ')';
+          break;
+        case SAT::SATInference::PROP_INF: {
+          SAT::PropInference* prop = static_cast<SAT::PropInference*>(inference);
+          out << " (sat_rup " << clause->number << " (parents";
+          for (SAT::SATClause* parent : iterTraits(prop->getPremises()->iter())) {
+            out << ' ' << parent->number;
+          }
+          out << ") (result " << satClauseSexpr(clause) << "))";
+          break;
+        }
+      }
+    }
+    out << ')';
+    return out.str();
+  };
+
   std::vector<std::string> satClauses;
+  std::string satProof;
   if (SAT::SATClause* refutation = unit->inference().satPremise()) {
+    satProof = satProofSexpr(refutation);
     SAT::SATInference::visitFOConversions(refutation, [&](SAT::SATClause* clause) {
       satClauses.push_back(satClauseSexpr(clause));
     });
@@ -459,7 +514,11 @@ bool MegalodonChecker::certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, 
   for (const std::string& clause : satClauses) {
     out << ' ' << clause;
   }
-  out << ") (result (clause)))";
+  out << ')';
+  if (!satProof.empty()) {
+    out << ' ' << satProof;
+  }
+  out << " (result (clause)))";
   result = out.str();
   return true;
 }
