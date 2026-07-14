@@ -9869,13 +9869,20 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
   };
   auto emit = [&](const std::string& kind, const std::vector<std::string>& fields) {
     out << "megalodon_step_extra(" << u->number() << ',' << quote(kind) << ",[";
+    std::ostringstream metadata;
+    metadata << "(step_extra " << sexprQuote("u" + std::to_string(u->number()))
+             << ' ' << sexprQuote(kind) << " (";
     for (std::size_t i = 0; i < fields.size(); ++i) {
       if (i != 0) {
         out << ',';
+        metadata << ' ';
       }
       out << quote(fields[i]);
+      metadata << sexprQuote(fields[i]);
     }
     out << "]).\n";
+    metadata << "))";
+    _certificateNativeMetadata.push_back(metadata.str());
   };
   auto addParentSubstitutionFields = [&](std::vector<std::string>& fields) {
     if (info == nullptr || info->premises.size() != info->substitutionForBanksSub.size()) {
