@@ -1107,25 +1107,41 @@ bool MegalodonChecker::certificateSource(Kernel::Unit* unit, std::string& result
 {
   Kernel::Unit* sourceUnit = unit;
   std::string sourceKind = "axiom";
-  if (unit->inference().rule() == Kernel::InferenceRule::NEGATED_CONJECTURE) {
+  bool negatedConjectureInference = unit->inference().rule() == Kernel::InferenceRule::NEGATED_CONJECTURE;
+  if (negatedConjectureInference) {
     UnitIterator parentIterator = unit->getParents();
     if (parentIterator.hasNext()) {
       sourceUnit = parentIterator.next();
     }
-    if (sourceUnit->inputType() == Kernel::UnitInputType::CONJECTURE
-      || sourceUnit->inputType() == Kernel::UnitInputType::NEGATED_CONJECTURE) {
-      sourceKind = "negated_conjecture";
-    }
-  } else if (unit->inputType() == Kernel::UnitInputType::NEGATED_CONJECTURE) {
-    sourceKind = "negated_conjecture";
-  } else if (unit->inputType() == Kernel::UnitInputType::CONJECTURE) {
-    sourceKind = "conjecture";
   }
+
   std::string sourceRole;
-  if (sourceKind == "axiom"
-    && Parse::TPTP::findUnitRole(sourceUnit, sourceRole)
-    && sourceRole == "definition") {
-    sourceKind = "definition";
+  bool hasSourceRole = Parse::TPTP::findUnitRole(sourceUnit, sourceRole);
+  if (hasSourceRole) {
+    if (sourceRole == "definition") {
+      sourceKind = "definition";
+    } else if (sourceRole == "conjecture") {
+      if (negatedConjectureInference || unit->inputType() == Kernel::UnitInputType::NEGATED_CONJECTURE) {
+        sourceKind = "negated_conjecture";
+      } else {
+        sourceKind = "conjecture";
+      }
+    } else if (sourceRole == "negated_conjecture") {
+      sourceKind = "negated_conjecture";
+    } else {
+      sourceKind = "axiom";
+    }
+  } else {
+    if (negatedConjectureInference) {
+      if (sourceUnit->inputType() == Kernel::UnitInputType::CONJECTURE
+        || sourceUnit->inputType() == Kernel::UnitInputType::NEGATED_CONJECTURE) {
+        sourceKind = "negated_conjecture";
+      }
+    } else if (unit->inputType() == Kernel::UnitInputType::NEGATED_CONJECTURE) {
+      sourceKind = "negated_conjecture";
+    } else if (unit->inputType() == Kernel::UnitInputType::CONJECTURE) {
+      sourceKind = "conjecture";
+    }
   }
 
   std::string sourceName = "u" + std::to_string(sourceUnit->number());
