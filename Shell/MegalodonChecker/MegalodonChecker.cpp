@@ -11268,8 +11268,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         std::size_t totalPairText = 0;
         const unsigned pairLimit = 48;
         const std::size_t textLimit = 180000;
-        std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned)> collectPairs =
-          [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth) {
+        std::vector<std::tuple<std::string, std::string, std::string>> foolPairs;
+        std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned, std::string)> collectPairs =
+          [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth, std::string path) {
             if (left == nullptr || right == nullptr || depth > 24 || pairCount >= pairLimit || totalPairText >= textLimit) {
               return;
             }
@@ -11284,6 +11285,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                 unsigned index = pairCount++;
                 fields.push_back("pair_" + std::to_string(index) + "_source=" + leftText);
                 fields.push_back("pair_" + std::to_string(index) + "_target=" + rightText);
+                fields.push_back("pair_" + std::to_string(index) + "_path=" + path);
+                foolPairs.push_back(std::make_tuple(leftText, rightText, path));
               }
             }
             if (left->connective() != right->connective()) {
@@ -11294,29 +11297,53 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               case Kernel::OR: {
                 Kernel::FormulaList::Iterator leftIt(left->args());
                 Kernel::FormulaList::Iterator rightIt(right->args());
+                unsigned index = 0;
                 while (leftIt.hasNext() && rightIt.hasNext()) {
-                  collectPairs(leftIt.next(), rightIt.next(), depth + 1);
+                  collectPairs(leftIt.next(), rightIt.next(), depth + 1, path + ".arg[" + std::to_string(index) + "]");
+                  ++index;
                 }
                 return;
               }
               case Kernel::IMP:
               case Kernel::IFF:
               case Kernel::XOR:
-                collectPairs(left->left(), right->left(), depth + 1);
-                collectPairs(left->right(), right->right(), depth + 1);
+                collectPairs(left->left(), right->left(), depth + 1, path + ".left");
+                collectPairs(left->right(), right->right(), depth + 1, path + ".right");
                 return;
               case Kernel::NOT:
-                collectPairs(left->uarg(), right->uarg(), depth + 1);
+                collectPairs(left->uarg(), right->uarg(), depth + 1, path + ".not");
                 return;
               case Kernel::FORALL:
               case Kernel::EXISTS:
-                collectPairs(left->qarg(), right->qarg(), depth + 1);
+                collectPairs(left->qarg(), right->qarg(), depth + 1, path + ".body");
                 return;
               default:
                 return;
             }
           };
-        collectPairs(source, target, 0);
+        collectPairs(source, target, 0, "root");
+        std::string sourceFormula;
+        std::string resultFormula;
+        if (certificateFormulaTermSexpr(source, sourceFormula)
+          && certificateFormulaTermSexpr(target, resultFormula)
+          && sourceFormula != resultFormula
+          && !foolPairs.empty()) {
+          std::vector<std::string> kernelFields;
+          kernelFields.push_back("source_unit=u" + std::to_string(parent->number()));
+          kernelFields.push_back("parent_0_unit=u" + std::to_string(parent->number()));
+          kernelFields.push_back("source_formula=" + sourceFormula);
+          kernelFields.push_back("parent_0_formula=" + sourceFormula);
+          kernelFields.push_back("proof_parent_count=1");
+          kernelFields.push_back("result_formula=" + resultFormula);
+          kernelFields.push_back("transformation_pair_count=" + std::to_string(foolPairs.size()));
+          for (std::size_t index = 0; index < foolPairs.size(); ++index) {
+            const auto& [leftText, rightText, path] = foolPairs[index];
+            kernelFields.push_back("pair_" + std::to_string(index) + "_source=" + leftText);
+            kernelFields.push_back("pair_" + std::to_string(index) + "_target=" + rightText);
+            kernelFields.push_back("pair_" + std::to_string(index) + "_path=" + path);
+          }
+          emitKernelV1("fool_formula", kernelFields);
+        }
         emit("fool", fields);
       }
     }
