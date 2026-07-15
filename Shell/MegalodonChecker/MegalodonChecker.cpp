@@ -10077,6 +10077,19 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
   auto substitutionSexprForKernel = [&](const Kernel::Substitution& substitution, std::string& text) {
     return certificateSubstitutionSexpr(substitution, text);
   };
+  auto satClauseSexprForKernel = [](SAT::SATClause* clause, std::string& text) {
+    if (clause == nullptr) {
+      return false;
+    }
+    std::ostringstream out;
+    out << "(sat_clause";
+    for (SATLiteral literal : clause->iter()) {
+      out << " (lit " << literal.var() << ' ' << (literal.positive() ? "true" : "false") << ')';
+    }
+    out << ')';
+    text = out.str();
+    return true;
+  };
   auto addKernelParentFields = [&](std::vector<std::string>& fields) {
     fields.push_back("parent_count=" + std::to_string(parentClauses.size()));
     for (std::size_t parentIndex = 0; parentIndex < parentClauses.size(); ++parentIndex) {
@@ -10142,6 +10155,76 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     std::string rendered;
     if (termSexprForKernel(term, rendered)) {
       fields.push_back(name + "=" + rendered);
+    }
+  };
+  auto addKernelSatProofFields = [&](std::vector<std::string>& fields, SAT::SATClause* root) {
+    struct CompareSATClauses {
+      bool operator()(SAT::SATClause* left, SAT::SATClause* right) const
+      {
+        return left->number < right->number;
+      }
+    };
+
+    std::set<SAT::SATClause*, CompareSATClauses> proof;
+    std::vector<SAT::SATClause*> todo;
+    todo.push_back(root);
+    while (!todo.empty()) {
+      SAT::SATClause* current = todo.back();
+      todo.pop_back();
+      if (current == nullptr || !proof.insert(current).second) {
+        continue;
+      }
+      SAT::SATInference* inference = current->inference();
+      if (inference == nullptr || inference->getType() != SAT::SATInference::PROP_INF) {
+        continue;
+      }
+      SAT::PropInference* prop = static_cast<SAT::PropInference*>(inference);
+      for (SAT::SATClause* parent : iterTraits(prop->getPremises()->iter())) {
+        todo.push_back(parent);
+      }
+    }
+
+    fields.push_back("sat_proof_step_count=" + std::to_string(proof.size()));
+    std::size_t proofIndex = 0;
+    for (SAT::SATClause* clause : proof) {
+      std::string prefix = "sat_proof_step_" + std::to_string(proofIndex);
+      fields.push_back(prefix + "_id=" + std::to_string(clause->number));
+      std::string rendered;
+      if (satClauseSexprForKernel(clause, rendered)) {
+        fields.push_back(prefix + "_clause=" + rendered);
+      }
+      SAT::SATInference* inference = clause->inference();
+      if (inference == nullptr) {
+        fields.push_back(prefix + "_kind=unknown");
+        ++proofIndex;
+        continue;
+      }
+      switch (inference->getType()) {
+        case SAT::SATInference::FO_CONVERSION: {
+          fields.push_back(prefix + "_kind=input");
+          Kernel::Unit* origin = inference->foConversion()->getOrigin();
+          if (origin != nullptr) {
+            fields.push_back(prefix + "_origin_unit=u" + std::to_string(origin->number()));
+          }
+          break;
+        }
+        case SAT::SATInference::PROP_INF: {
+          fields.push_back(prefix + "_kind=rup");
+          SAT::PropInference* prop = static_cast<SAT::PropInference*>(inference);
+          unsigned parentIndex = 0;
+          for (SAT::SATClause* parent : iterTraits(prop->getPremises()->iter())) {
+            std::string parentPrefix = prefix + "_parent_" + std::to_string(parentIndex);
+            fields.push_back(parentPrefix + "_id=" + std::to_string(parent->number));
+            if (satClauseSexprForKernel(parent, rendered)) {
+              fields.push_back(parentPrefix + "_clause=" + rendered);
+            }
+            ++parentIndex;
+          }
+          fields.push_back(prefix + "_parent_count=" + std::to_string(parentIndex));
+          break;
+        }
+      }
+      ++proofIndex;
     }
   };
   auto addKernelSuperpositionRewriteFields =
@@ -10876,6 +10959,58 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         emit("avatar_split", fields);
       }
     }
+  }
+
+  if (u->isClause()
+    && (
+      u->inference().rule() == Kernel::InferenceRule::AVATAR_REFUTATION
+      || u->inference().rule() == Kernel::InferenceRule::AVATAR_REFUTATION_SMT
+    )
+    && u->asClause()->length() == 0) {
+    std::vector<std::string> kernelFields;
+    kernelFields.push_back("result_clause=(clause)");
+    if (SAT::SATClause* refutation = u->inference().satPremise()) {
+      std::string refutationClause;
+      if (satClauseSexprForKernel(refutation, refutationClause)) {
+        kernelFields.push_back("sat_refutation_clause=" + refutationClause);
+      }
+      unsigned satInputIndex = 0;
+      SAT::SATInference::visitFOConversions(refutation, [&](SAT::SATClause* clause) {
+        std::string prefix = "sat_input_" + std::to_string(satInputIndex);
+        std::string rendered;
+        if (satClauseSexprForKernel(clause, rendered)) {
+          kernelFields.push_back(prefix + "_clause=" + rendered);
+        }
+        Kernel::Unit* origin = clause->inference()->foConversion()->getOrigin();
+        if (origin != nullptr) {
+          kernelFields.push_back(prefix + "_origin_unit=u" + std::to_string(origin->number()));
+        }
+        ++satInputIndex;
+      });
+      kernelFields.push_back("sat_input_count=" + std::to_string(satInputIndex));
+      addKernelSatProofFields(kernelFields, refutation);
+    } else {
+      unsigned satInputIndex = 0;
+      for (Kernel::Unit* parent : iterTraits(u->getParents())) {
+        const auto* parentExtra = env.proofExtra.find(parent);
+        if (parentExtra == nullptr) {
+          continue;
+        }
+        const auto* satExtra = static_cast<const Indexing::SATClauseExtra*>(parentExtra);
+        if (satExtra->clause == nullptr) {
+          continue;
+        }
+        std::string prefix = "sat_input_" + std::to_string(satInputIndex);
+        std::string rendered;
+        if (satClauseSexprForKernel(satExtra->clause, rendered)) {
+          kernelFields.push_back(prefix + "_clause=" + rendered);
+        }
+        kernelFields.push_back(prefix + "_origin_unit=u" + std::to_string(parent->number()));
+        ++satInputIndex;
+      }
+      kernelFields.push_back("sat_input_count=" + std::to_string(satInputIndex));
+    }
+    emitKernelV1("avatar_refutation", kernelFields);
   }
 
   auto isNormalFormRule = [](Kernel::InferenceRule rule) {
