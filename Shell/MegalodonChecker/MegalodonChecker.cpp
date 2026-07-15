@@ -9606,12 +9606,6 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
       }
       return merged;
   };
-  auto substitutionSexprWithExtras =
-    [&](const Kernel::Substitution& substitution, const Kernel::Substitution& extras, std::string& rendered) {
-      Kernel::Substitution merged = substitutionWithExtras(substitution, extras);
-      return certificateSubstitutionSexpr(merged, rendered);
-  };
-
   std::vector<std::string> actualDirect;
   if (!appendCertificateClauseLiteralsSexpr(unit->asClause(), actualDirect)) {
     return fail("render actual clause");
@@ -9702,6 +9696,27 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
               substitutionWithExtras(directSubstitution(targetParentIndex), candidate.targetMatcher);
             Kernel::Substitution effectiveEqualitySubstitution =
               substitutionWithExtras(directSubstitution(equalityParentIndex), candidate.equalityMatcher);
+            auto forceEqualityOrientation =
+              [&](Kernel::Substitution& substitution) {
+                for (unsigned orientation = 0; orientation < 2; ++orientation) {
+                  Kernel::Substitution orientationSubstitution;
+                  Kernel::TermList originalFrom =
+                    *equalityLiteralCandidate->nthArgument(orientation == 0 ? 0 : 1);
+                  Kernel::TermList originalTo =
+                    *equalityLiteralCandidate->nthArgument(orientation == 0 ? 1 : 0);
+                  if (!matchTerm(matchTerm, originalFrom, candidate.effectiveFrom, orientationSubstitution)
+                    || !matchTerm(matchTerm, originalTo, candidate.effectiveTo, orientationSubstitution)) {
+                    continue;
+                  }
+                  Kernel::Substitution orientationCopy = orientationSubstitution;
+                  for (auto [var, term] : iterTraits(orientationCopy.items())) {
+                    substitution.rebind(var, term);
+                  }
+                  return true;
+                }
+                return false;
+              };
+            forceEqualityOrientation(effectiveEqualitySubstitution);
             std::vector<std::string> effectiveTargetClause;
             std::vector<std::string> effectiveEqualityClause;
             if (!substitutedClauseLiterals(parents[targetParentIndex], effectiveTargetSubstitution, effectiveTargetClause)
@@ -9742,28 +9757,68 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
             if (!expectedMatches) {
               continue;
             }
-            std::string targetSubst;
-            std::string equalitySubst;
             std::string fromSexpr;
             std::string toSexpr;
-            if (!substitutionSexprWithExtras(directSubstitution(targetParentIndex), candidate.targetMatcher, targetSubst)
-              || !substitutionSexprWithExtras(directSubstitution(equalityParentIndex), candidate.equalityMatcher, equalitySubst)
-              || !certificateTermSexpr(candidate.effectiveFrom, fromSexpr)
+            if (!certificateTermSexpr(candidate.effectiveFrom, fromSexpr)
               || !certificateTermSexpr(candidate.effectiveTo, toSexpr)) {
               return fail("render direct superposition");
             }
-            result =
-              "(superposition " + sexprQuote("u" + std::to_string(unit->number()))
-              + " (target " + sexprQuote("u" + std::to_string(parents[targetParentIndex]->number()))
-              + " " + std::to_string(targetIndex) + ")"
-              + " (equality " + sexprQuote("u" + std::to_string(parents[equalityParentIndex]->number()))
-              + " " + std::to_string(equalityIndex) + ") "
-              + targetSubst + " "
-              + equalitySubst + " "
+            const std::string stepBase = "u" + std::to_string(unit->number());
+            std::vector<std::string> steps;
+            auto maybeSubstituteParent =
+              [&](const std::string& substituteId,
+                  Kernel::Clause* parent,
+                  const Kernel::Substitution& substitution,
+                  std::string& parentId) {
+                std::string substitutionSexpr;
+                if (!certificateSubstitutionSexprForClause(substitution, parent, substitutionSexpr)) {
+                  return false;
+                }
+                if (substitutionSexpr == "(subst)") {
+                  return true;
+                }
+                std::string substituteStep;
+                if (!certificateSubstituteStepSexpr(substituteId, parentId, parent, substitution, substituteStep)) {
+                  return false;
+                }
+                steps.push_back(substituteStep);
+                parentId = substituteId;
+                return true;
+              };
+
+            std::string targetParentId = "u" + std::to_string(parents[targetParentIndex]->number());
+            std::string equalityParentId = "u" + std::to_string(parents[equalityParentIndex]->number());
+            if (!maybeSubstituteParent(
+                  stepBase + "_target_subst",
+                  parents[targetParentIndex],
+                  effectiveTargetSubstitution,
+                  targetParentId)
+              || !maybeSubstituteParent(
+                  stepBase + "_equality_subst",
+                  parents[equalityParentIndex],
+                  effectiveEqualitySubstitution,
+                  equalityParentId)) {
+              return fail("render direct superposition substitutions");
+            }
+            steps.push_back(
+              "(paramodulate " + sexprQuote(stepBase)
+              + " (equality " + sexprQuote(equalityParentId)
+              + " " + std::to_string(equalityIndex) + ")"
+              + " (target " + sexprQuote(targetParentId)
+              + " " + std::to_string(targetIndex) + ") "
               + certificatePositionSexpr(position)
               + " (from " + fromSexpr + ")"
               + " (to " + toSexpr + ")"
-              + " (result " + clauseSexprFromLiterals(actualDirect) + "))";
+              + " (result " + clauseSexprFromLiterals(actualDirect) + "))");
+
+            std::ostringstream out;
+            for (std::size_t i = 0; i < steps.size(); ++i) {
+              if (i != 0) {
+                out << "\n  ";
+              }
+              out << steps[i];
+            }
+            result = out.str();
             return true;
           }
         }
@@ -9874,40 +9929,14 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
     Kernel::TermList preferredRedex = Kernel::SubstHelper::apply(
       rewrite->rewrite.rewritten,
       replayInfo->substitutionForBanksSub[targetParentIndex]);
-    auto substitutionSexprWithExtras =
+    auto substitutionWithExtras =
       [&](const Kernel::Substitution& substitution,
-          const std::vector<std::pair<unsigned, Kernel::TermList>>& extraBindings,
-          std::string& rendered) {
-        std::map<unsigned, std::string> items;
-        Kernel::Substitution substitutionCopy = substitution;
-        for (auto [var, term] : iterTraits(substitutionCopy.items())) {
-          if (term.isVar() && term.var() == var) {
-            continue;
-          }
-          std::string termSexpr;
-          if (!certificateTermSexpr(term, termSexpr)) {
-            return false;
-          }
-          items[var] = "(" + sexprQuote(variableName(var)) + " " + termSexpr + ")";
-        }
+          const std::vector<std::pair<unsigned, Kernel::TermList>>& extraBindings) {
+        Kernel::Substitution merged = substitution;
         for (const auto& binding : extraBindings) {
-          if (binding.second.isVar() && binding.second.var() == binding.first) {
-            continue;
-          }
-          std::string termSexpr;
-          if (!certificateTermSexpr(binding.second, termSexpr)) {
-            return false;
-          }
-          items[binding.first] = "(" + sexprQuote(variableName(binding.first)) + " " + termSexpr + ")";
+          merged.rebind(binding.first, binding.second);
         }
-        std::ostringstream out;
-        out << "(subst";
-        for (const auto& item : items) {
-          out << ' ' << item.second;
-        }
-        out << ')';
-        rendered = out.str();
-        return true;
+        return merged;
     };
     auto emitSuperposition =
       [&](Kernel::TermList from,
@@ -9915,30 +9944,87 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
           const std::vector<unsigned>& position,
           const Kernel::Substitution& equalitySubstitution,
           const std::vector<std::pair<unsigned, Kernel::TermList>>& extraEqualityBindings) {
-      std::string targetSubst;
-      std::string equalitySubst;
       std::string fromSexpr;
       std::string toSexpr;
       std::string resultClause;
-      if (!certificateSubstitutionSexpr(replayInfo->substitutionForBanksSub[targetParentIndex], targetSubst)
-        || !substitutionSexprWithExtras(equalitySubstitution, extraEqualityBindings, equalitySubst)
-        || !certificateTermSexpr(from, fromSexpr)
+      if (!certificateTermSexpr(from, fromSexpr)
         || !certificateTermSexpr(to, toSexpr)
         || !certificateClauseSexpr(unit->asClause(), resultClause)) {
         return false;
       }
-      result =
-        "(superposition " + sexprQuote("u" + std::to_string(unit->number()))
-        + " (target " + sexprQuote("u" + std::to_string(parents[targetParentIndex]->number()))
-        + " " + std::to_string(targetIndex) + ")"
-        + " (equality " + sexprQuote("u" + std::to_string(parents[equalityParentIndex]->number()))
-        + " " + std::to_string(equalityIndex) + ") "
-        + targetSubst + " "
-        + equalitySubst + " "
+      const std::string stepBase = "u" + std::to_string(unit->number());
+      std::vector<std::string> steps;
+      auto maybeSubstituteParent =
+        [&](const std::string& substituteId,
+            Kernel::Clause* parent,
+            const Kernel::Substitution& substitution,
+            std::string& parentId) {
+          std::string substitutionSexpr;
+          if (!certificateSubstitutionSexprForClause(substitution, parent, substitutionSexpr)) {
+            return false;
+          }
+          if (substitutionSexpr == "(subst)") {
+            return true;
+          }
+          std::string substituteStep;
+          if (!certificateSubstituteStepSexpr(substituteId, parentId, parent, substitution, substituteStep)) {
+            return false;
+          }
+          steps.push_back(substituteStep);
+          parentId = substituteId;
+          return true;
+        };
+
+      std::string targetParentId = "u" + std::to_string(parents[targetParentIndex]->number());
+      std::string equalityParentId = "u" + std::to_string(parents[equalityParentIndex]->number());
+      Kernel::Substitution effectiveEqualitySubstitution =
+        substitutionWithExtras(equalitySubstitution, extraEqualityBindings);
+      for (unsigned orientation = 0; orientation < 2; ++orientation) {
+        Kernel::Substitution orientationSubstitution;
+        Kernel::TermList originalFrom =
+          *equalityLiteralCandidate->nthArgument(orientation == 0 ? 0 : 1);
+        Kernel::TermList originalTo =
+          *equalityLiteralCandidate->nthArgument(orientation == 0 ? 1 : 0);
+        if (!matchTerm(matchTerm, originalFrom, from, orientationSubstitution)
+          || !matchTerm(matchTerm, originalTo, to, orientationSubstitution)) {
+          continue;
+        }
+        Kernel::Substitution orientationCopy = orientationSubstitution;
+        for (auto [var, term] : iterTraits(orientationCopy.items())) {
+          effectiveEqualitySubstitution.rebind(var, term);
+        }
+        break;
+      }
+      if (!maybeSubstituteParent(
+            stepBase + "_target_subst",
+            parents[targetParentIndex],
+            replayInfo->substitutionForBanksSub[targetParentIndex],
+            targetParentId)
+        || !maybeSubstituteParent(
+            stepBase + "_equality_subst",
+            parents[equalityParentIndex],
+            effectiveEqualitySubstitution,
+            equalityParentId)) {
+        return false;
+      }
+      steps.push_back(
+        "(paramodulate " + sexprQuote(stepBase)
+        + " (equality " + sexprQuote(equalityParentId)
+        + " " + std::to_string(equalityIndex) + ")"
+        + " (target " + sexprQuote(targetParentId)
+        + " " + std::to_string(targetIndex) + ") "
         + certificatePositionSexpr(position)
         + " (from " + fromSexpr + ")"
         + " (to " + toSexpr + ")"
-        + " (result " + resultClause + "))";
+        + " (result " + resultClause + "))");
+      std::ostringstream out;
+      for (std::size_t i = 0; i < steps.size(); ++i) {
+        if (i != 0) {
+          out << "\n  ";
+        }
+        out << steps[i];
+      }
+      result = out.str();
       return true;
     };
     for (unsigned phase = 0; phase < 2; ++phase) {
@@ -9961,15 +10047,15 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
           std::vector<std::pair<unsigned, Kernel::TermList>> extraEqualityBindings;
           Kernel::TermList originalFrom = *equalityLiteralCandidate->nthArgument(direction == 0 ? 0 : 1);
           Kernel::TermList originalTo = *equalityLiteralCandidate->nthArgument(direction == 0 ? 1 : 0);
+          for (auto [var, term] : iterTraits(matcherCopy.items())) {
+            equalityOutputSubstitution.rebind(var, term);
+            extraEqualityBindings.push_back({var, term});
+          }
           if (originalFrom.isVar() && originalFrom != preferredRedex) {
             extraEqualityBindings.push_back({originalFrom.var(), preferredRedex});
           }
           if (originalTo.isVar() && originalTo != instantiatedTo) {
             extraEqualityBindings.push_back({originalTo.var(), instantiatedTo});
-          }
-          for (auto [var, term] : iterTraits(matcherCopy.items())) {
-            equalityOutputSubstitution.rebind(var, term);
-            extraEqualityBindings.push_back({var, term});
           }
           if (from.isVar() && from != preferredRedex) {
             extraEqualityBindings.push_back({from.var(), preferredRedex});
