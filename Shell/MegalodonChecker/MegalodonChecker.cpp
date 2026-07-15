@@ -10854,6 +10854,25 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           ++bindingIndex;
         }
         fields.push_back("parent_var_binding_count=" + std::to_string(bindingIndex));
+        {
+          std::vector<std::string> kernelFields;
+          kernelFields.push_back("source_unit=u" + std::to_string(mainParentUnit->number()));
+          std::string sourceClause;
+          if (clauseSexprForKernel(mainParent, sourceClause)) {
+            kernelFields.push_back("source_clause=" + sourceClause);
+            kernelFields.push_back("parent_0_clause=" + sourceClause);
+          }
+          if (u->isClause()) {
+            std::string resultClause;
+            if (clauseSexprForKernel(u->asClause(), resultClause)) {
+              kernelFields.push_back("result_clause=" + resultClause);
+            }
+          } else if (!targetText.empty()) {
+            kernelFields.push_back("result_formula=" + targetText);
+          }
+          kernelFields.insert(kernelFields.end(), fields.begin(), fields.end());
+          emitKernelV1("avatar_split", kernelFields);
+        }
         emit("avatar_split", fields);
       }
     }
