@@ -1,8 +1,8 @@
 # Megalodon Certificate Export Plan
 
-Date: 2026-07-12
+Date: 2026-07-15
 
-Branch: `vampire/megalodon1`
+Branch: `vampire/megalodon4`
 
 ## Decision
 
@@ -17,6 +17,15 @@ reports/vampire-megalodon-certificate-spec.md
 Vampire should emit that calculus directly, rather than adding more
 `megalodon_step_extra` fields for individual failing benchmarks.
 
+The July 15 audit tightened this decision: the existing broad native
+S-expression/replay implementation is useful as a regression oracle, but it
+must not keep growing as the main reconstruction architecture. New qualifying
+work should move detail into Vampire-emitted Prover9/Ivy-style primitive
+records while Vampire still has substitutions, literal positions, selected
+literals, ordering information, Skolem data, and AVATAR state. Megalodon should
+check those explicit records and elaborate the restricted core to native proof
+terms, not rediscover large transformations from before/after formulas.
+
 ## Initial Export Fragment
 
 The initial qualifying schedule should avoid AVATAR and higher-order-heavy
@@ -29,20 +38,22 @@ export:
 - duplicate deletion -> factoring,
 - empty-clause detection -> contradiction.
 
-The first native S-expression certificate version should contain only:
+The restricted native S-expression certificate milestone should contain only:
 
 - `input`,
-- `rename`,
 - `substitute`,
 - `resolve`,
 - `factor`,
 - `equality_resolution`,
+- `equality_symmetry`,
 - `paramodulate`,
-- `reflexive_simplify`,
+- `subsumption_resolution`,
 - `contradiction`.
 
-Skolemization is the first deferred macro constructor. AVATAR is explicitly not
-part of the initial fragment.
+Skolemization, formula preprocessing, predicate definitions, and AVATAR are
+deferred layers. They may be emitted for diagnostics and regression auditing,
+but they do not extend the restricted core unless Vampire expands them into
+small primitive records with a corresponding Megalodon native proof-term check.
 
 ## Export Requirements
 
@@ -87,9 +98,17 @@ Literals use Megalodon's S-expression term syntax, for example:
 ```
 
 Every promoted rule constructor must be emitted directly by Vampire in this
-native format and checked by the Megalodon OCaml importer. Python and JSON may
-still be used for corpus statistics or experiments, but not for accepted proof
-reconstruction.
+native format and checked by the Megalodon native importer. For counted core
+work, the target is a checked `Syntax.tm * Syntax.pf` result, not a generated
+proof script. Python and JSON may still be used for corpus statistics or
+experiments, but not for accepted proof reconstruction.
+
+Current `kernel_v1` metadata must remain a compatibility/regression layer. If a
+macro record is kept, it should carry a `primitive_expansion=prefix` contract
+and an exact `primitive_expansion_requires=...` field naming the first-class
+primitive record that Megalodon is expected to check. The standalone Megalodon
+primitive audit is the guard for this: a kernel macro without its matching
+primitive record is not progress toward the small-kernel path.
 
 ## Non-Goals
 
@@ -97,3 +116,8 @@ Do not extend the existing rich `printReplayExtra` protocol for the next
 failing focused example. Any new output should be part of the versioned
 certificate format and should have a corresponding negative test in the
 Megalodon importer.
+
+Do not add another broad `kernel_v1` or Megalodon-side textual replay case just
+to increase pass counts. The next implementation milestone is ten committed
+original-context or source-bound proofs through the restricted native proof-term
+path, followed by a held-out corpus run.
