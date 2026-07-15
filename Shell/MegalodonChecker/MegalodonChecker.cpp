@@ -4116,11 +4116,16 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
     std::string unitParentId = "u" + std::to_string(unitParent->number());
     if (nonIdentity) {
       const std::string substituteId = unitId + "_unit_subst" + std::to_string(traceIndex);
-      steps.push_back(
-        "(substitute " + sexprQuote(substituteId)
-        + " (parent " + sexprQuote(unitParentId) + ") "
-        + subst
-        + " (result " + clauseSexprFromRendered(unitRendered) + "))");
+      std::string substituteStep;
+      if (!certificateSubstituteStepSexpr(
+            substituteId,
+            unitParentId,
+            unitParent,
+            unitSubstitution,
+            substituteStep)) {
+        return fail("unit substitute step render failed");
+      }
+      steps.push_back(substituteStep);
       addSyntheticVariableSorts(substituteId, unitLiterals);
       unitParentId = substituteId;
     }
