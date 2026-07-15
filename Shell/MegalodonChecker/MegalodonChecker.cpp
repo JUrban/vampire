@@ -10059,6 +10059,21 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     return certificateClauseSexpr(clause, text);
   };
+  auto literalVectorClauseSexprForKernel =
+    [&](const std::vector<Kernel::Literal*>& literals, std::string& text) {
+      std::ostringstream out;
+      out << "(clause";
+      for (Kernel::Literal* literal : literals) {
+        std::string rendered;
+        if (!literalSexprForKernel(literal, rendered)) {
+          return false;
+        }
+        out << ' ' << rendered;
+      }
+      out << ')';
+      text = out.str();
+      return true;
+    };
   auto substitutionSexprForKernel = [&](const Kernel::Substitution& substitution, std::string& text) {
     return certificateSubstitutionSexpr(substitution, text);
   };
@@ -11512,6 +11527,42 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     if (extra != nullptr) {
       const auto* urr = static_cast<const Inferences::UnitResultingResolutionExtra*>(extra);
+      {
+        std::vector<std::string> kernelFields;
+        if (urr->mainParent != nullptr) {
+          kernelFields.push_back("trace_main_parent_unit=u" + std::to_string(urr->mainParent->number()));
+        }
+        kernelFields.push_back("trace_step_count=" + std::to_string(urr->steps.size()));
+        for (std::size_t traceIndex = 0; traceIndex < urr->steps.size(); ++traceIndex) {
+          const auto& trace = urr->steps[traceIndex];
+          std::string prefix = "trace_step_" + std::to_string(traceIndex);
+          if (trace.unitParent != nullptr) {
+            kernelFields.push_back(prefix + "_unit_parent=u" + std::to_string(trace.unitParent->number()));
+            std::string clause;
+            if (clauseSexprForKernel(trace.unitParent, clause)) {
+              kernelFields.push_back(prefix + "_unit_parent_clause=" + clause);
+            }
+          }
+          std::string rendered;
+          if (literalSexprForKernel(trace.selected, rendered)) {
+            kernelFields.push_back(prefix + "_selected=" + rendered);
+          }
+          if (literalSexprForKernel(trace.selectedSubstituted, rendered)) {
+            kernelFields.push_back(prefix + "_selected_substituted=" + rendered);
+          }
+          if (literalSexprForKernel(trace.unitSubstituted, rendered)) {
+            kernelFields.push_back(prefix + "_unit_substituted=" + rendered);
+          }
+          if (literalVectorClauseSexprForKernel(trace.remainingAfter, rendered)) {
+            kernelFields.push_back(prefix + "_remaining_after=" + rendered);
+          }
+        }
+        std::string remaining;
+        if (literalVectorClauseSexprForKernel(urr->remaining, remaining)) {
+          kernelFields.push_back("trace_remaining=" + remaining);
+        }
+        emitKernelV1("unit_resulting_resolution", kernelFields);
+      }
       fields.push_back("trace_main_parent_unit=" + std::to_string(urr->mainParent->number()));
       fields.push_back("trace_step_count=" + std::to_string(urr->steps.size()));
       for (std::size_t traceIndex = 0; traceIndex < urr->steps.size(); ++traceIndex) {
