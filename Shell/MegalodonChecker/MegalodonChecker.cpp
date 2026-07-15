@@ -1666,13 +1666,11 @@ bool MegalodonChecker::certificateFormulaTermInputStepSexpr(Kernel::Unit* unit, 
 
 bool MegalodonChecker::certificateFormulaCopyStepSexpr(Kernel::Unit* unit, std::string& result)
 {
-  if (unit->isClause()) {
-    return false;
-  }
   const Kernel::InferenceRule& rule = unit->inference().rule();
   if (rule != Kernel::InferenceRule::RECTIFY
     && rule != Kernel::InferenceRule::FLATTEN
-    && rule != Kernel::InferenceRule::NNF) {
+    && rule != Kernel::InferenceRule::NNF
+    && rule != Kernel::InferenceRule::REORIENT_EQUATIONS) {
     return false;
   }
   UnitIterator parentIterator = unit->getParents();
@@ -1685,9 +1683,18 @@ bool MegalodonChecker::certificateFormulaCopyStepSexpr(Kernel::Unit* unit, std::
   }
   std::string parentLiteral;
   std::string resultLiteral;
-  if (!certificateFormulaNativeLiteralSexpr(static_cast<Kernel::FormulaUnit*>(parent)->formula(), parentLiteral)
-    || !certificateFormulaNativeLiteralSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), resultLiteral)
-    || parentLiteral != resultLiteral) {
+  if (!certificateFormulaNativeLiteralSexpr(static_cast<Kernel::FormulaUnit*>(parent)->formula(), parentLiteral)) {
+    return false;
+  }
+  if (unit->isClause()) {
+    if (unit->asClause()->length() != 1
+      || !certificateLiteralSexpr((*unit->asClause())[0], resultLiteral)) {
+      return false;
+    }
+  } else if (!certificateFormulaNativeLiteralSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), resultLiteral)) {
+    return false;
+  }
+  if (parentLiteral != resultLiteral) {
     return false;
   }
   result = "(formula_copy " + sexprQuote("u" + std::to_string(unit->number()))
