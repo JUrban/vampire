@@ -3665,6 +3665,47 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     std::sort(literals.begin(), literals.end());
     return literals;
   };
+  auto canonicalizedTraceRemainder = [&](const std::vector<std::string>& literals) {
+    std::map<std::string, std::string> variableNames;
+    auto canonicalizeVampireVariables = [&](const std::string& literal) {
+      std::string rendered;
+      for (std::size_t i = 0; i < literal.size();) {
+        const std::string prefix = "(TMH \"X";
+        if (literal.compare(i, prefix.size(), prefix) == 0) {
+          std::size_t end = i + prefix.size();
+          while (end < literal.size() && literal[end] >= '0' && literal[end] <= '9') {
+            ++end;
+          }
+          if (end > i + prefix.size()
+            && end + 1 < literal.size()
+            && literal[end] == '"'
+            && literal[end + 1] == ')') {
+            std::string name = literal.substr(i + 6, end - (i + 6));
+            auto inserted = variableNames.emplace(
+              name,
+              "__mg_trace_var_" + std::to_string(variableNames.size()));
+            rendered += "(TMH \"" + inserted.first->second + "\")";
+            i = end + 2;
+            continue;
+          }
+        }
+        rendered.push_back(literal[i]);
+        ++i;
+      }
+      return rendered;
+    };
+    std::vector<std::string> canonical;
+    for (const std::string& literal : literals) {
+      std::string oriented = literal;
+      std::string swapped;
+      if (swappedEqualityLiteral(literal, swapped) && swapped < oriented) {
+        oriented = swapped;
+      }
+      canonical.push_back(canonicalizeVampireVariables(oriented));
+    }
+    std::sort(canonical.begin(), canonical.end());
+    return canonical;
+  };
   auto literalMultiplicity =
     [](const std::vector<std::string>& literals, const std::string& literal) {
       return static_cast<unsigned>(std::count(literals.begin(), literals.end(), literal));
@@ -3767,6 +3808,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
         return fail("trace remaining render failed");
       }
       const std::vector<std::string> normalizedExpectedRemaining = normalized(expectedRemaining);
+      const std::vector<std::string> canonicalExpectedRemaining = canonicalizedTraceRemainder(expectedRemaining);
       for (std::size_t i = 0; i < currentLiterals.size(); ++i) {
         Kernel::Substitution attempt;
         if (!matchLiteral(currentLiterals[i], trace.selectedSubstituted, attempt)) {
@@ -3787,7 +3829,8 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
           }
           remaining.push_back(literalSexpr);
         }
-        if (normalized(remaining) == normalizedExpectedRemaining) {
+        if (normalized(remaining) == normalizedExpectedRemaining
+          || canonicalizedTraceRemainder(remaining) == canonicalExpectedRemaining) {
           currentSubstitution = cloneSubstitution(attempt);
           selectedIndex = static_cast<int>(i);
           break;
@@ -12212,7 +12255,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const bool hasResolvePrimitiveExpansion =
           certificateUnitResultingResolutionStepsSexpr(u, primitiveExpansion)
           && primitiveExpansion.find("(unit_resulting_resolution ") == std::string::npos
-          && primitiveExpansion.find("(resolve " + sexprQuote(unitPrefix + "_resolve")) != std::string::npos;
+          && primitiveExpansion.find("(resolve \"" + unitPrefix + "_resolve") != std::string::npos;
         if (hasResolvePrimitiveExpansion) {
           emitKernelV1("unit_resulting_resolution", kernelFields);
         }
