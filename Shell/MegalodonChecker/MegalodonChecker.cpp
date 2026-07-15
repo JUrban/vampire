@@ -12474,6 +12474,53 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               if (substitutionSexprForKernel(substitution, sideSubstitution)) {
                 kernelFields.push_back("side_substitution=" + sideSubstitution);
               }
+              for (unsigned sideLiteralIndex = 0;
+                   sideLiteralIndex < parentClauses[sideParentIndex]->length();
+                   ++sideLiteralIndex) {
+                Kernel::Literal* sideLiteral = (*parentClauses[sideParentIndex])[sideLiteralIndex];
+                Kernel::Literal* sideSubstituted = Kernel::SubstHelper::apply(sideLiteral, substitution);
+                if (selected->selectedLiteral->isPositive() == sideSubstituted->isPositive()) {
+                  continue;
+                }
+                std::string selectedAtom;
+                std::string sideAtom;
+                if (!certificateAtomSexpr(selected->selectedLiteral, selectedAtom)
+                  || !certificateAtomSexpr(sideSubstituted, sideAtom)) {
+                  continue;
+                }
+                bool matchesBySymmetry = false;
+                if (selectedAtom != sideAtom) {
+                  if (!sideSubstituted->isEquality()) {
+                    continue;
+                  }
+                  std::string lhs;
+                  std::string rhs;
+                  if (!termSexprForKernel(*sideSubstituted->nthArgument(1), lhs)
+                    || !termSexprForKernel(*sideSubstituted->nthArgument(0), rhs)) {
+                    continue;
+                  }
+                  sideAtom = "(AP (AP (TMH \"=\") " + lhs + ") " + rhs + ")";
+                  if (selectedAtom != sideAtom) {
+                    continue;
+                  }
+                  matchesBySymmetry = true;
+                }
+                std::string sidePivot;
+                std::string sidePivotSubstituted;
+                if (literalSexprForKernel(sideLiteral, sidePivot)) {
+                  kernelFields.push_back("side_pivot=" + sidePivot);
+                }
+                kernelFields.push_back("side_pivot_parent_index=" + std::to_string(sideParentIndex));
+                kernelFields.push_back("side_pivot_literal_index=" + std::to_string(sideLiteralIndex));
+                kernelFields.push_back("side_pivot_parent_unit=u" + std::to_string(parentClauses[sideParentIndex]->number()));
+                if (literalSexprForKernel(sideSubstituted, sidePivotSubstituted)) {
+                  kernelFields.push_back("side_pivot_substituted=" + sidePivotSubstituted);
+                }
+                if (matchesBySymmetry) {
+                  kernelFields.push_back("side_pivot_matches_by_symmetry=1");
+                }
+                break;
+              }
             }
           }
         }
