@@ -2034,7 +2034,52 @@ bool MegalodonChecker::certificateEnnfFormulaStepSexpr(Kernel::Unit* unit, std::
 
   unsigned pairCount = 0;
   const unsigned pairLimit = 32;
-  std::vector<std::tuple<std::string, std::string, std::string>> pairs;
+  std::vector<std::tuple<std::string, std::string, std::string, std::string>> pairs;
+  auto connectiveKind = [](Kernel::Connective connective) {
+    switch (connective) {
+      case Kernel::IMP: return std::string("imp");
+      case Kernel::FORALL: return std::string("forall");
+      case Kernel::EXISTS: return std::string("exists");
+      case Kernel::AND: return std::string("and");
+      case Kernel::OR: return std::string("or");
+      case Kernel::NOT: return std::string("not");
+      case Kernel::IFF: return std::string("iff");
+      case Kernel::XOR: return std::string("xor");
+      default: return std::string("other");
+    }
+  };
+  auto pairKind = [&](Kernel::Formula* left, Kernel::Formula* right) {
+    if (left == nullptr || right == nullptr) {
+      return std::string("unknown");
+    }
+    if (left->connective() == right->connective()) {
+      return std::string("context_") + connectiveKind(left->connective());
+    }
+    std::vector<Kernel::Formula*> rightArgs;
+    if (right->connective() == Kernel::AND || right->connective() == Kernel::OR) {
+      rightArgs = formulaArgs(right);
+    }
+    if (left->connective() == Kernel::IMP && right->connective() == Kernel::OR && rightArgs.size() == 2) {
+      return std::string("imp_to_or");
+    }
+    Kernel::Formula* negated = negatedBody(left);
+    if (negated == nullptr) {
+      return std::string("unknown");
+    }
+    if (negated->connective() == Kernel::IMP && right->connective() == Kernel::AND && rightArgs.size() == 2) {
+      return std::string("not_imp_to_and");
+    }
+    if (negated->connective() == Kernel::FORALL && right->connective() == Kernel::EXISTS) {
+      return std::string("not_forall_to_exists");
+    }
+    if (negated->connective() == Kernel::AND && right->connective() == Kernel::OR) {
+      return std::string("not_and_to_or");
+    }
+    if (negated->connective() == Kernel::OR && right->connective() == Kernel::AND) {
+      return std::string("not_or_to_and");
+    }
+    return std::string("unknown");
+  };
   auto emitPair = [&](Kernel::Formula* left, Kernel::Formula* right, const std::string& path) {
     if (left == nullptr || right == nullptr || pairCount >= pairLimit) {
       return false;
@@ -2046,7 +2091,7 @@ bool MegalodonChecker::certificateEnnfFormulaStepSexpr(Kernel::Unit* unit, std::
       || leftText == rightText) {
       return false;
     }
-    pairs.push_back(std::make_tuple(path, leftText, rightText));
+    pairs.push_back(std::make_tuple(path, leftText, rightText, pairKind(left, right)));
     ++pairCount;
     return true;
   };
@@ -2111,6 +2156,10 @@ bool MegalodonChecker::certificateEnnfFormulaStepSexpr(Kernel::Unit* unit, std::
       if (negated == nullptr) {
         return;
       }
+      if (negated->connective() == Kernel::FORALL && right->connective() == Kernel::EXISTS) {
+        collectPairs(negatedFormula(negated->qarg()), right->qarg(), depth + 1, path + ".ennf_neg_forall_body");
+        return;
+      }
       if (negated->connective() == Kernel::IMP && right->connective() == Kernel::AND && rightArgs.size() == 2) {
         collectPairs(negated->left(), rightArgs[0], depth + 1, path + ".ennf_neg_imp_left");
         collectPairs(negatedFormula(negated->right()), rightArgs[1], depth + 1, path + ".ennf_neg_imp_right");
@@ -2133,8 +2182,9 @@ bool MegalodonChecker::certificateEnnfFormulaStepSexpr(Kernel::Unit* unit, std::
 
   std::ostringstream pairsOut;
   pairsOut << "(pairs";
-  for (const auto& [path, leftText, rightText] : pairs) {
+  for (const auto& [path, leftText, rightText, kind] : pairs) {
     pairsOut << " (pair (path " << sexprQuote(path) << ")"
+             << " (kind " << sexprQuote(kind) << ")"
              << " (source (formula " << leftText << "))"
              << " (target (formula " << rightText << ")))";
   }
@@ -11939,7 +11989,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         std::size_t totalPairText = 0;
         const unsigned pairLimit = 32;
         const std::size_t textLimit = 120000;
-        std::vector<std::tuple<std::string, std::string, std::string>> transformationPairs;
+        std::vector<std::tuple<std::string, std::string, std::string, std::string>> transformationPairs;
         std::function<bool(const std::vector<Kernel::Formula*>&, std::size_t, std::size_t, Kernel::Connective, std::string&)> renderFormulaSliceForExtra;
         renderFormulaSliceForExtra =
           [&](const std::vector<Kernel::Formula*>& formulas, std::size_t begin, std::size_t end, Kernel::Connective connective, std::string& result) {
@@ -11979,7 +12029,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           return result;
         };
 
-        auto emitPair = [&](const std::string& leftText, const std::string& rightText, const std::string& path) {
+        auto emitPair = [&](const std::string& leftText, const std::string& rightText, const std::string& path, const std::string& kind) {
           if (leftText == rightText || pairCount >= pairLimit || totalPairText >= textLimit) {
             return false;
           }
@@ -11991,7 +12041,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           fields.push_back("pair_" + std::to_string(index) + "_source=" + leftText);
           fields.push_back("pair_" + std::to_string(index) + "_target=" + rightText);
           fields.push_back("pair_" + std::to_string(index) + "_path=" + path);
-          transformationPairs.push_back(std::make_tuple(leftText, rightText, path));
+          fields.push_back("pair_" + std::to_string(index) + "_kind=" + kind);
+          transformationPairs.push_back(std::make_tuple(leftText, rightText, path, kind));
           return true;
         };
 
@@ -12010,6 +12061,51 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           }
           return nullptr;
         };
+        auto connectiveKind = [](Kernel::Connective connective) {
+          switch (connective) {
+            case Kernel::IMP: return std::string("imp");
+            case Kernel::FORALL: return std::string("forall");
+            case Kernel::EXISTS: return std::string("exists");
+            case Kernel::AND: return std::string("and");
+            case Kernel::OR: return std::string("or");
+            case Kernel::NOT: return std::string("not");
+            case Kernel::IFF: return std::string("iff");
+            case Kernel::XOR: return std::string("xor");
+            default: return std::string("other");
+          }
+        };
+        auto pairKind = [&](Kernel::Formula* left, Kernel::Formula* right) {
+          if (left == nullptr || right == nullptr) {
+            return std::string("unknown");
+          }
+          if (left->connective() == right->connective()) {
+            return std::string("context_") + connectiveKind(left->connective());
+          }
+          std::vector<Kernel::Formula*> rightArgs;
+          if (right->connective() == Kernel::AND || right->connective() == Kernel::OR) {
+            rightArgs = formulaArgs(right);
+          }
+          if (left->connective() == Kernel::IMP && right->connective() == Kernel::OR && rightArgs.size() == 2) {
+            return std::string("imp_to_or");
+          }
+          Kernel::Formula* negated = negatedBody(left);
+          if (negated == nullptr) {
+            return std::string("unknown");
+          }
+          if (negated->connective() == Kernel::IMP && right->connective() == Kernel::AND && rightArgs.size() == 2) {
+            return std::string("not_imp_to_and");
+          }
+          if (negated->connective() == Kernel::FORALL && right->connective() == Kernel::EXISTS) {
+            return std::string("not_forall_to_exists");
+          }
+          if (negated->connective() == Kernel::AND && right->connective() == Kernel::OR) {
+            return std::string("not_and_to_or");
+          }
+          if (negated->connective() == Kernel::OR && right->connective() == Kernel::AND) {
+            return std::string("not_or_to_and");
+          }
+          return std::string("unknown");
+        };
         collectPairs =
           [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth, std::string path) {
             if (left == nullptr || right == nullptr || depth > 16 || pairCount >= pairLimit || totalPairText >= textLimit) {
@@ -12020,7 +12116,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             if (!renderFormulaForExtra(left, leftText) || !renderFormulaForExtra(right, rightText)) {
               return;
             }
-            emitPair(leftText, rightText, path);
+            emitPair(leftText, rightText, path, pairKind(left, right));
             if (left->connective() != right->connective()) {
               if (u->inference().rule() == Kernel::InferenceRule::ENNF) {
                 collectEnnfPairs(left, right, depth + 1, path);
@@ -12073,6 +12169,10 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             if (negated == nullptr) {
               return;
             }
+            if (negated->connective() == Kernel::FORALL && right->connective() == Kernel::EXISTS) {
+              collectPairs(negatedFormula(negated->qarg()), right->qarg(), depth + 1, path + ".ennf_neg_forall_body");
+              return;
+            }
             if (negated->connective() == Kernel::IMP && right->connective() == Kernel::AND && rightArgs.size() == 2) {
               collectPairs(negated->left(), rightArgs[0], depth + 1, path + ".ennf_neg_imp_left");
               collectPairs(negatedFormula(negated->right()), rightArgs[1], depth + 1, path + ".ennf_neg_imp_right");
@@ -12114,7 +12214,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                 std::string rightText;
                 if (renderFormulaSliceForExtra(leftArgs, leftBegin + 1, leftEnd, connective, leftText)
                   && renderFormulaSliceForExtra(rightArgs, rightBegin + 1, rightEnd, connective, rightText)) {
-                  emitPair(leftText, rightText, path + ".and[1]");
+                  emitPair(leftText, rightText, path + ".and[1]", "context_and_slice");
                 }
                 collectSlicePairs(leftArgs, leftBegin + 1, leftEnd, rightArgs, rightBegin + 1, rightEnd, connective, depth + 1, path + ".and[1]");
               }
@@ -12130,7 +12230,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               std::string rightText;
               if (renderFormulaSliceForExtra(leftArgs, leftBegin, leftEnd - 1, connective, leftText)
                 && renderFormulaSliceForExtra(rightArgs, rightBegin, rightEnd - 1, connective, rightText)) {
-                emitPair(leftText, rightText, path + ".or[0]");
+                emitPair(leftText, rightText, path + ".or[0]", "context_or_slice");
               }
               collectSlicePairs(leftArgs, leftBegin, leftEnd - 1, rightArgs, rightBegin, rightEnd - 1, connective, depth + 1, path + ".or[0]");
               collectPairs(leftArgs[leftEnd - 1], rightArgs[rightEnd - 1], depth + 1, path + ".or[1]");
@@ -12151,10 +12251,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           kernelFields.push_back("normal_form_rule=" + std::string(Kernel::ruleName(u->inference().rule())));
           kernelFields.push_back("transformation_pair_count=" + std::to_string(transformationPairs.size()));
           for (std::size_t index = 0; index < transformationPairs.size(); ++index) {
-            const auto& [leftText, rightText, path] = transformationPairs[index];
+            const auto& [leftText, rightText, path, kind] = transformationPairs[index];
             kernelFields.push_back("pair_" + std::to_string(index) + "_source=" + leftText);
             kernelFields.push_back("pair_" + std::to_string(index) + "_target=" + rightText);
             kernelFields.push_back("pair_" + std::to_string(index) + "_path=" + path);
+            kernelFields.push_back("pair_" + std::to_string(index) + "_kind=" + kind);
           }
           emitKernelV1("formula_normalize", kernelFields);
         }
