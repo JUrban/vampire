@@ -10852,6 +10852,22 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           fields.push_back("target_raw=" + target->toString());
         }
 
+        std::string sourceFormula;
+        std::string resultFormula;
+        if (certificateFormulaTermSexpr(source, sourceFormula)
+          && certificateFormulaTermSexpr(target, resultFormula)
+          && sourceFormula == resultFormula) {
+          std::vector<std::string> kernelFields;
+          kernelFields.push_back("source_unit=u" + std::to_string(parent->number()));
+          kernelFields.push_back("parent_0_unit=u" + std::to_string(parent->number()));
+          kernelFields.push_back("source_formula=" + sourceFormula);
+          kernelFields.push_back("parent_0_formula=" + sourceFormula);
+          kernelFields.push_back("proof_parent_count=1");
+          kernelFields.push_back("result_formula=" + resultFormula);
+          kernelFields.push_back("copy_kind=formula_term_identity");
+          emitKernelV1("formula_copy", kernelFields);
+        }
+
         unsigned pairCount = 0;
         std::size_t totalPairText = 0;
         const unsigned pairLimit = 32;
