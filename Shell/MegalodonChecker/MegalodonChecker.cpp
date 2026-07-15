@@ -1832,9 +1832,81 @@ bool MegalodonChecker::certificateFoolFormulaStepSexpr(Kernel::Unit* unit, std::
     || parentFormula == resultFormula) {
     return false;
   }
-  result = "(fool_formula " + sexprQuote("u" + std::to_string(unit->number()))
-    + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
-    + " (result (formula " + resultFormula + ")))";
+  Kernel::Formula* source = static_cast<Kernel::FormulaUnit*>(parent)->formula();
+  Kernel::Formula* target = static_cast<Kernel::FormulaUnit*>(unit)->formula();
+  std::vector<std::tuple<std::string, std::string, std::string, Kernel::Formula*>> primitives;
+  unsigned pairCount = 0;
+  const unsigned pairLimit = 48;
+  std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned, std::string)> collectPairs =
+    [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth, std::string path) {
+      if (left == nullptr || right == nullptr || depth > 24 || pairCount >= pairLimit) {
+        return;
+      }
+      if (left->toString() == right->toString()) {
+        return;
+      }
+      std::string leftText;
+      std::string rightText;
+      if (certificateFormulaTermSexpr(left, leftText) && certificateFormulaTermSexpr(right, rightText)) {
+        primitives.push_back(std::make_tuple(leftText, rightText, path, right));
+        ++pairCount;
+      }
+      if (left->connective() != right->connective()) {
+        return;
+      }
+      switch (left->connective()) {
+        case Kernel::AND:
+        case Kernel::OR: {
+          Kernel::FormulaList::Iterator leftIt(left->args());
+          Kernel::FormulaList::Iterator rightIt(right->args());
+          unsigned index = 0;
+          while (leftIt.hasNext() && rightIt.hasNext()) {
+            collectPairs(leftIt.next(), rightIt.next(), depth + 1, path + ".arg[" + std::to_string(index) + "]");
+            ++index;
+          }
+          return;
+        }
+        case Kernel::IMP:
+        case Kernel::IFF:
+        case Kernel::XOR:
+          collectPairs(left->left(), right->left(), depth + 1, path + ".left");
+          collectPairs(left->right(), right->right(), depth + 1, path + ".right");
+          return;
+        case Kernel::NOT:
+          collectPairs(left->uarg(), right->uarg(), depth + 1, path + ".not");
+          return;
+        case Kernel::FORALL:
+        case Kernel::EXISTS:
+          collectPairs(left->qarg(), right->qarg(), depth + 1, path + ".body");
+          return;
+        default:
+          return;
+      }
+    };
+  collectPairs(source, target, 0, "root");
+
+  std::ostringstream out;
+  const std::string unitId = "u" + std::to_string(unit->number());
+  for (std::size_t index = 0; index < primitives.size(); ++index) {
+    const auto& [sourceText, targetText, path, targetFormula] = primitives[index];
+    const std::string primitiveId = unitId + "_fool_atom_" + std::to_string(index);
+    std::string proposition;
+    bool renderingReplayExtra = _renderingReplayExtra;
+    _renderingReplayExtra = true;
+    bool hasProposition = formulaToMegalodon(targetFormula, proposition);
+    _renderingReplayExtra = renderingReplayExtra;
+    if (hasProposition) {
+      out << "(step_proposition " << sexprQuote(primitiveId) << " " << sexprQuote(proposition) << ")\n  ";
+    }
+    out << "(fool_atom_lift " << sexprQuote(primitiveId)
+        << " (source (formula " << sourceText << "))"
+        << " (target (formula " << targetText << "))"
+        << " (path " << sexprQuote(path) << "))\n  ";
+  }
+  out << "(fool_formula " << sexprQuote(unitId)
+      << " (parent " << sexprQuote("u" + std::to_string(parent->number())) << ")"
+      << " (result (formula " << resultFormula << ")))";
+  result = out.str();
   return true;
 }
 
@@ -10678,6 +10750,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     };
     if (kernelRule == "superposition" || kernelRule == "rewrite") {
       addPrimitiveExpansion("paramodulate");
+    } else if (kernelRule == "fool_formula") {
+      addPrimitiveExpansion("fool_atom_lift");
     } else if (kernelRule == "subsumption_resolution"
       || kernelRule == "unit_resulting_resolution"
       || kernelRule == "resolution") {
