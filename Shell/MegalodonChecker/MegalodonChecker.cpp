@@ -5964,7 +5964,8 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
         continue;
       }
 
-      for (Kernel::Literal* sideLiteral : sideParent->iterLits()) {
+      for (unsigned sideLiteralIndex = 0; sideLiteralIndex < sideParent->length(); ++sideLiteralIndex) {
+        Kernel::Literal* sideLiteral = (*sideParent)[sideLiteralIndex];
         if (!complementaryUnderSubstitution(selectedLiteral, sideLiteral, sideSubstitution)) {
           continue;
         }
@@ -5978,8 +5979,19 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
           || !certificateClauseSexpr(unit->asClause(), resultClauseSexpr)) {
           return false;
         }
+        std::string primitiveResolve;
+        if (sideSubstitutionSexpr == "(subst)") {
+          primitiveResolve =
+            "(resolve " + sexprQuote("u" + std::to_string(unit->number()) + "_resolve_0")
+            + " (parents " + sexprQuote("u" + std::to_string(mainParent->number()))
+            + " " + sexprQuote("u" + std::to_string(sideParent->number())) + ")"
+            + " (pivot " + std::to_string(selectedIndex) + " "
+            + std::to_string(sideLiteralIndex) + ")"
+            + " (result " + resultClauseSexpr + "))\n  ";
+        }
         result =
-          "(subsumption_resolution " + sexprQuote("u" + std::to_string(unit->number()))
+          primitiveResolve
+          + "(subsumption_resolution " + sexprQuote("u" + std::to_string(unit->number()))
           + " (parents " + sexprQuote("u" + std::to_string(mainParent->number()))
           + " " + sexprQuote("u" + std::to_string(sideParent->number())) + ")"
           + " (selected " + selectedSexpr + ")"
