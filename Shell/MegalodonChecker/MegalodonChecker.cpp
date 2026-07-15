@@ -539,6 +539,26 @@ bool MegalodonChecker::certificateSubstituteStepSexpr(
   clause << ')';
   const std::string resultClause = clause.str();
 
+  Lib::DHMap<unsigned, Kernel::TermList> resultVarSorts;
+  for (Kernel::Literal* literal : parent->iterLits()) {
+    Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
+    Kernel::SortHelper::collectVariableSorts(substituted, resultVarSorts);
+  }
+  std::vector<std::pair<unsigned, std::string>> renderedResultVarSorts;
+  Lib::DHMap<unsigned, Kernel::TermList>::Iterator resultVarSortIterator(resultVarSorts);
+  while (resultVarSortIterator.hasNext()) {
+    unsigned var;
+    Kernel::TermList sort;
+    resultVarSortIterator.next(var, sort);
+    std::string sortText;
+    if (sortToMegalodon(sort, sortText)) {
+      renderedResultVarSorts.push_back({var, variableName(var) + ":" + sortText});
+    }
+  }
+  std::sort(renderedResultVarSorts.begin(), renderedResultVarSorts.end(), [](const auto& left, const auto& right) {
+    return left.first < right.first;
+  });
+
   std::vector<std::string> fields;
   fields.push_back("schema=prover9-small-kernel-v1");
   fields.push_back("rule=instantiation");
@@ -571,6 +591,16 @@ bool MegalodonChecker::certificateSubstituteStepSexpr(
       << " (parent " << sexprQuote(parentId) << ") "
       << substitutionSexpr
       << " (result " << resultClause << "))";
+  if (!renderedResultVarSorts.empty()) {
+    out << "\n  (step_variable_sorts " << sexprQuote(id) << " (";
+    for (std::size_t i = 0; i < renderedResultVarSorts.size(); ++i) {
+      if (i != 0) {
+        out << ' ';
+      }
+      out << sexprQuote(renderedResultVarSorts[i].second);
+    }
+    out << "))";
+  }
   out << "\n  (step_extra " << sexprQuote(id) << " \"kernel_v1\" (";
   for (std::size_t i = 0; i < fields.size(); ++i) {
     if (i != 0) {
