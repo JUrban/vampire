@@ -3357,7 +3357,10 @@ bool MegalodonChecker::certificateFoolDistinctnessStepSexpr(Kernel::Unit* unit, 
   return true;
 }
 
-bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit* unit, std::string& result)
+bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
+  Kernel::Unit* unit,
+  std::string& result,
+  bool recordSyntheticMetadata)
 {
   auto fail = [&](const char* reason) {
     if (std::getenv("MEGALODON_CERT_DEBUG") && std::string(reason) != "not urr clause") {
@@ -3498,6 +3501,43 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
       rendered.push_back(literalSexpr);
     }
     return true;
+  };
+  std::vector<std::string> syntheticMetadata;
+  auto addSyntheticVariableSorts = [&](const std::string& stepId, const std::vector<Kernel::Literal*>& literals) {
+    if (!recordSyntheticMetadata) {
+      return;
+    }
+    Lib::DHMap<unsigned, Kernel::TermList> varSorts;
+    for (Kernel::Literal* literal : literals) {
+      Kernel::SortHelper::collectVariableSorts(literal, varSorts);
+    }
+    std::vector<std::pair<unsigned, std::string>> rendered;
+    Lib::DHMap<unsigned, Kernel::TermList>::Iterator it(varSorts);
+    while (it.hasNext()) {
+      unsigned var;
+      Kernel::TermList sort;
+      it.next(var, sort);
+      std::string sortText;
+      if (sortToMegalodon(sort, sortText)) {
+        rendered.push_back({var, variableName(var) + ":" + sortText});
+      }
+    }
+    if (rendered.empty()) {
+      return;
+    }
+    std::sort(rendered.begin(), rendered.end(), [](const auto& left, const auto& right) {
+      return left.first < right.first;
+    });
+    std::ostringstream metadata;
+    metadata << "(step_variable_sorts " << sexprQuote(stepId) << " (";
+    for (std::size_t i = 0; i < rendered.size(); ++i) {
+      if (i != 0) {
+        metadata << ' ';
+      }
+      metadata << sexprQuote(rendered[i].second);
+    }
+    metadata << "))";
+    syntheticMetadata.push_back(metadata.str());
   };
   const std::string unitId = "u" + std::to_string(unit->number());
   auto clauseSexprFromRendered = [](const std::vector<std::string>& literals) {
@@ -3878,6 +3918,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
         + " (parent " + sexprQuote(currentParentId) + ") "
         + subst
         + " (result " + clauseSexprFromRendered(substitutedRendered) + "))");
+      addSyntheticVariableSorts(substituteId, substituted);
       currentLiterals = substituted;
       currentRendered = substitutedRendered;
       currentParentId = substituteId;
@@ -3903,6 +3944,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
         + " (parent " + sexprQuote(currentParentId) + ")"
         + " (literal " + std::to_string(selectedIndex) + ")"
         + " (result " + clauseSexprFromRendered(symmetryRendered) + "))");
+      addSyntheticVariableSorts(symmetryId, symmetryClause);
       currentLiterals = symmetryClause;
       currentRendered = symmetryRendered;
       currentParentId = symmetryId;
@@ -3942,6 +3984,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
         + " (parent " + sexprQuote(unitParentId) + ") "
         + subst
         + " (result " + clauseSexprFromRendered(unitRendered) + "))");
+      addSyntheticVariableSorts(substituteId, unitLiterals);
       unitParentId = substituteId;
     }
 
@@ -3969,6 +4012,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
           + " (parent " + sexprQuote(currentParentId) + ")"
           + " (literal " + std::to_string(selectedIndex) + ")"
           + " (result " + clauseSexprFromRendered(currentRendered) + "))");
+        addSyntheticVariableSorts(symmetryId, currentLiterals);
         currentParentId = symmetryId;
         selectedLiteral = currentLiterals[selectedIndex];
       }
@@ -3992,6 +4036,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
         + " (parent " + sexprQuote(unitParentId) + ")"
         + " (literal 0)"
         + " (result " + clauseSexprFromRendered(unitRendered) + "))");
+      addSyntheticVariableSorts(symmetryId, unitLiterals);
       unitParentId = symmetryId;
     }
 
@@ -4008,6 +4053,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
       + " (parents " + sexprQuote(currentParentId) + " " + sexprQuote(unitParentId) + ")"
       + " (pivot " + std::to_string(selectedIndex) + " 0)"
       + " (result " + clauseSexprFromRendered(nextRendered) + "))");
+    addSyntheticVariableSorts(resolveId, nextLiterals);
     currentLiterals = nextLiterals;
     currentRendered = nextRendered;
     currentParentId = resolveId;
@@ -4065,6 +4111,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
           + " (parent " + sexprQuote(currentParentId) + ") "
           + finalRenameSubst
           + " (result " + clauseSexprFromRendered(renamedRendered) + "))");
+        addSyntheticVariableSorts(renameId, renamedLiterals);
         currentLiterals = renamedLiterals;
         currentRendered = renamedRendered;
         current = renamedRendered;
@@ -4091,6 +4138,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
         if (right < currentLiterals.size()) {
           currentLiterals.erase(currentLiterals.begin() + right);
         }
+        addSyntheticVariableSorts(factorId, currentLiterals);
         current = factored;
         currentRendered = factored;
         currentParentId = factorId;
@@ -4117,6 +4165,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
           + " (parent " + sexprQuote(currentParentId) + ")"
           + " (literal " + std::to_string(i) + ")"
           + " (result " + clauseSexprFromRendered(candidate) + "))");
+        addSyntheticVariableSorts(symmetryId, currentLiterals);
         current = candidate;
         currentRendered = candidate;
         currentParentId = symmetryId;
@@ -4162,6 +4211,12 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(Kernel::Unit
     out << steps[i];
   }
   result = out.str();
+  if (recordSyntheticMetadata) {
+    _certificateNativeMetadata.insert(
+      _certificateNativeMetadata.end(),
+      syntheticMetadata.begin(),
+      syntheticMetadata.end());
+  }
   return true;
 }
 
@@ -9640,7 +9695,7 @@ bool MegalodonChecker::certificateNativeStepSexpr(
     || certificateFoolExhaustivenessStepSexpr(unit, result)
     || certificateFoolDistinctnessStepSexpr(unit, result)
     || certificateBoolSimplificationStepSexpr(unit, result)
-    || certificateUnitResultingResolutionStepsSexpr(unit, result)
+    || certificateUnitResultingResolutionStepsSexpr(unit, result, true)
     || certificateResolveStepSexpr(unit, result)
     || certificateSubstitutedResolutionStepsSexpr(unit, replayInfo, result)
     || certificateSatSubsumptionResolutionStepSexpr(unit, result)
