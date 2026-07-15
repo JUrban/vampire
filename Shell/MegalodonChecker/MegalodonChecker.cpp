@@ -10872,6 +10872,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         std::size_t totalPairText = 0;
         const unsigned pairLimit = 32;
         const std::size_t textLimit = 120000;
+        std::vector<std::tuple<std::string, std::string, std::string>> transformationPairs;
         std::function<bool(const std::vector<Kernel::Formula*>&, std::size_t, std::size_t, Kernel::Connective, std::string&)> renderFormulaSliceForExtra;
         renderFormulaSliceForExtra =
           [&](const std::vector<Kernel::Formula*>& formulas, std::size_t begin, std::size_t end, Kernel::Connective connective, std::string& result) {
@@ -10923,6 +10924,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           fields.push_back("pair_" + std::to_string(index) + "_source=" + leftText);
           fields.push_back("pair_" + std::to_string(index) + "_target=" + rightText);
           fields.push_back("pair_" + std::to_string(index) + "_path=" + path);
+          transformationPairs.push_back(std::make_tuple(leftText, rightText, path));
           return true;
         };
 
@@ -11068,6 +11070,27 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             }
           };
         collectPairs(source, target, 0, "root");
+        if (!sourceFormula.empty()
+          && !resultFormula.empty()
+          && sourceFormula != resultFormula
+          && !transformationPairs.empty()) {
+          std::vector<std::string> kernelFields;
+          kernelFields.push_back("source_unit=u" + std::to_string(parent->number()));
+          kernelFields.push_back("parent_0_unit=u" + std::to_string(parent->number()));
+          kernelFields.push_back("source_formula=" + sourceFormula);
+          kernelFields.push_back("parent_0_formula=" + sourceFormula);
+          kernelFields.push_back("proof_parent_count=1");
+          kernelFields.push_back("result_formula=" + resultFormula);
+          kernelFields.push_back("normal_form_rule=" + std::string(Kernel::ruleName(u->inference().rule())));
+          kernelFields.push_back("transformation_pair_count=" + std::to_string(transformationPairs.size()));
+          for (std::size_t index = 0; index < transformationPairs.size(); ++index) {
+            const auto& [leftText, rightText, path] = transformationPairs[index];
+            kernelFields.push_back("pair_" + std::to_string(index) + "_source=" + leftText);
+            kernelFields.push_back("pair_" + std::to_string(index) + "_target=" + rightText);
+            kernelFields.push_back("pair_" + std::to_string(index) + "_path=" + path);
+          }
+          emitKernelV1("formula_normalize", kernelFields);
+        }
         emit("normal_form", fields);
       }
     }
