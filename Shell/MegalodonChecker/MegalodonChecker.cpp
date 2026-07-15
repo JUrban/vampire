@@ -10099,6 +10099,17 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       if (clauseSexprForKernel(parent, clause)) {
         fields.push_back("parent_" + std::to_string(parentIndex) + "_clause=" + clause);
       }
+      std::vector<std::string> renderedParentLiterals;
+      if (appendCertificateClauseLiteralsSexpr(parent, renderedParentLiterals)) {
+        fields.push_back(
+          "parent_" + std::to_string(parentIndex) + "_literal_count="
+          + std::to_string(renderedParentLiterals.size()));
+        for (std::size_t literalIndex = 0; literalIndex < renderedParentLiterals.size(); ++literalIndex) {
+          fields.push_back(
+            "parent_" + std::to_string(parentIndex) + "_literal_" + std::to_string(literalIndex)
+            + "=" + renderedParentLiterals[literalIndex]);
+        }
+      }
       if (
         info != nullptr
         && parentIndex < info->premises.size()
