@@ -10107,6 +10107,20 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         fields.push_back(prefix + "_parent_index=" + std::to_string(parentIndex));
         fields.push_back(prefix + "_literal_index=" + std::to_string(literalIndex));
         fields.push_back(prefix + "_parent_unit=u" + std::to_string(parentClauses[parentIndex]->number()));
+        bool addedSubstituted = false;
+        if (info != nullptr
+          && static_cast<std::size_t>(parentIndex) < info->premises.size()
+          && static_cast<std::size_t>(parentIndex) < info->substitutionForBanksSub.size()) {
+          Kernel::Literal* substituted =
+            Kernel::SubstHelper::apply(literal, info->substitutionForBanksSub[parentIndex]);
+          if (literalSexprForKernel(substituted, rendered)) {
+            fields.push_back(prefix + "_substituted=" + rendered);
+            addedSubstituted = true;
+          }
+        }
+        if (!addedSubstituted && literalSexprForKernel(literal, rendered)) {
+          fields.push_back(prefix + "_substituted=" + rendered);
+        }
       }
     };
   auto addKernelTermField = [&](std::vector<std::string>& fields, const std::string& name, Kernel::TermList term) {
@@ -11640,7 +11654,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           addKernelLiteralFields(kernelFields, "else", selected->synthesisExtra.elseLit);
         }
         emitKernelV1(
-          u->inference().rule() == Kernel::InferenceRule::RESOLUTION ? "resolve" : "factor",
+          u->inference().rule() == Kernel::InferenceRule::RESOLUTION ? "resolution" : "factoring",
           kernelFields);
       }
       std::vector<std::string> fields;
