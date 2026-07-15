@@ -10770,6 +10770,19 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       } else if (certificateCnfFormulaClauseStepSexpr(u, primitiveStep)) {
         addPrimitiveExpansion("cnf_formula_clause");
       }
+    } else if (kernelRule == "formula_copy") {
+      std::string primitiveStep;
+      if (certificateFormulaCopyStepSexpr(u, primitiveStep)) {
+        addPrimitiveExpansion("formula_copy");
+      } else if (certificateFormulaTermCopyStepSexpr(u, primitiveStep)) {
+        addPrimitiveExpansion("formula_term_copy");
+      }
+    } else if (kernelRule == "rectify_formula") {
+      addPrimitiveExpansion("rectify_formula");
+    } else if (kernelRule == "fool_exhaustiveness") {
+      addPrimitiveExpansion("fool_exhaustiveness");
+    } else if (kernelRule == "truth_conflict") {
+      addPrimitiveExpansion("truth_conflict");
     } else if (kernelRule == "subsumption_resolution"
       || kernelRule == "unit_resulting_resolution"
       || kernelRule == "resolution") {
