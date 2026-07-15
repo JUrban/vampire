@@ -2363,6 +2363,7 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std
   };
 
   std::vector<std::pair<unsigned, std::string>> bindings;
+  std::vector<std::string> introductions;
   for (auto symbol : iterTraits(Kernel::InferenceStore::SymbolStack::ConstIterator(_is->getIntroducedSymbols(unit)))) {
     if (symbol.first != Kernel::SymbolType::FUNC) {
       continue;
@@ -2395,6 +2396,15 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std
       }
     }
     bindings.push_back({static_cast<unsigned>(var), skolemTermSexpr});
+    std::string name = functionName(symbol.second);
+    std::string introduction = "(symbol (name " + sexprQuote(name) + ")";
+    introduction += " (replaced_var " + sexprQuote(variableName(static_cast<unsigned>(var))) + ")";
+    std::string declaration = functionDeclaration(symbol.second, name);
+    if (!declaration.empty()) {
+      introduction += " (declaration " + sexprQuote(declaration) + ")";
+    }
+    introduction += ")";
+    introductions.push_back(introduction);
   }
   if (bindings.empty()) {
     return false;
@@ -2402,12 +2412,24 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std
   std::sort(bindings.begin(), bindings.end(), [](const auto& left, const auto& right) {
     return left.first < right.first;
   });
+  std::sort(introductions.begin(), introductions.end());
 
   std::string subst = "(subst";
   for (const auto& binding : bindings) {
     subst += " (" + sexprQuote(variableName(binding.first)) + " " + binding.second + ")";
   }
   subst += ")";
+
+  std::string introduced = "(introduced";
+  for (const auto& introduction : introductions) {
+    introduced += " " + introduction;
+  }
+  introduced += ")";
+
+  std::string sourceFormula;
+  if (!certificateFormulaTermSexpr(static_cast<Kernel::FormulaUnit*>(parent)->formula(), sourceFormula)) {
+    sourceFormula.clear();
+  }
 
   std::string resultFormula;
   if (!certificateFormulaTermSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), resultFormula)) {
@@ -2419,7 +2441,9 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std
 
   result = "(skolem_formula " + sexprQuote("u" + std::to_string(unit->number()))
     + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
+    + (sourceFormula.empty() ? "" : " (source (formula " + sourceFormula + "))")
     + " " + subst
+    + (sourceFormula.empty() ? "" : " " + introduced)
     + " (result (formula " + resultFormula + ")))";
   return true;
 }
