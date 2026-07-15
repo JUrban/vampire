@@ -2402,6 +2402,7 @@ bool MegalodonChecker::certificateCnfFormulaClauseStepSexpr(Kernel::Unit* unit, 
   result = "(cnf_formula_clause " + sexprQuote("u" + std::to_string(unit->number()))
     + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
     + " (index " + std::to_string(clauseExtra->index) + ")"
+    + " (count " + std::to_string(clauseExtra->count) + ")"
     + " (result " + clause + "))";
   return true;
 }
