@@ -10783,6 +10783,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       addPrimitiveExpansion("fool_exhaustiveness");
     } else if (kernelRule == "truth_conflict") {
       addPrimitiveExpansion("truth_conflict");
+    } else if (kernelRule == "avatar_component") {
+      addPrimitiveExpansion("avatar_component");
+    } else if (kernelRule == "avatar_split") {
+      addPrimitiveExpansion("avatar_split");
+    } else if (kernelRule == "avatar_refutation") {
+      addPrimitiveExpansion("avatar_refutation");
     } else if (kernelRule == "subsumption_resolution"
       || kernelRule == "unit_resulting_resolution"
       || kernelRule == "resolution") {
