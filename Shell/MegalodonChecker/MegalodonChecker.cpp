@@ -10119,6 +10119,25 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         if (substitutionSexprForKernel(info->substitutionForBanksSub[parentIndex], subst)) {
           fields.push_back("parent_" + std::to_string(parentIndex) + "_substitution=" + subst);
         }
+        std::vector<std::string> substitutedLiterals;
+        for (Kernel::Literal* literal : info->premises[parentIndex]->iterLits()) {
+          Kernel::Literal* substituted =
+            Kernel::SubstHelper::apply(literal, info->substitutionForBanksSub[parentIndex]);
+          std::string rendered;
+          if (literalSexprForKernel(substituted, rendered)) {
+            substitutedLiterals.push_back(rendered);
+          }
+        }
+        if (appendCertificateSplitLiteralsSexpr(info->premises[parentIndex], substitutedLiterals)) {
+          fields.push_back(
+            "parent_" + std::to_string(parentIndex) + "_substituted_literal_count="
+            + std::to_string(substitutedLiterals.size()));
+          for (std::size_t literalIndex = 0; literalIndex < substitutedLiterals.size(); ++literalIndex) {
+            fields.push_back(
+              "parent_" + std::to_string(parentIndex) + "_substituted_literal_" + std::to_string(literalIndex)
+              + "=" + substitutedLiterals[literalIndex]);
+          }
+        }
       }
     }
   };
