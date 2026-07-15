@@ -10909,6 +10909,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         std::map<unsigned, Kernel::Clause*> components;
         std::map<unsigned, std::pair<unsigned, Kernel::Clause*>> splitToParentMap;
         unsigned parentIndex = 1;
+        unsigned componentParentRefIndex = 0;
         for (Kernel::Unit* splitParent : iterTraits(u->getParents())) {
           if (parentIndex == 1) {
             ++parentIndex;
@@ -10939,9 +10940,21 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           if (renderClauseForExtra(splitExtra->component, componentText)) {
             fields.push_back(prefix + "_clause=" + componentText);
           }
+          std::string normalizedPrefix =
+            "component_parent_ref_" + std::to_string(componentParentRefIndex);
+          fields.push_back(normalizedPrefix + "_unit=u" + std::to_string(splitParent->number()));
+          fields.push_back(normalizedPrefix + "_split_level=" + std::to_string(componentLevel));
+          fields.push_back(normalizedPrefix + "_split_var=" + std::to_string(componentLiteral.var()));
+          fields.push_back(normalizedPrefix + "_split_positive=" + (componentLiteral.positive() ? "1" : "0"));
+          std::string componentClause;
+          if (clauseSexprForKernel(splitExtra->component, componentClause)) {
+            fields.push_back(normalizedPrefix + "_clause=" + componentClause);
+          }
+          ++componentParentRefIndex;
           ++parentIndex;
         }
         fields.push_back("component_parent_count=" + std::to_string(parentIndex > 1 ? parentIndex - 2 : 0));
+        fields.push_back("component_parent_ref_count=" + std::to_string(componentParentRefIndex));
 
         Stack<LiteralStack> disjointLiterals;
         if (!Splitter::getComponents(mainParent, disjointLiterals)) {
