@@ -11377,6 +11377,65 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
   }
 
   if (u->inference().rule() == Kernel::InferenceRule::SKOLEMIZE && !u->isClause()) {
+    {
+      std::vector<std::string> kernelFields;
+      std::string resultFormula;
+      if (certificateFormulaTermSexpr(u->getFormula(), resultFormula)) {
+        kernelFields.push_back("result_formula=" + resultFormula);
+      }
+      unsigned kernelParentIndex = 0;
+      for (Kernel::Unit* parent : iterTraits(u->getParents())) {
+        const std::string prefix = "parent_" + std::to_string(kernelParentIndex);
+        kernelFields.push_back(prefix + "_unit=u" + std::to_string(parent->number()));
+        if (kernelParentIndex == 0) {
+          kernelFields.push_back("source_unit=u" + std::to_string(parent->number()));
+        }
+        if (!parent->isClause()) {
+          std::string parentFormula;
+          if (certificateFormulaTermSexpr(parent->getFormula(), parentFormula)) {
+            kernelFields.push_back(prefix + "_formula=" + parentFormula);
+            if (kernelParentIndex == 0) {
+              kernelFields.push_back("source_formula=" + parentFormula);
+            }
+          }
+        }
+        ++kernelParentIndex;
+      }
+      kernelFields.push_back("proof_parent_count=" + std::to_string(kernelParentIndex));
+      if (_is->hasIntroducedSymbols(u)) {
+        auto& symbols = _is->getIntroducedSymbols(u);
+        kernelFields.push_back("introduced_count=" + std::to_string(symbols.size()));
+        unsigned symbolIndex = 0;
+        for (auto symbol : iterTraits(Kernel::InferenceStore::SymbolStack::ConstIterator(symbols))) {
+          const std::string prefix = "introduced_" + std::to_string(symbolIndex);
+          kernelFields.push_back(prefix + "_kind=" + std::to_string(static_cast<int>(symbol.first)));
+          kernelFields.push_back(prefix + "_raw_symbol=" + std::to_string(symbol.second));
+          long replacedVar = _is->variableReplacedByIntroducedSymbol(symbol.second);
+          if (replacedVar >= 0) {
+            kernelFields.push_back(prefix + "_replaced_var=" + variableName(static_cast<unsigned>(replacedVar)));
+          }
+          if (symbol.first == SymbolType::FUNC) {
+            std::string name = functionName(symbol.second);
+            kernelFields.push_back(prefix + "_symbol=" + name);
+            std::string declaration = functionDeclaration(symbol.second, name);
+            if (!declaration.empty()) {
+              kernelFields.push_back(prefix + "_declaration=" + declaration);
+            }
+          } else if (symbol.first == SymbolType::PRED) {
+            std::string name = predicateName(symbol.second);
+            kernelFields.push_back(prefix + "_symbol=" + name);
+            std::string declaration = predicateDeclaration(symbol.second, name);
+            if (!declaration.empty()) {
+              kernelFields.push_back(prefix + "_declaration=" + declaration);
+            }
+          } else {
+            kernelFields.push_back(prefix + "_symbol=" + recoverMegalodonSymbolName(env.signature->typeConName(symbol.second), "T"));
+          }
+          ++symbolIndex;
+        }
+      }
+      emitKernelV1("skolemize", kernelFields);
+    }
     std::vector<std::string> fields;
     fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
     std::string targetText;
