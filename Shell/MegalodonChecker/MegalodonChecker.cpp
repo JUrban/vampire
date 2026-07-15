@@ -525,6 +525,9 @@ bool MegalodonChecker::certificateSubstituteStepSexpr(
   std::vector<std::string> fields;
   fields.push_back("schema=prover9-small-kernel-v1");
   fields.push_back("rule=instantiation");
+  fields.push_back("primitive_expansion=prefix");
+  fields.push_back("primitive_expansion_prefix=" + id);
+  fields.push_back("primitive_expansion_requires=substitute");
   fields.push_back("conclusion_unit=" + id);
   fields.push_back("result_clause=" + resultClause);
   fields.push_back("conclusion_clause=" + resultClause);
