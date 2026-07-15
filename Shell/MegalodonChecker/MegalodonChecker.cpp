@@ -474,19 +474,46 @@ bool MegalodonChecker::certificateSubstituteStepSexpr(
     return false;
   }
 
-  std::vector<std::string> substitutedLiterals;
-  for (unsigned i = 0; i < parent->length(); ++i) {
-    Kernel::Literal* literal = Kernel::SubstHelper::apply((*parent)[i], substitution);
-    std::string rendered;
-    if (!certificateLiteralSexpr(literal, rendered)) {
+  auto replaceAll = [](std::string& text, const std::string& from, const std::string& to) {
+    if (from.empty()) {
+      return;
+    }
+    std::size_t pos = 0;
+    while ((pos = text.find(from, pos)) != std::string::npos) {
+      text.replace(pos, from.size(), to);
+      pos += to.size();
+    }
+  };
+
+  std::vector<std::tuple<unsigned, std::string, std::string>> replacements;
+  const std::set<unsigned> variables = certificateClauseVariables(parent);
+  Kernel::Substitution substitutionCopy = substitution;
+  for (auto [var, term] : iterTraits(substitutionCopy.items())) {
+    if (variables.find(var) == variables.end()) {
+      continue;
+    }
+    if (term.isVar() && term.var() == var) {
+      continue;
+    }
+    std::string termSexpr;
+    if (!certificateTermSexpr(term, termSexpr)) {
       return false;
     }
-    substitutedLiterals.push_back(rendered);
+    replacements.push_back({var, "(TMH " + sexprQuote(variableName(var)) + ")", termSexpr});
   }
-  if (!appendCertificateSplitLiteralsSexpr(parent, substitutedLiterals)) {
-    return false;
-  }
+  std::sort(replacements.begin(), replacements.end(), [](const auto& left, const auto& right) {
+    return std::get<0>(left) < std::get<0>(right);
+  });
 
+  std::vector<std::string> substitutedLiterals = parentLiterals;
+  for (std::string& literal : substitutedLiterals) {
+    for (std::size_t i = 0; i < replacements.size(); ++i) {
+      replaceAll(literal, std::get<1>(replacements[i]), "(TMH " + sexprQuote("__mg_subst_" + std::to_string(i)) + ")");
+    }
+    for (std::size_t i = 0; i < replacements.size(); ++i) {
+      replaceAll(literal, "(TMH " + sexprQuote("__mg_subst_" + std::to_string(i)) + ")", std::get<2>(replacements[i]));
+    }
+  }
   std::ostringstream clause;
   clause << "(clause";
   for (const std::string& literal : substitutedLiterals) {
