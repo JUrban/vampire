@@ -10728,6 +10728,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     unsigned splitIndex = 0;
     for (unsigned split : iterTraits(u->asClause()->splits()->iter())) {
       SATLiteral splitLiteral = Splitter::getLiteralFromName(split);
+      _avatarComponentBySatVar[splitLiteral.var()] = u->asClause();
       std::string prefix = "split_" + std::to_string(splitIndex);
       kernelFields.push_back(prefix + "_level=" + std::to_string(split));
       kernelFields.push_back(prefix + "_var=" + std::to_string(splitLiteral.var()));
