@@ -11925,6 +11925,51 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
   }
 
+  if (u->isClause()
+    && u->inference().rule() == Kernel::InferenceRule::TRIVIAL_INEQUALITY_REMOVAL
+    && parentClauses.size() == 1) {
+    Kernel::Clause* parent = parentClauses[0];
+    auto isTruthConstant = [](const std::string& rendered, const std::string& name) {
+      return rendered == "(TMH \"" + name + "\")";
+    };
+    auto isPositiveTruthConflict = [&](Kernel::Literal* literal) {
+      if (literal == nullptr
+        || !literal->isEquality()
+        || !literal->isPositive()) {
+        return false;
+      }
+      std::string lhs;
+      std::string rhs;
+      if (!termSexprForKernel(*literal->nthArgument(0), lhs)
+        || !termSexprForKernel(*literal->nthArgument(1), rhs)) {
+        return false;
+      }
+      return (isTruthConstant(lhs, "f__true") && isTruthConstant(rhs, "f__false"))
+        || (isTruthConstant(lhs, "f__false") && isTruthConstant(rhs, "f__true"));
+    };
+
+    for (unsigned literalIndex = 0; literalIndex < parent->length(); ++literalIndex) {
+      Kernel::Literal* literal = (*parent)[literalIndex];
+      if (!isPositiveTruthConflict(literal)) {
+        continue;
+      }
+      std::vector<std::string> kernelFields;
+      kernelFields.push_back("selected_parent_index=0");
+      kernelFields.push_back("selected_literal_index=" + std::to_string(literalIndex));
+      std::string rendered;
+      if (literalSexprForKernel(literal, rendered)) {
+        kernelFields.push_back("selected=" + rendered);
+        kernelFields.push_back("selected_substituted=" + rendered);
+      }
+      std::string resultClause;
+      if (clauseSexprForKernel(u->asClause(), resultClause)) {
+        kernelFields.push_back("result_clause=" + resultClause);
+      }
+      emitKernelV1("truth_conflict", kernelFields);
+      break;
+    }
+  }
+
   if (u->inference().rule() == Kernel::InferenceRule::UNIT_RESULTING_RESOLUTION && u->isClause()) {
     std::vector<std::string> fields;
     fields.push_back("conclusion_clause=" + substitutedClauseText(u->asClause(), Kernel::Substitution()));
