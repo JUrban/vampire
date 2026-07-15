@@ -455,6 +455,87 @@ bool MegalodonChecker::certificateSubstitutionSexprForClause(
   return true;
 }
 
+bool MegalodonChecker::certificateSubstituteStepSexpr(
+  const std::string& id,
+  const std::string& parentId,
+  Kernel::Clause* parent,
+  const Kernel::Substitution& substitution,
+  std::string& result)
+{
+  std::string substitutionSexpr;
+  std::string parentClause;
+  if (!certificateSubstitutionSexprForClause(substitution, parent, substitutionSexpr)
+    || !certificateClauseSexpr(parent, parentClause)) {
+    return false;
+  }
+
+  std::vector<std::string> parentLiterals;
+  if (!appendCertificateClauseLiteralsSexpr(parent, parentLiterals)) {
+    return false;
+  }
+
+  std::vector<std::string> substitutedLiterals;
+  for (unsigned i = 0; i < parent->length(); ++i) {
+    Kernel::Literal* literal = Kernel::SubstHelper::apply((*parent)[i], substitution);
+    std::string rendered;
+    if (!certificateLiteralSexpr(literal, rendered)) {
+      return false;
+    }
+    substitutedLiterals.push_back(rendered);
+  }
+  if (!appendCertificateSplitLiteralsSexpr(parent, substitutedLiterals)) {
+    return false;
+  }
+
+  std::ostringstream clause;
+  clause << "(clause";
+  for (const std::string& literal : substitutedLiterals) {
+    clause << ' ' << literal;
+  }
+  clause << ')';
+  const std::string resultClause = clause.str();
+
+  std::vector<std::string> fields;
+  fields.push_back("schema=prover9-small-kernel-v1");
+  fields.push_back("rule=instantiation");
+  fields.push_back("conclusion_unit=" + id);
+  fields.push_back("result_clause=" + resultClause);
+  fields.push_back("conclusion_clause=" + resultClause);
+  fields.push_back("substitution=" + substitutionSexpr);
+  fields.push_back("result_literal_count=" + std::to_string(substitutedLiterals.size()));
+  for (std::size_t i = 0; i < substitutedLiterals.size(); ++i) {
+    fields.push_back("result_literal_" + std::to_string(i) + "=" + substitutedLiterals[i]);
+  }
+  fields.push_back("parent_count=1");
+  fields.push_back("parent_0_unit=" + parentId);
+  fields.push_back("parent_0_clause=" + parentClause);
+  fields.push_back("parent_0_literal_count=" + std::to_string(parentLiterals.size()));
+  for (std::size_t i = 0; i < parentLiterals.size(); ++i) {
+    fields.push_back("parent_0_literal_" + std::to_string(i) + "=" + parentLiterals[i]);
+  }
+  fields.push_back("parent_0_substitution=" + substitutionSexpr);
+  fields.push_back("parent_0_substituted_literal_count=" + std::to_string(substitutedLiterals.size()));
+  for (std::size_t i = 0; i < substitutedLiterals.size(); ++i) {
+    fields.push_back("parent_0_substituted_literal_" + std::to_string(i) + "=" + substitutedLiterals[i]);
+  }
+
+  std::ostringstream out;
+  out << "(substitute " << sexprQuote(id)
+      << " (parent " << sexprQuote(parentId) << ") "
+      << substitutionSexpr
+      << " (result " << resultClause << "))";
+  out << "\n  (step_extra " << sexprQuote(id) << " \"kernel_v1\" (";
+  for (std::size_t i = 0; i < fields.size(); ++i) {
+    if (i != 0) {
+      out << ' ';
+    }
+    out << sexprQuote(fields[i]);
+  }
+  out << "))";
+  result = out.str();
+  return true;
+}
+
 bool MegalodonChecker::certificateAvatarComponentStepSexpr(Kernel::Unit* unit, std::string& result)
 {
   if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::AVATAR_COMPONENT) {
@@ -5033,11 +5114,16 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
       nonIdentity = subst != "(subst)";
       if (nonIdentity) {
         std::string substituteId = stepBase + "_subst" + std::to_string(parentIndex);
-        steps.push_back(
-          "(substitute " + sexprQuote(substituteId)
-          + " (parent " + sexprQuote(parentId) + ") "
-          + subst
-          + " (result " + clause + "))");
+        std::string substituteStep;
+        if (!certificateSubstituteStepSexpr(
+              substituteId,
+              parentId,
+              parents[parentIndex],
+              replayInfo->substitutionForBanksSub[parentIndex],
+              substituteStep)) {
+          return false;
+        }
+        steps.push_back(substituteStep);
         parentId = substituteId;
       }
       parentIds[parentIndex] = parentId;
@@ -7747,11 +7833,16 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                   parentIds[parentIndex] = "u" + std::to_string(premises[parentIndex]->number());
                   if (nonIdentity) {
                     std::string substituteId = stepBase + "_subst" + std::to_string(parentIndex);
-                    steps.push_back(
-                      "(substitute " + sexprQuote(substituteId)
-                      + " (parent " + sexprQuote(parentIds[parentIndex]) + ") "
-                      + subst
-                      + " (result " + clauseSexprFromLiterals(substitutedParents[parentIndex]) + "))");
+                    std::string substituteStep;
+                    if (!certificateSubstituteStepSexpr(
+                          substituteId,
+                          parentIds[parentIndex],
+                          premises[parentIndex],
+                          activeSubstitutions[parentIndex],
+                          substituteStep)) {
+                      return false;
+                    }
+                    steps.push_back(substituteStep);
                     parentIds[parentIndex] = substituteId;
                   }
                 }
@@ -7962,11 +8053,16 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
               parentIds[parentIndex] = "u" + std::to_string(premises[parentIndex]->number());
               if (nonIdentity) {
                 std::string substituteId = stepBase + "_subst" + std::to_string(parentIndex);
-                steps.push_back(
-                  "(substitute " + sexprQuote(substituteId)
-                  + " (parent " + sexprQuote(parentIds[parentIndex]) + ") "
-                  + subst
-                  + " (result " + clauseSexprFromLiterals(substitutedParents[parentIndex]) + "))");
+                std::string substituteStep;
+                if (!certificateSubstituteStepSexpr(
+                      substituteId,
+                      parentIds[parentIndex],
+                      premises[parentIndex],
+                      activeSubstitutions[parentIndex],
+                      substituteStep)) {
+                  return false;
+                }
+                steps.push_back(substituteStep);
                 parentIds[parentIndex] = substituteId;
               }
             }
