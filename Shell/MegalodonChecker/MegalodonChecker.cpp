@@ -11605,6 +11605,52 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         fields.push_back(prefix + "_position=" + position.str());
       }
     }
+    if (u->inference().rule() == Kernel::InferenceRule::DEFINITION_FOLDING_PRED && !u->isClause()) {
+      Kernel::Unit* sourceParent = nullptr;
+      std::vector<Kernel::Unit*> definitionParents;
+      for (Kernel::Unit* parent : iterTraits(u->getParents())) {
+        if (parent->isClause()) {
+          continue;
+        }
+        if (parent->inference().rule() == Kernel::InferenceRule::PREDICATE_DEFINITION) {
+          definitionParents.push_back(parent);
+        } else if (sourceParent == nullptr) {
+          sourceParent = parent;
+        }
+      }
+      if (sourceParent != nullptr && !definitionParents.empty()) {
+        std::vector<std::string> kernelFields;
+        kernelFields.push_back("source_unit=u" + std::to_string(sourceParent->number()));
+        std::string sourceFormula;
+        if (certificateFormulaTermSexpr(sourceParent->getFormula(), sourceFormula)) {
+          kernelFields.push_back("source_formula=" + sourceFormula);
+        }
+        std::reverse(definitionParents.begin(), definitionParents.end());
+        kernelFields.push_back("definition_count=" + std::to_string(definitionParents.size()));
+        for (std::size_t definitionIndex = 0; definitionIndex < definitionParents.size(); ++definitionIndex) {
+          Kernel::Unit* definitionParent = definitionParents[definitionIndex];
+          std::string prefix = "definition_" + std::to_string(definitionIndex);
+          kernelFields.push_back(prefix + "_unit=u" + std::to_string(definitionParent->number()));
+          std::string definitionFormula;
+          if (certificateFormulaTermSexpr(definitionParent->getFormula(), definitionFormula)) {
+            kernelFields.push_back(prefix + "_formula=" + definitionFormula);
+          }
+          std::string symbolName;
+          if (certificatePredicateDefinitionSymbol(definitionParent->getFormula(), symbolName)) {
+            kernelFields.push_back(prefix + "_symbol=" + symbolName);
+          }
+        }
+        std::string resultFormula;
+        if (certificateFormulaTermSexpr(u->getFormula(), resultFormula)) {
+          kernelFields.push_back("result_formula=" + resultFormula);
+        }
+        emitKernelV1(
+          definitionParents.size() == 1
+            ? "predicate_definition_fold"
+            : "predicate_definition_fold_chain",
+          kernelFields);
+      }
+    }
     emit("definition_rewrite", fields);
   }
 
@@ -11844,6 +11890,27 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           fields.push_back("body_variable_sort_" + std::to_string(index) + "=" + renderedBodyVarSorts[index].second);
         }
         fields.push_back("formula=" + formulaText);
+        {
+          std::vector<std::string> kernelFields;
+          kernelFields.push_back("introduced_symbol=" + name);
+          if (!sort.empty()) {
+            kernelFields.push_back("sort=" + sort);
+          }
+          std::string symbolName;
+          if (certificatePredicateDefinitionSymbol(u->getFormula(), symbolName)) {
+            kernelFields.push_back("definiendum_symbol=" + symbolName);
+          }
+          std::string resultFormula;
+          if (certificateFormulaTermSexpr(u->getFormula(), resultFormula)) {
+            kernelFields.push_back("result_formula=" + resultFormula);
+          }
+          kernelFields.push_back("body_variable_sort_count=" + std::to_string(renderedBodyVarSorts.size()));
+          for (std::size_t index = 0; index < renderedBodyVarSorts.size(); ++index) {
+            kernelFields.push_back(
+              "body_variable_sort_" + std::to_string(index) + "=" + renderedBodyVarSorts[index].second);
+          }
+          emitKernelV1("predicate_definition", kernelFields);
+        }
         emit("predicate_definition", fields);
       }
     }
