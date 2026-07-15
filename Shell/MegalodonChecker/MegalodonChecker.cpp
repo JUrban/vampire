@@ -10722,8 +10722,19 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         if (renderClauseForExtra(splitExtra->component, componentText)) {
           fields.push_back("component_clause=" + componentText);
         }
+        std::string componentClause;
+        if (clauseSexprForKernel(splitExtra->component, componentClause)) {
+          fields.push_back("component_clause_sexpr=" + componentClause);
+        }
         addClauseVariableSortFields(fields, "component_clause", splitExtra->component);
         addClauseDbIndexSortFields(fields, "component_clause", splitExtra->component);
+        {
+          std::vector<std::string> kernelFields = fields;
+          if (!componentClause.empty()) {
+            kernelFields.push_back("result_clause=" + componentClause);
+          }
+          emitKernelV1("avatar_definition", kernelFields);
+        }
         emit("avatar_definition", fields);
       }
     }
@@ -10743,6 +10754,10 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         std::string componentText;
         if (renderClauseForExtra(component->second, componentText)) {
           fields.push_back(prefix + "_component_clause=" + componentText);
+        }
+        std::string componentClause;
+        if (clauseSexprForKernel(component->second, componentClause)) {
+          fields.push_back(prefix + "_component_clause_sexpr=" + componentClause);
         }
         addClauseVariableSortFields(fields, prefix + "_component_clause", component->second);
         addClauseDbIndexSortFields(fields, prefix + "_component_clause", component->second);
@@ -10773,6 +10788,14 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       ++dependencyIndex;
     }
     fields.push_back("dependency_count=" + std::to_string(dependencyIndex));
+    {
+      std::vector<std::string> kernelFields = fields;
+      std::string resultClause;
+      if (clauseSexprForKernel(u->asClause(), resultClause)) {
+        kernelFields.push_back("result_clause=" + resultClause);
+      }
+      emitKernelV1("split_dependency", kernelFields);
+    }
     emit("split_dependency", fields);
   }
 
