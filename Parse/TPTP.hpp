@@ -865,8 +865,7 @@ public:
 private:
   DHMap<unsigned,SourceRecord*>* _unitSources;
 
-  /** This field stores names of input units if the
-   * output_axiom_names option is enabled */
+  /** This field stores original TPTP names of input units for source reconstruction. */
   static DHMap<unsigned, std::string> _axiomNames;
 
   /** This field stores original TPTP formula roles for source reconstruction. */

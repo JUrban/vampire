@@ -11957,7 +11957,10 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         collectPairs(source, target, 0, "root");
         std::string sourceFormula;
         std::string resultFormula;
-        if (certificateFormulaTermSexpr(source, sourceFormula)
+        std::string foolBoolStep;
+        const bool emitsFoolBool = certificateFoolBoolStepSexpr(u, foolBoolStep);
+        if (!emitsFoolBool
+          && certificateFormulaTermSexpr(source, sourceFormula)
           && certificateFormulaTermSexpr(target, resultFormula)
           && sourceFormula != resultFormula
           && !foolPairs.empty()) {
