@@ -10184,6 +10184,43 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       || info->premises.size() != info->substitutionForBanksSub.size()) {
       return;
     }
+    bool addedEquality = false;
+    for (std::size_t parentIndex = 0; parentIndex < info->premises.size() && !addedEquality; ++parentIndex) {
+      Kernel::Clause* premise = info->premises[parentIndex];
+      for (unsigned literalIndex = 0; literalIndex < premise->length(); ++literalIndex) {
+        Kernel::Literal* literal = (*premise)[literalIndex];
+        if (!literal->isEquality() || !literal->isPositive()) {
+          continue;
+        }
+        Kernel::Literal* substituted =
+          Kernel::SubstHelper::apply(literal, info->substitutionForBanksSub[parentIndex]);
+        if (substituted == nullptr || !substituted->isEquality() || !substituted->isPositive()) {
+          continue;
+        }
+        Kernel::TermList left = *substituted->nthArgument(0);
+        Kernel::TermList right = *substituted->nthArgument(1);
+        if (!((Kernel::TermList::equals(left, info->demodulationRedex)
+              && Kernel::TermList::equals(right, info->demodulationReplacement))
+            || (Kernel::TermList::equals(right, info->demodulationRedex)
+              && Kernel::TermList::equals(left, info->demodulationReplacement))
+            || (Kernel::TermList::equals(left, info->demodulationRuleLhs)
+              && Kernel::TermList::equals(right, info->demodulationRuleRhs))
+            || (Kernel::TermList::equals(right, info->demodulationRuleLhs)
+              && Kernel::TermList::equals(left, info->demodulationRuleRhs)))) {
+          continue;
+        }
+        std::string rendered;
+        if (literalSexprForKernel(substituted, rendered)) {
+          fields.push_back("equality_substituted=" + rendered);
+        }
+        fields.push_back("equality_parent_index=" + std::to_string(parentIndex));
+        fields.push_back("equality_literal_index=" + std::to_string(literalIndex));
+        addedEquality = true;
+        break;
+      }
+    }
+    addKernelTermField(fields, "from", info->demodulationRedex);
+    addKernelTermField(fields, "to", info->demodulationReplacement);
     for (std::size_t parentIndex = 0; parentIndex < info->premises.size(); ++parentIndex) {
       Kernel::Clause* premise = info->premises[parentIndex];
       for (unsigned literalIndex = 0; literalIndex < premise->length(); ++literalIndex) {
