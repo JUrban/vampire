@@ -10426,6 +10426,20 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
   };
   auto emitKernelV1 = [&](const std::string& kernelRule, std::vector<std::string> fields) {
+    auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
+      fields.push_back("primitive_expansion=prefix");
+      fields.push_back("primitive_expansion_prefix=u" + std::to_string(u->number()));
+      fields.push_back("primitive_expansion_requires=" + primitiveRule);
+    };
+    if (kernelRule == "superposition" || kernelRule == "rewrite") {
+      addPrimitiveExpansion("paramodulate");
+    } else if (kernelRule == "subsumption_resolution"
+      || kernelRule == "unit_resulting_resolution"
+      || kernelRule == "resolution") {
+      addPrimitiveExpansion("resolve");
+    } else if (kernelRule == "factoring") {
+      addPrimitiveExpansion("factor");
+    }
     fields.insert(fields.begin(), "rule=" + kernelRule);
     fields.insert(fields.begin(), "schema=prover9-small-kernel-v1");
     addKernelConclusionFields(fields);
