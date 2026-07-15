@@ -10119,19 +10119,13 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       if (clauseSexprForKernel(u->asClause(), clause)) {
         fields.push_back("conclusion_clause=" + clause);
       }
-    }
-  };
-  auto addKernelResultLiteralFields = [&](std::vector<std::string>& fields) {
-    if (!u->isClause()) {
-      return;
-    }
-    std::vector<std::string> renderedLiterals;
-    if (!appendCertificateClauseLiteralsSexpr(u->asClause(), renderedLiterals)) {
-      return;
-    }
-    fields.push_back("result_literal_count=" + std::to_string(renderedLiterals.size()));
-    for (std::size_t literalIndex = 0; literalIndex < renderedLiterals.size(); ++literalIndex) {
-      fields.push_back("result_literal_" + std::to_string(literalIndex) + "=" + renderedLiterals[literalIndex]);
+      std::vector<std::string> renderedLiterals;
+      if (appendCertificateClauseLiteralsSexpr(u->asClause(), renderedLiterals)) {
+        fields.push_back("result_literal_count=" + std::to_string(renderedLiterals.size()));
+        for (std::size_t literalIndex = 0; literalIndex < renderedLiterals.size(); ++literalIndex) {
+          fields.push_back("result_literal_" + std::to_string(literalIndex) + "=" + renderedLiterals[literalIndex]);
+        }
+      }
     }
   };
   auto addKernelLiteralFields =
@@ -12259,7 +12253,6 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         if (selected->synthesisExtra.elseLit != nullptr) {
           addKernelLiteralFields(kernelFields, "else", selected->synthesisExtra.elseLit);
         }
-        addKernelResultLiteralFields(kernelFields);
         emitKernelV1(
           u->inference().rule() == Kernel::InferenceRule::RESOLUTION ? "resolution" : "factoring",
           kernelFields);
@@ -12412,7 +12405,6 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             }
           }
         }
-        addKernelResultLiteralFields(kernelFields);
         emitKernelV1(
           u->inference().rule() == Kernel::InferenceRule::EQUALITY_RESOLUTION
             ? "equality_resolution"
