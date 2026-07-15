@@ -11297,6 +11297,38 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     if (parentIterator.hasNext()) {
       Kernel::Unit* parent = parentIterator.next();
       std::vector<std::string> fields;
+      {
+        std::vector<std::string> kernelFields;
+        kernelFields.push_back("source_unit=u" + std::to_string(parent->number()));
+        kernelFields.push_back(std::string("source_kind=") + (parent->isClause() ? "clause" : "formula"));
+        if (parent->isClause()) {
+          std::string sourceClause;
+          if (clauseSexprForKernel(parent->asClause(), sourceClause)) {
+            kernelFields.push_back("source_clause=" + sourceClause);
+          }
+        } else {
+          std::string sourceFormula;
+          if (certificateFormulaTermSexpr(parent->getFormula(), sourceFormula)) {
+            kernelFields.push_back("source_formula=" + sourceFormula);
+          }
+        }
+        std::string resultClause;
+        if (clauseSexprForKernel(u->asClause(), resultClause)) {
+          kernelFields.push_back("result_clause=" + resultClause);
+        }
+        const auto* parentExtra = env.proofExtra.find(parent);
+        if (parentExtra != nullptr) {
+          const auto* cnfExtra = static_cast<const Inferences::CNFTransformationInferenceExtra*>(parentExtra);
+          kernelFields.push_back("parent_clause_count=" + std::to_string(cnfExtra->number));
+        }
+        if (extra != nullptr) {
+          const auto* clauseExtra = static_cast<const Inferences::CNFClauseInferenceExtra*>(extra);
+          kernelFields.push_back("clause_parent_unit=u" + std::to_string(clauseExtra->parentNumber));
+          kernelFields.push_back("clause_index=" + std::to_string(clauseExtra->index));
+          kernelFields.push_back("clause_count=" + std::to_string(clauseExtra->count));
+        }
+        emitKernelV1("cnf_clause", kernelFields);
+      }
       fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
       fields.push_back("parent_unit=" + std::to_string(parent->number()));
       fields.push_back(std::string("parent_kind=") + (parent->isClause() ? "clause" : "formula"));
