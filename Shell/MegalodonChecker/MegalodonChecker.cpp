@@ -11760,16 +11760,20 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       {
         std::vector<std::string> kernelFields;
         kernelFields.push_back("source_unit=u" + std::to_string(parent->number()));
+        kernelFields.push_back("parent_0_unit=u" + std::to_string(parent->number()));
+        kernelFields.push_back("proof_parent_count=1");
         kernelFields.push_back(std::string("source_kind=") + (parent->isClause() ? "clause" : "formula"));
         if (parent->isClause()) {
           std::string sourceClause;
           if (clauseSexprForKernel(parent->asClause(), sourceClause)) {
             kernelFields.push_back("source_clause=" + sourceClause);
+            kernelFields.push_back("parent_0_clause=" + sourceClause);
           }
         } else {
           std::string sourceFormula;
           if (certificateFormulaTermSexpr(parent->getFormula(), sourceFormula)) {
             kernelFields.push_back("source_formula=" + sourceFormula);
+            kernelFields.push_back("parent_0_formula=" + sourceFormula);
           }
         }
         std::string resultClause;
