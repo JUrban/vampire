@@ -10219,6 +10219,17 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       fields.push_back(name + "=" + rendered);
     }
   };
+  auto addKernelPrimitiveParentSubstitutionFields = [&](std::vector<std::string>& fields) {
+    if (info == nullptr || info->premises.size() != info->substitutionForBanksSub.size()) {
+      return;
+    }
+    for (std::size_t parentIndex = 0; parentIndex < info->substitutionForBanksSub.size(); ++parentIndex) {
+      std::string subst;
+      if (substitutionSexprForKernel(info->substitutionForBanksSub[parentIndex], subst)) {
+        fields.push_back("primitive_parent_" + std::to_string(parentIndex) + "_substitution=" + subst);
+      }
+    }
+  };
   auto addKernelSatProofFields = [&](std::vector<std::string>& fields, SAT::SATClause* root) {
     struct CompareSATClauses {
       bool operator()(SAT::SATClause* left, SAT::SATClause* right) const
@@ -12196,7 +12207,15 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         if (literalVectorClauseSexprForKernel(urr->remaining, remaining)) {
           kernelFields.push_back("trace_remaining=" + remaining);
         }
-        emitKernelV1("unit_resulting_resolution", kernelFields);
+        std::string primitiveExpansion;
+        const std::string unitPrefix = "u" + std::to_string(u->number());
+        const bool hasResolvePrimitiveExpansion =
+          certificateUnitResultingResolutionStepsSexpr(u, primitiveExpansion)
+          && primitiveExpansion.find("(unit_resulting_resolution ") == std::string::npos
+          && primitiveExpansion.find("(resolve " + sexprQuote(unitPrefix + "_resolve")) != std::string::npos;
+        if (hasResolvePrimitiveExpansion) {
+          emitKernelV1("unit_resulting_resolution", kernelFields);
+        }
       }
       fields.push_back("trace_main_parent_unit=" + std::to_string(urr->mainParent->number()));
       fields.push_back("trace_step_count=" + std::to_string(urr->steps.size()));
@@ -12265,14 +12284,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             rewrite->selected.selectedLiteral.selectedLiteral,
             rewrite->selected.otherLiteral);
         }
-        if (info != nullptr && info->premises.size() == info->substitutionForBanksSub.size()) {
-          for (std::size_t parentIndex = 0; parentIndex < info->substitutionForBanksSub.size(); ++parentIndex) {
-            std::string subst;
-            if (substitutionSexprForKernel(info->substitutionForBanksSub[parentIndex], subst)) {
-              kernelFields.push_back("primitive_parent_" + std::to_string(parentIndex) + "_substitution=" + subst);
-            }
-          }
-        }
+        addKernelPrimitiveParentSubstitutionFields(kernelFields);
         emitKernelV1(
           u->inference().rule() == Kernel::InferenceRule::SUPERPOSITION
             ? "superposition"
@@ -12339,6 +12351,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         if (selected->synthesisExtra.elseLit != nullptr) {
           addKernelLiteralFields(kernelFields, "else", selected->synthesisExtra.elseLit);
         }
+        addKernelPrimitiveParentSubstitutionFields(kernelFields);
         emitKernelV1(
           u->inference().rule() == Kernel::InferenceRule::RESOLUTION ? "resolution" : "factoring",
           kernelFields);
