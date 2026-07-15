@@ -10044,6 +10044,84 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     return skeletonDisjunctionToMegalodon(literals, result);
   };
+  auto literalSexprForKernel = [&](Kernel::Literal* literal, std::string& text) {
+    if (literal == nullptr) {
+      return false;
+    }
+    return certificateLiteralSexpr(literal, text);
+  };
+  auto termSexprForKernel = [&](Kernel::TermList term, std::string& text) {
+    return certificateTermSexpr(term, text);
+  };
+  auto clauseSexprForKernel = [&](Kernel::Clause* clause, std::string& text) {
+    if (clause == nullptr) {
+      return false;
+    }
+    return certificateClauseSexpr(clause, text);
+  };
+  auto substitutionSexprForKernel = [&](const Kernel::Substitution& substitution, std::string& text) {
+    return certificateSubstitutionSexpr(substitution, text);
+  };
+  auto addKernelParentFields = [&](std::vector<std::string>& fields) {
+    fields.push_back("parent_count=" + std::to_string(parentClauses.size()));
+    for (std::size_t parentIndex = 0; parentIndex < parentClauses.size(); ++parentIndex) {
+      Kernel::Clause* parent = parentClauses[parentIndex];
+      fields.push_back("parent_" + std::to_string(parentIndex) + "_unit=u" + std::to_string(parent->number()));
+      std::string clause;
+      if (clauseSexprForKernel(parent, clause)) {
+        fields.push_back("parent_" + std::to_string(parentIndex) + "_clause=" + clause);
+      }
+      if (
+        info != nullptr
+        && parentIndex < info->premises.size()
+        && parentIndex < info->substitutionForBanksSub.size()
+      ) {
+        std::string subst;
+        if (substitutionSexprForKernel(info->substitutionForBanksSub[parentIndex], subst)) {
+          fields.push_back("parent_" + std::to_string(parentIndex) + "_substitution=" + subst);
+        }
+      }
+    }
+  };
+  auto addKernelConclusionFields = [&](std::vector<std::string>& fields) {
+    fields.push_back("conclusion_unit=u" + std::to_string(u->number()));
+    fields.push_back("vampire_rule=" + std::string(Kernel::ruleName(u->inference().rule())));
+    if (u->isClause()) {
+      std::string clause;
+      if (clauseSexprForKernel(u->asClause(), clause)) {
+        fields.push_back("conclusion_clause=" + clause);
+      }
+    }
+  };
+  auto addKernelLiteralFields =
+    [&](std::vector<std::string>& fields,
+        const std::string& prefix,
+        Kernel::Literal* literal,
+        int preferredParentIndex = -1) {
+      std::string rendered;
+      if (literalSexprForKernel(literal, rendered)) {
+        fields.push_back(prefix + "=" + rendered);
+      }
+      auto [parentIndex, literalIndex] = literalPosition(literal, preferredParentIndex);
+      if (parentIndex >= 0 && literalIndex >= 0) {
+        fields.push_back(prefix + "_parent_index=" + std::to_string(parentIndex));
+        fields.push_back(prefix + "_literal_index=" + std::to_string(literalIndex));
+        fields.push_back(prefix + "_parent_unit=u" + std::to_string(parentClauses[parentIndex]->number()));
+      }
+    };
+  auto addKernelTermField = [&](std::vector<std::string>& fields, const std::string& name, Kernel::TermList term) {
+    std::string rendered;
+    if (termSexprForKernel(term, rendered)) {
+      fields.push_back(name + "=" + rendered);
+    }
+  };
+  auto emitKernelV1 = [&](const std::string& kernelRule, std::vector<std::string> fields) {
+    fields.insert(fields.begin(), "rule=" + kernelRule);
+    fields.insert(fields.begin(), "schema=prover9-small-kernel-v1");
+    addKernelConclusionFields(fields);
+    addKernelParentFields(fields);
+    emit("kernel_v1", fields);
+  };
   auto renderFormulaForExtra = [&](Kernel::Formula* formula, std::string& text) {
     bool usesEquality = _usesEquality;
     std::set<std::string> equalitySorts = _equalitySorts;
@@ -11339,6 +11417,26 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     case Kernel::InferenceRule::SUPERPOSITION:
     case Kernel::InferenceRule::EQUALITY_FACTORING: {
       const auto* rewrite = static_cast<const Inferences::TwoLiteralRewriteInferenceExtra*>(extra);
+      {
+        std::vector<std::string> kernelFields;
+        addKernelLiteralFields(kernelFields, "selected", rewrite->selected.selectedLiteral.selectedLiteral, 0);
+        addKernelLiteralFields(kernelFields, "other", rewrite->selected.otherLiteral, 1);
+        addKernelTermField(kernelFields, "rewrite_lhs", rewrite->rewrite.lhs);
+        addKernelTermField(kernelFields, "rewrite_redex", rewrite->rewrite.rewritten);
+        if (info != nullptr && info->premises.size() == info->substitutionForBanksSub.size()) {
+          for (std::size_t parentIndex = 0; parentIndex < info->substitutionForBanksSub.size(); ++parentIndex) {
+            std::string subst;
+            if (substitutionSexprForKernel(info->substitutionForBanksSub[parentIndex], subst)) {
+              kernelFields.push_back("primitive_parent_" + std::to_string(parentIndex) + "_substitution=" + subst);
+            }
+          }
+        }
+        emitKernelV1(
+          u->inference().rule() == Kernel::InferenceRule::SUPERPOSITION
+            ? "superposition"
+            : "equality_factoring",
+          kernelFields);
+      }
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(rewrite->selected.selectedLiteral.selectedLiteral));
       fields.push_back(std::string("other=") + literalText(rewrite->selected.otherLiteral));
@@ -11386,6 +11484,23 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     case Kernel::InferenceRule::RESOLUTION:
     case Kernel::InferenceRule::FACTORING: {
       const auto* selected = static_cast<const Inferences::TwoLiteralInferenceExtra*>(extra);
+      {
+        std::vector<std::string> kernelFields;
+        addKernelLiteralFields(kernelFields, "selected", selected->selectedLiteral.selectedLiteral, 0);
+        addKernelLiteralFields(kernelFields, "other", selected->otherLiteral, 1);
+        if (selected->synthesisExtra.condition != nullptr) {
+          addKernelLiteralFields(kernelFields, "condition", selected->synthesisExtra.condition);
+        }
+        if (selected->synthesisExtra.thenLit != nullptr) {
+          addKernelLiteralFields(kernelFields, "then", selected->synthesisExtra.thenLit);
+        }
+        if (selected->synthesisExtra.elseLit != nullptr) {
+          addKernelLiteralFields(kernelFields, "else", selected->synthesisExtra.elseLit);
+        }
+        emitKernelV1(
+          u->inference().rule() == Kernel::InferenceRule::RESOLUTION ? "resolve" : "factor",
+          kernelFields);
+      }
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(selected->selectedLiteral.selectedLiteral));
       fields.push_back(std::string("other=") + literalText(selected->otherLiteral));
@@ -11407,6 +11522,24 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     case Kernel::InferenceRule::FORWARD_DEMODULATION:
     case Kernel::InferenceRule::BACKWARD_DEMODULATION: {
       const auto* rewrite = static_cast<const Inferences::RewriteInferenceExtra*>(extra);
+      {
+        std::vector<std::string> kernelFields;
+        addKernelTermField(kernelFields, "rule_lhs", rewrite->lhs);
+        addKernelTermField(kernelFields, "redex", rewrite->rewritten);
+        if (rewrite->hasRhs) {
+          addKernelTermField(kernelFields, "rule_rhs", rewrite->rhs);
+        }
+        if (rewrite->hasReplacement) {
+          addKernelTermField(kernelFields, "replacement", rewrite->replacement);
+        }
+        if (info != nullptr && info->hasDemodulationRewrite) {
+          addKernelTermField(kernelFields, "replay_rule_lhs", info->demodulationRuleLhs);
+          addKernelTermField(kernelFields, "replay_rule_rhs", info->demodulationRuleRhs);
+          addKernelTermField(kernelFields, "replay_redex", info->demodulationRedex);
+          addKernelTermField(kernelFields, "replay_replacement", info->demodulationReplacement);
+        }
+        emitKernelV1("rewrite", kernelFields);
+      }
       std::vector<std::string> fields;
       fields.push_back(std::string("lhs=") + termText(rewrite->lhs));
       fields.push_back(std::string("target=") + termText(rewrite->rewritten));
@@ -11492,6 +11625,35 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     case Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION:
     case Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION: {
       const auto* selected = static_cast<const Inferences::LiteralInferenceExtra*>(extra);
+      {
+        std::vector<std::string> kernelFields;
+        addKernelLiteralFields(kernelFields, "selected", selected->selectedLiteral, 0);
+        if (parentClauses.size() == 2) {
+          auto [selectedParentIndex, selectedLiteralIndex] = literalPosition(selected->selectedLiteral, 0);
+          if (selectedParentIndex >= 0 && selectedLiteralIndex >= 0) {
+            std::size_t mainParentIndex = static_cast<std::size_t>(selectedParentIndex);
+            std::size_t sideParentIndex = mainParentIndex == 0 ? 1 : 0;
+            kernelFields.push_back("main_parent_index=" + std::to_string(mainParentIndex));
+            kernelFields.push_back("side_parent_index=" + std::to_string(sideParentIndex));
+            SATSubsumption::SATSubsumptionAndResolution satSR;
+            if (satSR.checkSubsumptionResolutionWithLiteral(
+                  parentClauses[sideParentIndex],
+                  parentClauses[mainParentIndex],
+                  static_cast<unsigned>(selectedLiteralIndex))) {
+              Kernel::Substitution substitution = satSR.getBindingsForSubsumptionResolutionWithLiteral();
+              std::string sideSubstitution;
+              if (substitutionSexprForKernel(substitution, sideSubstitution)) {
+                kernelFields.push_back("side_substitution=" + sideSubstitution);
+              }
+            }
+          }
+        }
+        emitKernelV1(
+          u->inference().rule() == Kernel::InferenceRule::EQUALITY_RESOLUTION
+            ? "equality_resolution"
+            : "subsumption_resolution",
+          kernelFields);
+      }
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(selected->selectedLiteral));
       addLiteralPositionFields(fields, "selected", selected->selectedLiteral, 0);
