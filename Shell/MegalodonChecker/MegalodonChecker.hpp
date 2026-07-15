@@ -126,6 +126,7 @@ private:
   std::string sexprQuote(const std::string& value) const;
   bool certificateTypeSexpr(Kernel::TermList sort, std::string& result);
   bool certificateTermSexpr(Kernel::TermList term, std::string& result);
+  bool certificateEqualityAtomSexpr(Kernel::TermList sort, const std::string& lhs, const std::string& rhs, std::string& result);
   bool certificateAtomSexpr(Kernel::Literal* literal, std::string& result);
   bool certificateLiteralSexpr(Kernel::Literal* literal, std::string& result);
   bool certificateSplitLiteralSexpr(unsigned split, std::string& result);

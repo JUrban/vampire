@@ -275,6 +275,23 @@ bool MegalodonChecker::certificateTermSexpr(Kernel::TermList term, std::string& 
   return true;
 }
 
+bool MegalodonChecker::certificateEqualityAtomSexpr(
+  Kernel::TermList sort,
+  const std::string& lhs,
+  const std::string& rhs,
+  std::string& result)
+{
+  static const std::string megalodonEqualityHash =
+    "5a6af35fb6d6bea477dd0f822b8e01ca0d57cc50dfd41744307bc94597fdaa4a";
+  std::string type;
+  if (!certificateTypeSexpr(sort, type)) {
+    return false;
+  }
+  result = "(AP (AP (TPAP (TMH " + sexprQuote(megalodonEqualityHash) + ") "
+    + type + ") " + lhs + ") " + rhs + ")";
+  return true;
+}
+
 bool MegalodonChecker::certificateAtomSexpr(Kernel::Literal* literal, std::string& result)
 {
   Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
@@ -285,8 +302,8 @@ bool MegalodonChecker::certificateAtomSexpr(Kernel::Literal* literal, std::strin
       || !certificateTermSexpr(*positive->nthArgument(1), rhs)) {
       return false;
     }
-    result = "(AP (AP (TMH \"=\") " + lhs + ") " + rhs + ")";
-    return true;
+    return certificateEqualityAtomSexpr(
+      Kernel::SortHelper::getEqualityArgumentSort(positive), lhs, rhs, result);
   }
 
   std::string rendered = "(TMH " + sexprQuote(predicateName(positive->functor())) + ")";
@@ -886,8 +903,9 @@ bool MegalodonChecker::certificateCondensationStepSexpr(Kernel::Unit* unit, std:
       if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
         return false;
       }
-      rendered = "(AP (AP (TMH \"=\") " + lhs + ") " + rhs + ")";
-      return true;
+      Kernel::TermList sort =
+        Kernel::SubstHelper::apply(Kernel::SortHelper::getEqualityArgumentSort(positive), substitution);
+      return certificateEqualityAtomSexpr(sort, lhs, rhs, rendered);
     }
     Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
     return certificateAtomSexpr(substituted, rendered);
@@ -947,17 +965,15 @@ bool MegalodonChecker::certificateCondensationStepSexpr(Kernel::Unit* unit, std:
     return result;
   };
   auto swappedEqualityLiteral = [&](const std::string& literal, std::string& swapped) {
+    static const std::string megalodonEqualityHash =
+      "5a6af35fb6d6bea477dd0f822b8e01ca0d57cc50dfd41744307bc94597fdaa4a";
     const std::string posPrefix = "(pos (AP (AP (TMH \"=\") ";
     const std::string negPrefix = "(neg (AP (AP (TMH \"=\") ";
+    const std::string typedPosPrefix =
+      "(pos (AP (AP (TPAP (TMH " + sexprQuote(megalodonEqualityHash) + ") ";
+    const std::string typedNegPrefix =
+      "(neg (AP (AP (TPAP (TMH " + sexprQuote(megalodonEqualityHash) + ") ";
     std::string prefix;
-    if (literal.rfind(posPrefix, 0) == 0) {
-      prefix = posPrefix;
-    } else if (literal.rfind(negPrefix, 0) == 0) {
-      prefix = negPrefix;
-    } else {
-      return false;
-    }
-    std::size_t leftStart = prefix.size();
     auto termEnd = [&](std::size_t start, std::size_t& end) {
       if (start >= literal.size()) {
         return false;
@@ -980,6 +996,26 @@ bool MegalodonChecker::certificateCondensationStepSexpr(Kernel::Unit* unit, std:
       }
       return false;
     };
+    if (literal.rfind(posPrefix, 0) == 0) {
+      prefix = posPrefix;
+    } else if (literal.rfind(negPrefix, 0) == 0) {
+      prefix = negPrefix;
+    } else if (literal.rfind(typedPosPrefix, 0) == 0 || literal.rfind(typedNegPrefix, 0) == 0) {
+      const std::string typedPrefix =
+        literal.rfind(typedPosPrefix, 0) == 0 ? typedPosPrefix : typedNegPrefix;
+      std::size_t typeStart = typedPrefix.size();
+      std::size_t typeEnd = std::string::npos;
+      if (!termEnd(typeStart, typeEnd)
+        || typeEnd + 2 >= literal.size()
+        || literal[typeEnd] != ')'
+        || literal[typeEnd + 1] != ' ') {
+        return false;
+      }
+      prefix = literal.substr(0, typeEnd + 2);
+    } else {
+      return false;
+    }
+    std::size_t leftStart = prefix.size();
     std::size_t leftEnd = std::string::npos;
     if (!termEnd(leftStart, leftEnd)
       || leftEnd + 2 >= literal.size()
@@ -1811,7 +1847,10 @@ bool MegalodonChecker::certificateFoolBoolStepSexpr(Kernel::Unit* unit, std::str
     || !certificateFormulaNativeLiteralSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), resultLiteral)) {
     return false;
   }
-  const std::string expectedAtom = "(AP (AP (TMH \"=\") " + parentAtom + ") (TMH \"f__true\"))";
+  std::string expectedAtom;
+  if (!certificateEqualityAtomSexpr(Kernel::AtomicSort::boolSort(), parentAtom, "(TMH \"f__true\")", expectedAtom)) {
+    return false;
+  }
   const std::string expectedLiteral = std::string(parentPositive ? "(pos " : "(neg ") + expectedAtom + ")";
   if (resultLiteral != expectedLiteral) {
     return false;
@@ -6040,8 +6079,14 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
         if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
           return false;
         }
+        std::string atom;
+        Kernel::TermList sort =
+          Kernel::SubstHelper::apply(Kernel::SortHelper::getEqualityArgumentSort(literal), substitution);
+        if (!certificateEqualityAtomSexpr(sort, lhs, rhs, atom)) {
+          return false;
+        }
         rendered = std::string("(") + (literal->isPositive() ? "pos " : "neg ")
-          + "(AP (AP (TMH \"=\") " + lhs + ") " + rhs + "))";
+          + atom + ")";
         return true;
       }
       Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
@@ -7075,8 +7120,14 @@ bool MegalodonChecker::certificateForwardSubsumptionDemodulationStepsSexpr(Kerne
         if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
           return false;
         }
+        std::string atom;
+        Kernel::TermList sort =
+          Kernel::SubstHelper::apply(Kernel::SortHelper::getEqualityArgumentSort(literal), substitution);
+        if (!certificateEqualityAtomSexpr(sort, lhs, rhs, atom)) {
+          return false;
+        }
         rendered = std::string("(") + (literal->isPositive() ? "pos " : "neg ")
-          + "(AP (AP (TMH \"=\") " + lhs + ") " + rhs + "))";
+          + atom + ")";
         return true;
       }
       Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
@@ -7146,13 +7197,44 @@ bool MegalodonChecker::certificateForwardSubsumptionDemodulationStepsSexpr(Kerne
       return true;
   };
   auto swappedEqualityLiteral = [&](const std::string& literal, std::string& swapped) {
+    static const std::string megalodonEqualityHash =
+      "5a6af35fb6d6bea477dd0f822b8e01ca0d57cc50dfd41744307bc94597fdaa4a";
     const std::string posPrefix = "(pos (AP (AP (TMH \"=\") ";
     const std::string negPrefix = "(neg (AP (AP (TMH \"=\") ";
+    const std::string typedPosPrefix =
+      "(pos (AP (AP (TPAP (TMH " + sexprQuote(megalodonEqualityHash) + ") ";
+    const std::string typedNegPrefix =
+      "(neg (AP (AP (TPAP (TMH " + sexprQuote(megalodonEqualityHash) + ") ";
     std::string prefix;
     if (literal.rfind(posPrefix, 0) == 0) {
       prefix = posPrefix;
     } else if (literal.rfind(negPrefix, 0) == 0) {
       prefix = negPrefix;
+    } else if (literal.rfind(typedPosPrefix, 0) == 0 || literal.rfind(typedNegPrefix, 0) == 0) {
+      const std::string typedPrefix =
+        literal.rfind(typedPosPrefix, 0) == 0 ? typedPosPrefix : typedNegPrefix;
+      std::size_t typeStart = typedPrefix.size();
+      std::size_t typeEnd = std::string::npos;
+      auto termEnd = [&](std::size_t start, std::size_t& end) {
+        int depth = 0;
+        for (std::size_t i = start; i < literal.size(); ++i) {
+          if (literal[i] == '(') {
+            ++depth;
+          } else if (literal[i] == ')') {
+            --depth;
+            if (depth == 0) {
+              end = i + 1;
+              return true;
+            }
+          }
+        }
+        return false;
+      };
+      if (!termEnd(typeStart, typeEnd) || typeEnd + 2 >= literal.size()
+        || literal[typeEnd] != ')' || literal[typeEnd + 1] != ' ') {
+        return false;
+      }
+      prefix = literal.substr(0, typeEnd + 2);
     } else {
       return false;
     }
@@ -7535,8 +7617,14 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
           if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
             return false;
           }
+          std::string atom;
+          Kernel::TermList sort =
+            Kernel::SubstHelper::apply(Kernel::SortHelper::getEqualityArgumentSort(literal), substitution);
+          if (!certificateEqualityAtomSexpr(sort, lhs, rhs, atom)) {
+            return false;
+          }
           rendered = std::string("(") + (literal->isPositive() ? "pos " : "neg ")
-            + "(AP (AP (TMH \"=\") " + lhs + ") " + rhs + "))";
+            + atom + ")";
         } else {
           Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
           if (!certificateLiteralSexpr(substituted, rendered)) {
@@ -7634,8 +7722,14 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
           if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
             return false;
           }
+          std::string atom;
+          Kernel::TermList sort =
+            Kernel::SubstHelper::apply(Kernel::SortHelper::getEqualityArgumentSort(literal), substitution);
+          if (!certificateEqualityAtomSexpr(sort, lhs, rhs, atom)) {
+            return false;
+          }
           rendered = std::string("(") + (literal->isPositive() ? "pos " : "neg ")
-            + "(AP (AP (TMH \"=\") " + lhs + ") " + rhs + "))";
+            + atom + ")";
         } else {
           Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
           if (!certificateLiteralSexpr(substituted, rendered)) {
@@ -7647,13 +7741,17 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
       return skipped && appendCertificateSplitLiteralsSexpr(clause, literals);
   };
   auto positiveEqualityLiteralSexpr =
-    [&](Kernel::TermList lhsTerm, Kernel::TermList rhsTerm, std::string& rendered) {
+    [&](Kernel::TermList lhsTerm, Kernel::TermList rhsTerm, Kernel::TermList sort, std::string& rendered) {
       std::string lhs;
       std::string rhs;
       if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
         return false;
       }
-      rendered = "(pos (AP (AP (TMH \"=\") " + lhs + ") " + rhs + "))";
+      std::string atom;
+      if (!certificateEqualityAtomSexpr(sort, lhs, rhs, atom)) {
+        return false;
+      }
+      rendered = "(pos " + atom + ")";
       return true;
   };
   auto substitutedLiteralSexpr =
@@ -7666,8 +7764,14 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
         if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
           return false;
         }
+        std::string atom;
+        Kernel::TermList sort =
+          Kernel::SubstHelper::apply(Kernel::SortHelper::getEqualityArgumentSort(literal), substitution);
+        if (!certificateEqualityAtomSexpr(sort, lhs, rhs, atom)) {
+          return false;
+        }
         rendered = std::string("(") + (literal->isPositive() ? "pos " : "neg ")
-          + "(AP (AP (TMH \"=\") " + lhs + ") " + rhs + "))";
+          + atom + ")";
         return true;
       }
       Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
@@ -7965,8 +8069,12 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                 std::string equalityLiteralSexpr;
                 std::string fromSexpr;
                 std::string toSexpr;
+                Kernel::TermList equalitySort =
+                  Kernel::SubstHelper::apply(
+                    Kernel::SortHelper::getEqualityArgumentSort(equalityLiteral),
+                    activeSubstitutions[equalityParentIndex]);
                 if (!substitutedLiteralSexpr(equalityLiteral, activeSubstitutions[equalityParentIndex], equalityParentLiteral)
-                  || !positiveEqualityLiteralSexpr(redex, replacement, equalityLiteralSexpr)
+                  || !positiveEqualityLiteralSexpr(redex, replacement, equalitySort, equalityLiteralSexpr)
                   || !certificateTermSexpr(redex, fromSexpr)
                   || !certificateTermSexpr(replacement, toSexpr)) {
                   return false;
@@ -8185,8 +8293,12 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
             std::string equalityLiteralSexpr;
             std::string fromSexpr;
             std::string toSexpr;
+            Kernel::TermList equalitySort =
+              Kernel::SubstHelper::apply(
+                Kernel::SortHelper::getEqualityArgumentSort(equalityLiteral),
+                activeSubstitutions[equalityParentIndex]);
             if (!substitutedLiteralSexpr(equalityLiteral, activeSubstitutions[equalityParentIndex], equalityParentLiteral)
-              || !positiveEqualityLiteralSexpr(redex, replacement, equalityLiteralSexpr)
+              || !positiveEqualityLiteralSexpr(redex, replacement, equalitySort, equalityLiteralSexpr)
               || !certificateTermSexpr(redex, fromSexpr)
               || !certificateTermSexpr(replacement, toSexpr)) {
               return false;
