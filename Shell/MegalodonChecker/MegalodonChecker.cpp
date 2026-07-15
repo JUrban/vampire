@@ -10115,6 +10115,105 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       fields.push_back(name + "=" + rendered);
     }
   };
+  auto addKernelSuperpositionRewriteFields =
+    [&](std::vector<std::string>& fields,
+        Kernel::Literal* targetLiteral,
+        Kernel::Literal* equalityLiteral) {
+      if (info == nullptr || info->premises.size() != info->substitutionForBanksSub.size()) {
+        return;
+      }
+      auto [targetParent, targetIndex] = literalPosition(targetLiteral, 0);
+      auto [equalityParent, equalityIndex] = literalPosition(equalityLiteral, 1);
+      if (targetParent < 0
+        || targetIndex < 0
+        || equalityParent < 0
+        || equalityIndex < 0
+        || static_cast<std::size_t>(targetParent) >= info->substitutionForBanksSub.size()
+        || static_cast<std::size_t>(equalityParent) >= info->substitutionForBanksSub.size()) {
+        return;
+      }
+      Kernel::Literal* targetSubstituted =
+        Kernel::SubstHelper::apply(targetLiteral, info->substitutionForBanksSub[targetParent]);
+      Kernel::Literal* equalitySubstituted =
+        Kernel::SubstHelper::apply(equalityLiteral, info->substitutionForBanksSub[equalityParent]);
+      if (targetSubstituted == nullptr
+        || equalitySubstituted == nullptr
+        || !equalitySubstituted->isEquality()
+        || !equalitySubstituted->isPositive()) {
+        return;
+      }
+
+      std::string rendered;
+      if (literalSexprForKernel(targetSubstituted, rendered)) {
+        fields.push_back("target_substituted=" + rendered);
+      }
+      if (literalSexprForKernel(equalitySubstituted, rendered)) {
+        fields.push_back("equality_substituted=" + rendered);
+      }
+      fields.push_back("target_parent_index=" + std::to_string(targetParent));
+      fields.push_back("target_literal_index=" + std::to_string(targetIndex));
+      fields.push_back("equality_parent_index=" + std::to_string(equalityParent));
+      fields.push_back("equality_literal_index=" + std::to_string(equalityIndex));
+
+      for (unsigned direction = 0; direction < 2; ++direction) {
+        Kernel::TermList from = *equalitySubstituted->nthArgument(direction == 0 ? 0 : 1);
+        Kernel::TermList to = *equalitySubstituted->nthArgument(direction == 0 ? 1 : 0);
+        std::vector<unsigned> position;
+        Kernel::Literal* rewrittenTarget = nullptr;
+        if (!certificateRewriteLiteralAtMegalodonPosition(
+              targetSubstituted,
+              from,
+              to,
+              position,
+              rewrittenTarget)) {
+          continue;
+        }
+        fields.push_back("rewrite_direction=" + std::string(direction == 0 ? "forward" : "backward"));
+        fields.push_back("rewrite_position=" + certificatePositionSexpr(position));
+        addKernelTermField(fields, "from", from);
+        addKernelTermField(fields, "to", to);
+        if (literalSexprForKernel(rewrittenTarget, rendered)) {
+          fields.push_back("rewritten_target=" + rendered);
+        }
+        return;
+      }
+    };
+  auto addKernelDemodulationRewriteFields = [&](std::vector<std::string>& fields) {
+    if (info == nullptr
+      || !info->hasDemodulationRewrite
+      || info->premises.size() != info->substitutionForBanksSub.size()) {
+      return;
+    }
+    for (std::size_t parentIndex = 0; parentIndex < info->premises.size(); ++parentIndex) {
+      Kernel::Clause* premise = info->premises[parentIndex];
+      for (unsigned literalIndex = 0; literalIndex < premise->length(); ++literalIndex) {
+        Kernel::Literal* literal = (*premise)[literalIndex];
+        Kernel::Literal* substituted =
+          Kernel::SubstHelper::apply(literal, info->substitutionForBanksSub[parentIndex]);
+        std::vector<unsigned> position;
+        Kernel::Literal* rewrittenTarget = nullptr;
+        if (!certificateRewriteLiteralAtMegalodonPosition(
+              substituted,
+              info->demodulationRedex,
+              info->demodulationReplacement,
+              position,
+              rewrittenTarget)) {
+          continue;
+        }
+        std::string rendered;
+        fields.push_back("target_parent_index=" + std::to_string(parentIndex));
+        fields.push_back("target_literal_index=" + std::to_string(literalIndex));
+        fields.push_back("rewrite_position=" + certificatePositionSexpr(position));
+        if (literalSexprForKernel(substituted, rendered)) {
+          fields.push_back("target_substituted=" + rendered);
+        }
+        if (literalSexprForKernel(rewrittenTarget, rendered)) {
+          fields.push_back("rewritten_target=" + rendered);
+        }
+        return;
+      }
+    }
+  };
   auto emitKernelV1 = [&](const std::string& kernelRule, std::vector<std::string> fields) {
     fields.insert(fields.begin(), "rule=" + kernelRule);
     fields.insert(fields.begin(), "schema=prover9-small-kernel-v1");
@@ -11423,6 +11522,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         addKernelLiteralFields(kernelFields, "other", rewrite->selected.otherLiteral, 1);
         addKernelTermField(kernelFields, "rewrite_lhs", rewrite->rewrite.lhs);
         addKernelTermField(kernelFields, "rewrite_redex", rewrite->rewrite.rewritten);
+        if (u->inference().rule() == Kernel::InferenceRule::SUPERPOSITION) {
+          addKernelSuperpositionRewriteFields(
+            kernelFields,
+            rewrite->selected.selectedLiteral.selectedLiteral,
+            rewrite->selected.otherLiteral);
+        }
         if (info != nullptr && info->premises.size() == info->substitutionForBanksSub.size()) {
           for (std::size_t parentIndex = 0; parentIndex < info->substitutionForBanksSub.size(); ++parentIndex) {
             std::string subst;
@@ -11537,6 +11642,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           addKernelTermField(kernelFields, "replay_rule_rhs", info->demodulationRuleRhs);
           addKernelTermField(kernelFields, "replay_redex", info->demodulationRedex);
           addKernelTermField(kernelFields, "replay_replacement", info->demodulationReplacement);
+          addKernelDemodulationRewriteFields(kernelFields);
         }
         emitKernelV1("rewrite", kernelFields);
       }
