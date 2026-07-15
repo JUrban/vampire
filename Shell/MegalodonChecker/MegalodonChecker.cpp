@@ -10759,6 +10759,17 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       addPrimitiveExpansion("paramodulate");
     } else if (kernelRule == "fool_formula") {
       addPrimitiveExpansion("fool_atom_lift");
+    } else if (kernelRule == "formula_normalize") {
+      addPrimitiveExpansion("ennf_formula");
+    } else if (kernelRule == "skolemize") {
+      addPrimitiveExpansion("skolem_formula");
+    } else if (kernelRule == "cnf_clause") {
+      std::string primitiveStep;
+      if (certificateCnfLiteralStepSexpr(u, primitiveStep)) {
+        addPrimitiveExpansion("cnf_literal");
+      } else if (certificateCnfFormulaClauseStepSexpr(u, primitiveStep)) {
+        addPrimitiveExpansion("cnf_formula_clause");
+      }
     } else if (kernelRule == "subsumption_resolution"
       || kernelRule == "unit_resulting_resolution"
       || kernelRule == "resolution") {
