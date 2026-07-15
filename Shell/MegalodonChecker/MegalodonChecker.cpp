@@ -10121,6 +10121,19 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       }
     }
   };
+  auto addKernelResultLiteralFields = [&](std::vector<std::string>& fields) {
+    if (!u->isClause()) {
+      return;
+    }
+    std::vector<std::string> renderedLiterals;
+    if (!appendCertificateClauseLiteralsSexpr(u->asClause(), renderedLiterals)) {
+      return;
+    }
+    fields.push_back("result_literal_count=" + std::to_string(renderedLiterals.size()));
+    for (std::size_t literalIndex = 0; literalIndex < renderedLiterals.size(); ++literalIndex) {
+      fields.push_back("result_literal_" + std::to_string(literalIndex) + "=" + renderedLiterals[literalIndex]);
+    }
+  };
   auto addKernelLiteralFields =
     [&](std::vector<std::string>& fields,
         const std::string& prefix,
@@ -12246,6 +12259,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         if (selected->synthesisExtra.elseLit != nullptr) {
           addKernelLiteralFields(kernelFields, "else", selected->synthesisExtra.elseLit);
         }
+        addKernelResultLiteralFields(kernelFields);
         emitKernelV1(
           u->inference().rule() == Kernel::InferenceRule::RESOLUTION ? "resolution" : "factoring",
           kernelFields);
@@ -12398,6 +12412,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             }
           }
         }
+        addKernelResultLiteralFields(kernelFields);
         emitKernelV1(
           u->inference().rule() == Kernel::InferenceRule::EQUALITY_RESOLUTION
             ? "equality_resolution"
