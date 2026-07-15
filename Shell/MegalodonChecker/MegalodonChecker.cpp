@@ -10166,6 +10166,21 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           fields.push_back("result_literal_" + std::to_string(literalIndex) + "=" + renderedLiterals[literalIndex]);
         }
       }
+    } else {
+      std::string formula;
+      if (certificateFormulaTermSexpr(u->getFormula(), formula)) {
+        fields.push_back("conclusion_formula=" + formula);
+        bool hasResultFormula = false;
+        for (const std::string& field : fields) {
+          if (field.rfind("result_formula=", 0) == 0) {
+            hasResultFormula = true;
+            break;
+          }
+        }
+        if (!hasResultFormula) {
+          fields.push_back("result_formula=" + formula);
+        }
+      }
     }
   };
   auto addKernelLiteralFields =
