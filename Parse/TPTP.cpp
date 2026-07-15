@@ -3725,9 +3725,7 @@ void TPTP::endFof()
     _unitSources->insert(original->number(),source);
   }
 
-  if (env.options->outputAxiomNames()) {
-    assignAxiomName(original,nm);
-  }
+  assignAxiomName(original,nm);
   assignUnitRole(original, _lastRole);
 #if DEBUG_SHOW_UNITS
   cout << "Unit: " << unit->toString() << "\n";
