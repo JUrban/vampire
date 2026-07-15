@@ -372,11 +372,67 @@ bool MegalodonChecker::certificateClauseSexpr(Kernel::Clause* clause, std::strin
   return true;
 }
 
+namespace {
+
+std::set<unsigned> certificateClauseVariables(Kernel::Clause* clause)
+{
+  std::set<unsigned> variables;
+  if (clause == nullptr) {
+    return variables;
+  }
+  Lib::DHMap<unsigned, Kernel::TermList> varSorts;
+  Kernel::SortHelper::collectVariableSorts(clause, varSorts);
+  Lib::DHMap<unsigned, Kernel::TermList>::Iterator it(varSorts);
+  while (it.hasNext()) {
+    unsigned var;
+    Kernel::TermList sort;
+    it.next(var, sort);
+    variables.insert(var);
+  }
+  return variables;
+}
+
+} // namespace
+
 bool MegalodonChecker::certificateSubstitutionSexpr(const Kernel::Substitution& substitution, std::string& result)
 {
   std::vector<std::pair<unsigned, std::string>> items;
   Kernel::Substitution substitutionCopy = substitution;
   for (auto [var, term] : iterTraits(substitutionCopy.items())) {
+    if (term.isVar() && term.var() == var) {
+      continue;
+    }
+    std::string termSexpr;
+    if (!certificateTermSexpr(term, termSexpr)) {
+      return false;
+    }
+    items.push_back({var, "(" + sexprQuote(variableName(var)) + " " + termSexpr + ")"});
+  }
+  std::sort(items.begin(), items.end(), [](const auto& left, const auto& right) {
+    return left.first < right.first;
+  });
+  std::ostringstream out;
+  out << "(subst";
+  for (const auto& item : items) {
+    out << ' ' << item.second;
+  }
+  out << ')';
+  result = out.str();
+  return true;
+}
+
+bool MegalodonChecker::certificateSubstitutionSexprForClause(
+  const Kernel::Substitution& substitution,
+  Kernel::Clause* parent,
+  std::string& result)
+{
+  const std::set<unsigned> variables = certificateClauseVariables(parent);
+  std::vector<std::pair<unsigned, std::string>> items;
+  Kernel::Substitution substitutionCopy = substitution;
+  for (auto [var, term] : iterTraits(substitutionCopy.items())) {
+    if (variables.find(var) == variables.end()) {
+      continue;
+    }
     if (term.isVar() && term.var() == var) {
       continue;
     }
@@ -4970,10 +5026,11 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
       std::string subst;
       std::string clause;
       bool nonIdentity = false;
-      if (!substitutionSexpr(replayInfo->substitutionForBanksSub[parentIndex], subst, nonIdentity)
+      if (!certificateSubstitutionSexprForClause(replayInfo->substitutionForBanksSub[parentIndex], parents[parentIndex], subst)
         || !substitutedClauseSexpr(parents[parentIndex], replayInfo->substitutionForBanksSub[parentIndex], clause)) {
         return false;
       }
+      nonIdentity = subst != "(subst)";
       if (nonIdentity) {
         std::string substituteId = stepBase + "_subst" + std::to_string(parentIndex);
         steps.push_back(
@@ -7233,33 +7290,6 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
     std::sort(right.begin(), right.end());
     return left == right;
   };
-  auto substitutionSexpr = [&](const Kernel::Substitution& substitution, std::string& rendered, bool& nonIdentity) {
-    std::vector<std::pair<unsigned, std::string>> items;
-    Kernel::Substitution substitutionCopy = substitution;
-    nonIdentity = false;
-    for (auto [var, term] : iterTraits(substitutionCopy.items())) {
-      if (term.isVar() && term.var() == var) {
-        continue;
-      }
-      std::string termSexpr;
-      if (!certificateTermSexpr(term, termSexpr)) {
-        return false;
-      }
-      nonIdentity = true;
-      items.push_back({var, "(" + sexprQuote(variableName(var)) + " " + termSexpr + ")"});
-    }
-    std::sort(items.begin(), items.end(), [](const auto& left, const auto& right) {
-      return left.first < right.first;
-    });
-    std::ostringstream out;
-    out << "(subst";
-    for (const auto& item : items) {
-      out << ' ' << item.second;
-    }
-    out << ')';
-    rendered = out.str();
-    return true;
-  };
   auto substitutedClauseLiterals = [&](Kernel::Clause* clause, const Kernel::Substitution& substitution, std::vector<std::string>& literals) {
     literals.clear();
     for (Kernel::Literal* literal : clause->iterLits()) {
@@ -7709,10 +7739,11 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                 for (std::size_t parentIndex = 0; parentIndex < 2; ++parentIndex) {
                   std::string subst;
                   bool nonIdentity = false;
-                  if (!substitutionSexpr(activeSubstitutions[parentIndex], subst, nonIdentity)
+                  if (!certificateSubstitutionSexprForClause(activeSubstitutions[parentIndex], premises[parentIndex], subst)
                     || !substitutedClauseLiterals(premises[parentIndex], activeSubstitutions[parentIndex], substitutedParents[parentIndex])) {
                     return false;
                   }
+                  nonIdentity = subst != "(subst)";
                   parentIds[parentIndex] = "u" + std::to_string(premises[parentIndex]->number());
                   if (nonIdentity) {
                     std::string substituteId = stepBase + "_subst" + std::to_string(parentIndex);
@@ -7923,10 +7954,11 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
             for (std::size_t parentIndex = 0; parentIndex < 2; ++parentIndex) {
               std::string subst;
               bool nonIdentity = false;
-              if (!substitutionSexpr(activeSubstitutions[parentIndex], subst, nonIdentity)
+              if (!certificateSubstitutionSexprForClause(activeSubstitutions[parentIndex], premises[parentIndex], subst)
                 || !substitutedClauseLiterals(premises[parentIndex], activeSubstitutions[parentIndex], substitutedParents[parentIndex])) {
                 return false;
               }
+              nonIdentity = subst != "(subst)";
               parentIds[parentIndex] = "u" + std::to_string(premises[parentIndex]->number());
               if (nonIdentity) {
                 std::string substituteId = stepBase + "_subst" + std::to_string(parentIndex);
@@ -8076,33 +8108,6 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
       }
     }
     return false;
-  };
-  auto substitutionSexpr = [&](const Kernel::Substitution& substitution, std::string& rendered, bool& nonIdentity) {
-    std::vector<std::pair<unsigned, std::string>> items;
-    Kernel::Substitution substitutionCopy = substitution;
-    nonIdentity = false;
-    for (auto [var, term] : iterTraits(substitutionCopy.items())) {
-      if (term.isVar() && term.var() == var) {
-        continue;
-      }
-      std::string termSexpr;
-      if (!certificateTermSexpr(term, termSexpr)) {
-        return false;
-      }
-      nonIdentity = true;
-      items.push_back({var, "(" + sexprQuote(variableName(var)) + " " + termSexpr + ")"});
-    }
-    std::sort(items.begin(), items.end(), [](const auto& left, const auto& right) {
-      return left.first < right.first;
-    });
-    std::ostringstream out;
-    out << "(subst";
-    for (const auto& item : items) {
-      out << ' ' << item.second;
-    }
-    out << ')';
-    rendered = out.str();
-    return true;
   };
   auto substitutedClauseLiterals = [&](Kernel::Clause* clause, const Kernel::Substitution& substitution, std::vector<std::string>& literals) {
     literals.clear();
@@ -8483,18 +8488,21 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
   for (std::size_t parentIndex = 0; parentIndex < 2; ++parentIndex) {
     std::string subst;
     bool nonIdentity = false;
-    if (!substitutionSexpr(replayInfo->substitutionForBanksSub[parentIndex], subst, nonIdentity)
+    if (!certificateSubstitutionSexprForClause(replayInfo->substitutionForBanksSub[parentIndex], parents[parentIndex], subst)
       || !substitutedClauseLiterals(parents[parentIndex], replayInfo->substitutionForBanksSub[parentIndex], substitutedParentClauses[parentIndex])) {
       return false;
     }
+    nonIdentity = subst != "(subst)";
     parentIds[parentIndex] = "u" + std::to_string(parents[parentIndex]->number());
-    const std::string substituteId = stepBase + "_subst" + std::to_string(parentIndex);
-    steps.push_back(
-      "(substitute " + sexprQuote(substituteId)
-      + " (parent " + sexprQuote(parentIds[parentIndex]) + ") "
-      + subst
-      + " (result " + clauseSexprFromLiterals(substitutedParentClauses[parentIndex]) + "))");
-    parentIds[parentIndex] = substituteId;
+    if (nonIdentity) {
+      const std::string substituteId = stepBase + "_subst" + std::to_string(parentIndex);
+      steps.push_back(
+        "(substitute " + sexprQuote(substituteId)
+        + " (parent " + sexprQuote(parentIds[parentIndex]) + ") "
+        + subst
+        + " (result " + clauseSexprFromLiterals(substitutedParentClauses[parentIndex]) + "))");
+      parentIds[parentIndex] = substituteId;
+    }
   }
 
   Kernel::Literal* equalitySubstituted = Kernel::SubstHelper::apply(equalityLiteral, replayInfo->substitutionForBanksSub[equalityParentIndex]);
