@@ -1972,12 +1972,148 @@ bool MegalodonChecker::certificateEnnfFormulaStepSexpr(Kernel::Unit* unit, std::
   if (parent->isClause()) {
     return false;
   }
+  std::string sourceFormula;
   std::string resultFormula;
-  if (!certificateFormulaTermSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), resultFormula)) {
+  Kernel::Formula* source = static_cast<Kernel::FormulaUnit*>(parent)->formula();
+  Kernel::Formula* target = static_cast<Kernel::FormulaUnit*>(unit)->formula();
+  if (!certificateFormulaTermSexpr(source, sourceFormula)
+    || !certificateFormulaTermSexpr(target, resultFormula)) {
     return false;
   }
+
+  auto formulaArgs = [](Kernel::Formula* formula) {
+    std::vector<Kernel::Formula*> result;
+    Kernel::FormulaList::Iterator args(formula->args());
+    while (args.hasNext()) {
+      result.push_back(args.next());
+    }
+    return result;
+  };
+  auto negatedFormula = [](Kernel::Formula* formula) -> Kernel::Formula* {
+    return new Kernel::BinaryFormula(Kernel::IMP, formula, Kernel::Formula::falseFormula());
+  };
+  auto negatedBody = [](Kernel::Formula* formula) -> Kernel::Formula* {
+    if (formula->connective() == Kernel::NOT) {
+      return formula->uarg();
+    }
+    if (formula->connective() == Kernel::IMP && formula->right()->connective() == Kernel::FALSE) {
+      return formula->left();
+    }
+    return nullptr;
+  };
+
+  unsigned pairCount = 0;
+  const unsigned pairLimit = 32;
+  std::vector<std::tuple<std::string, std::string, std::string>> pairs;
+  auto emitPair = [&](Kernel::Formula* left, Kernel::Formula* right, const std::string& path) {
+    if (left == nullptr || right == nullptr || pairCount >= pairLimit) {
+      return false;
+    }
+    std::string leftText;
+    std::string rightText;
+    if (!certificateFormulaTermSexpr(left, leftText)
+      || !certificateFormulaTermSexpr(right, rightText)
+      || leftText == rightText) {
+      return false;
+    }
+    pairs.push_back(std::make_tuple(path, leftText, rightText));
+    ++pairCount;
+    return true;
+  };
+
+  std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned, std::string)> collectPairs;
+  std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned, std::string)> collectEnnfPairs;
+  collectPairs =
+    [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth, std::string path) {
+      if (left == nullptr || right == nullptr || depth > 16 || pairCount >= pairLimit) {
+        return;
+      }
+      emitPair(left, right, path);
+      if (left->connective() != right->connective()) {
+        collectEnnfPairs(left, right, depth + 1, path);
+        return;
+      }
+      switch (left->connective()) {
+        case Kernel::IMP:
+        case Kernel::IFF:
+        case Kernel::XOR:
+          collectPairs(left->left(), right->left(), depth + 1, path + ".left");
+          collectPairs(left->right(), right->right(), depth + 1, path + ".right");
+          return;
+        case Kernel::NOT:
+          collectPairs(left->uarg(), right->uarg(), depth + 1, path + ".not");
+          return;
+        case Kernel::FORALL:
+        case Kernel::EXISTS:
+          collectPairs(left->qarg(), right->qarg(), depth + 1, path + ".body");
+          return;
+        case Kernel::AND:
+        case Kernel::OR: {
+          std::vector<Kernel::Formula*> leftArgs = formulaArgs(left);
+          std::vector<Kernel::Formula*> rightArgs = formulaArgs(right);
+          const std::size_t argCount = std::min(leftArgs.size(), rightArgs.size());
+          for (std::size_t index = 0; index < argCount; ++index) {
+            collectPairs(leftArgs[index], rightArgs[index], depth + 1,
+              path + "." + (left->connective() == Kernel::AND ? "and" : "or")
+              + "[" + std::to_string(index) + "]");
+          }
+          return;
+        }
+        default:
+          return;
+      }
+    };
+  collectEnnfPairs =
+    [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth, std::string path) {
+      if (left == nullptr || right == nullptr || depth > 16 || pairCount >= pairLimit) {
+        return;
+      }
+      std::vector<Kernel::Formula*> rightArgs;
+      if (right->connective() == Kernel::AND || right->connective() == Kernel::OR) {
+        rightArgs = formulaArgs(right);
+      }
+      if (left->connective() == Kernel::IMP && right->connective() == Kernel::OR && rightArgs.size() == 2) {
+        collectPairs(negatedFormula(left->left()), rightArgs[0], depth + 1, path + ".ennf_imp_left");
+        collectPairs(left->right(), rightArgs[1], depth + 1, path + ".ennf_imp_right");
+        return;
+      }
+      Kernel::Formula* negated = negatedBody(left);
+      if (negated == nullptr) {
+        return;
+      }
+      if (negated->connective() == Kernel::IMP && right->connective() == Kernel::AND && rightArgs.size() == 2) {
+        collectPairs(negated->left(), rightArgs[0], depth + 1, path + ".ennf_neg_imp_left");
+        collectPairs(negatedFormula(negated->right()), rightArgs[1], depth + 1, path + ".ennf_neg_imp_right");
+        return;
+      }
+      if ((negated->connective() == Kernel::AND || negated->connective() == Kernel::OR)
+        && right->connective() == (negated->connective() == Kernel::AND ? Kernel::OR : Kernel::AND)) {
+        std::vector<Kernel::Formula*> leftArgs = formulaArgs(negated);
+        const std::size_t argCount = std::min(leftArgs.size(), rightArgs.size());
+        for (std::size_t index = 0; index < argCount; ++index) {
+          collectPairs(
+            negatedFormula(leftArgs[index]),
+            rightArgs[index],
+            depth + 1,
+            path + ".ennf_neg_junction[" + std::to_string(index) + "]");
+        }
+      }
+    };
+  collectPairs(source, target, 0, "root");
+
+  std::ostringstream pairsOut;
+  pairsOut << "(pairs";
+  for (const auto& [path, leftText, rightText] : pairs) {
+    pairsOut << " (pair (path " << sexprQuote(path) << ")"
+             << " (source (formula " << leftText << "))"
+             << " (target (formula " << rightText << ")))";
+  }
+  pairsOut << ")";
+
   result = "(ennf_formula " + sexprQuote("u" + std::to_string(unit->number()))
     + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
+    + " (source (formula " + sourceFormula + "))"
+    + " " + pairsOut.str()
     + " (result (formula " + resultFormula + ")))";
   return true;
 }
