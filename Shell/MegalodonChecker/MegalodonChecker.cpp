@@ -11225,6 +11225,22 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       addPrimitiveExpansion("fool_exhaustiveness");
     } else if (kernelRule == "truth_conflict") {
       addPrimitiveExpansion("truth_conflict");
+    } else if (kernelRule == "equality_resolution") {
+      std::string primitiveStep;
+      if (certificateEqualityResolutionStepSexpr(u, info, primitiveStep)) {
+        addPrimitiveExpansion(
+          primitiveStep.find("(equality_resolution_constraints ") != std::string::npos
+            ? "equality_resolution_constraints"
+            : "equality_resolution");
+      }
+    } else if (kernelRule == "equality_factoring") {
+      std::string primitiveStep;
+      if (certificateEqualityFactoringStepSexpr(u, info, primitiveStep)) {
+        addPrimitiveExpansion(
+          primitiveStep.find("(equality_factoring_constraints ") != std::string::npos
+            ? "equality_factoring_constraints"
+            : "equality_factoring");
+      }
     } else if (kernelRule == "avatar_component") {
       addPrimitiveExpansion("avatar_component");
     } else if (kernelRule == "avatar_split") {
@@ -13133,6 +13149,29 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       }
     }
     emit("unit_resulting_resolution", fields);
+  }
+
+  if (u->isClause()
+    && extra == nullptr
+    && (
+      u->inference().rule() == Kernel::InferenceRule::EQUALITY_RESOLUTION
+      || u->inference().rule() == Kernel::InferenceRule::EQUALITY_RESOLUTION_WITH_DELETION
+      || u->inference().rule() == Kernel::InferenceRule::TRIVIAL_INEQUALITY_REMOVAL
+    )) {
+    std::string primitiveExpansion;
+    if (certificateEqualityResolutionStepSexpr(u, info, primitiveExpansion)) {
+      std::vector<std::string> kernelFields;
+      if (parentClauses.size() == 1) {
+        for (unsigned literalIndex = 0; literalIndex < parentClauses[0]->length(); ++literalIndex) {
+          Kernel::Literal* literal = (*parentClauses[0])[literalIndex];
+          if (literal != nullptr && literal->isEquality() && !literal->isPositive()) {
+            addKernelLiteralFields(kernelFields, "selected", literal, 0);
+            break;
+          }
+        }
+      }
+      emitKernelV1("equality_resolution", kernelFields);
+    }
   }
 
   if (extra == nullptr) {
