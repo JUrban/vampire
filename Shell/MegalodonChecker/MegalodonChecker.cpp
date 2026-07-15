@@ -10287,6 +10287,24 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     addKernelParentFields(fields);
     emit("kernel_v1", fields);
   };
+
+  if (u->isClause() && u->inference().rule() == Kernel::InferenceRule::FOOL_AXIOM_ALL_IS_TRUE_OR_FALSE) {
+    std::vector<std::string> kernelFields;
+    kernelFields.push_back("axiom_kind=all_is_true_or_false");
+    std::string clause;
+    if (clauseSexprForKernel(u->asClause(), clause)) {
+      kernelFields.push_back("result_clause=" + clause);
+    }
+    kernelFields.push_back("literal_count=" + std::to_string(u->asClause()->length()));
+    for (unsigned index = 0; index < u->asClause()->length(); ++index) {
+      std::string literal;
+      if (literalSexprForKernel((*u->asClause())[index], literal)) {
+        kernelFields.push_back("literal_" + std::to_string(index) + "=" + literal);
+      }
+    }
+    emitKernelV1("fool_exhaustiveness", kernelFields);
+  }
+
   auto renderFormulaForExtra = [&](Kernel::Formula* formula, std::string& text) {
     bool usesEquality = _usesEquality;
     std::set<std::string> equalitySorts = _equalitySorts;
