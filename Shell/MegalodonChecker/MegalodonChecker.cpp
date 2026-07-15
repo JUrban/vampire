@@ -10148,6 +10148,16 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       std::string clause;
       if (clauseSexprForKernel(u->asClause(), clause)) {
         fields.push_back("conclusion_clause=" + clause);
+        bool hasResultClause = false;
+        for (const std::string& field : fields) {
+          if (field.rfind("result_clause=", 0) == 0) {
+            hasResultClause = true;
+            break;
+          }
+        }
+        if (!hasResultClause) {
+          fields.push_back("result_clause=" + clause);
+        }
       }
       std::vector<std::string> renderedLiterals;
       if (appendCertificateClauseLiteralsSexpr(u->asClause(), renderedLiterals)) {
