@@ -10305,6 +10305,35 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     emitKernelV1("fool_exhaustiveness", kernelFields);
   }
 
+  if (u->isClause()
+    && u->inference().rule() == Kernel::InferenceRule::AVATAR_COMPONENT
+    && u->asClause()->splits()
+    && !u->asClause()->splits()->isEmpty()) {
+    std::vector<std::string> kernelFields;
+    std::string clause;
+    if (clauseSexprForKernel(u->asClause(), clause)) {
+      kernelFields.push_back("result_clause=" + clause);
+    }
+    kernelFields.push_back("literal_count=" + std::to_string(u->asClause()->length()));
+    for (unsigned index = 0; index < u->asClause()->length(); ++index) {
+      std::string literal;
+      if (literalSexprForKernel((*u->asClause())[index], literal)) {
+        kernelFields.push_back("literal_" + std::to_string(index) + "=" + literal);
+      }
+    }
+    unsigned splitIndex = 0;
+    for (unsigned split : iterTraits(u->asClause()->splits()->iter())) {
+      SATLiteral splitLiteral = Splitter::getLiteralFromName(split);
+      std::string prefix = "split_" + std::to_string(splitIndex);
+      kernelFields.push_back(prefix + "_level=" + std::to_string(split));
+      kernelFields.push_back(prefix + "_var=" + std::to_string(splitLiteral.var()));
+      kernelFields.push_back(prefix + "_positive=" + (splitLiteral.positive() ? "1" : "0"));
+      ++splitIndex;
+    }
+    kernelFields.push_back("split_count=" + std::to_string(splitIndex));
+    emitKernelV1("avatar_component", kernelFields);
+  }
+
   auto renderFormulaForExtra = [&](Kernel::Formula* formula, std::string& text) {
     bool usesEquality = _usesEquality;
     std::set<std::string> equalitySorts = _equalitySorts;
