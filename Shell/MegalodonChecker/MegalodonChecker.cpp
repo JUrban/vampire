@@ -249,7 +249,7 @@ bool MegalodonChecker::certificateTermSexpr(Kernel::TermList term, std::string& 
         if (!certificateTypeSexpr(it->second, type)) {
           return false;
         }
-        body = "(LAMV " + sexprQuote(variableName(it->first)) + " " + type + " " + body + ")";
+        body = "(VLAMV " + sexprQuote(variableName(it->first)) + " " + type + " " + body + ")";
       }
       result = body;
       return true;
