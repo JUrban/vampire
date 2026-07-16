@@ -479,6 +479,28 @@ bool MegalodonChecker::certificateSubstituteStepSexpr(
   const Kernel::Substitution& substitution,
   std::string& result)
 {
+  std::string step;
+  std::vector<std::string> metadata;
+  if (!certificateSubstituteStepPartsSexpr(id, parentId, parent, substitution, step, metadata)) {
+    return false;
+  }
+  std::ostringstream out;
+  out << step;
+  for (const std::string& item : metadata) {
+    out << "\n  " << item;
+  }
+  result = out.str();
+  return true;
+}
+
+bool MegalodonChecker::certificateSubstituteStepPartsSexpr(
+  const std::string& id,
+  const std::string& parentId,
+  Kernel::Clause* parent,
+  const Kernel::Substitution& substitution,
+  std::string& step,
+  std::vector<std::string>& metadata)
+{
   std::string substitutionSexpr;
   std::string parentClause;
   if (!certificateSubstitutionSexprForClause(substitution, parent, substitutionSexpr)
@@ -589,30 +611,34 @@ bool MegalodonChecker::certificateSubstituteStepSexpr(
     fields.push_back("parent_0_substituted_literal_" + std::to_string(i) + "=" + substitutedLiterals[i]);
   }
 
-  std::ostringstream out;
-  out << "(substitute " << sexprQuote(id)
+  std::ostringstream stepOut;
+  stepOut << "(substitute " << sexprQuote(id)
       << " (parent " << sexprQuote(parentId) << ") "
       << substitutionSexpr
       << " (result " << resultClause << "))";
   if (!renderedResultVarSorts.empty()) {
-    out << "\n  (step_variable_sorts " << sexprQuote(id) << " (";
+    std::ostringstream metadataOut;
+    metadataOut << "(step_variable_sorts " << sexprQuote(id) << " (";
     for (std::size_t i = 0; i < renderedResultVarSorts.size(); ++i) {
       if (i != 0) {
-        out << ' ';
+        metadataOut << ' ';
       }
-      out << sexprQuote(renderedResultVarSorts[i].second);
+      metadataOut << sexprQuote(renderedResultVarSorts[i].second);
     }
-    out << "))";
+    metadataOut << "))";
+    metadata.push_back(metadataOut.str());
   }
-  out << "\n  (step_extra " << sexprQuote(id) << " \"kernel_v1\" (";
+  std::ostringstream metadataOut;
+  metadataOut << "(step_extra " << sexprQuote(id) << " \"kernel_v1\" (";
   for (std::size_t i = 0; i < fields.size(); ++i) {
     if (i != 0) {
-      out << ' ';
+      metadataOut << ' ';
     }
-    out << sexprQuote(fields[i]);
+    metadataOut << sexprQuote(fields[i]);
   }
-  out << "))";
-  result = out.str();
+  metadataOut << "))";
+  metadata.push_back(metadataOut.str());
+  step = stepOut.str();
   return true;
 }
 
@@ -1183,11 +1209,22 @@ bool MegalodonChecker::certificateCondensationStepSexpr(Kernel::Unit* unit, std:
     const std::string stepBase = "u" + std::to_string(unit->number());
     std::string currentParentId = stepBase + "_subst0";
     std::vector<std::string> current = substitutedRaw;
-    steps.push_back(
-      "(substitute " + sexprQuote(currentParentId)
-      + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ") "
-      + subst
-      + " (result " + clauseSexprFromLiterals(current) + "))");
+    std::string substituteStep;
+    std::vector<std::string> substituteMetadata;
+    if (!certificateSubstituteStepPartsSexpr(
+          currentParentId,
+          "u" + std::to_string(parent->number()),
+          parent,
+          substitution,
+          substituteStep,
+          substituteMetadata)) {
+      return false;
+    }
+    steps.push_back(substituteStep);
+    _certificateNativeMetadata.insert(
+      _certificateNativeMetadata.end(),
+      substituteMetadata.begin(),
+      substituteMetadata.end());
 
     unsigned symmetryCount = 0;
     bool changed = true;
@@ -9594,12 +9631,22 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
     parentIds[parentIndex] = "u" + std::to_string(parents[parentIndex]->number());
     if (nonIdentity) {
       const std::string substituteId = stepBase + "_subst" + std::to_string(parentIndex);
-      steps.push_back(
-        "(substitute " + sexprQuote(substituteId)
-        + " (parent " + sexprQuote(parentIds[parentIndex]) + ") "
-        + subst
-        + " (result " + clauseSexprFromLiterals(substitutedParentClauses[parentIndex]) + "))");
-      addSyntheticVariableSorts(substituteId, substitutedParentClauses[parentIndex]);
+      std::string substituteStep;
+      std::vector<std::string> substituteMetadata;
+      if (!certificateSubstituteStepPartsSexpr(
+            substituteId,
+            parentIds[parentIndex],
+            parents[parentIndex],
+            replayInfo->substitutionForBanksSub[parentIndex],
+            substituteStep,
+            substituteMetadata)) {
+        return false;
+      }
+      steps.push_back(substituteStep);
+      syntheticVariableSortsMetadata.insert(
+        syntheticVariableSortsMetadata.end(),
+        substituteMetadata.begin(),
+        substituteMetadata.end());
       parentIds[parentIndex] = substituteId;
     }
   }

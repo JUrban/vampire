@@ -144,6 +144,13 @@ private:
     Kernel::Clause* parent,
     const Kernel::Substitution& substitution,
     std::string& result);
+  bool certificateSubstituteStepPartsSexpr(
+    const std::string& id,
+    const std::string& parentId,
+    Kernel::Clause* parent,
+    const Kernel::Substitution& substitution,
+    std::string& step,
+    std::vector<std::string>& metadata);
   bool certificateRewriteTermAtMegalodonPosition(Kernel::TermList term, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::TermList& rewritten);
   bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::Literal*& rewritten);
   bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, std::string& rendered);
