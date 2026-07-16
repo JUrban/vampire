@@ -28,6 +28,14 @@ source/preprocess records still need to provide enough proof data for
 Megalodon to build proof terms, not merely enough labels for source-map
 validation.
 
+Fourth post-audit note, 2026-07-16: Megalodon also has an opt-in
+`-vampirecertv1sourcecontext` / `-vampirecertv1sourcecontextstrict` audit that
+loads the original `.mg` context before certificate checking and resolves
+hash-backed `known`/`axiom` source entries through `Known hash`. This makes
+global source facts mechanically distinguishable from local/unhashed theorem
+hypotheses. Vampire should preserve source hashes and roles accurately because
+those fields are now part of the fail-closed original-context boundary.
+
 ## Decision
 
 The previous `--proof megalodon` rich-export experiment is retained as a
