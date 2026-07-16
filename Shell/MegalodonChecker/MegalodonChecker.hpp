@@ -147,6 +147,10 @@ private:
   bool certificateRewriteTermAtMegalodonPosition(Kernel::TermList term, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::TermList& rewritten);
   bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::Literal*& rewritten);
   bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, std::string& rendered);
+  bool safeHolApplication(Kernel::TermList sort, Kernel::TermList lhs, Kernel::TermList rhs, Kernel::TermList& result) const;
+  bool safeHolApplication(Kernel::TermList s1, Kernel::TermList s2, Kernel::TermList lhs, Kernel::TermList rhs, Kernel::TermList& result) const;
+  bool safeApplySubstitution(Kernel::TermList term, const Kernel::Substitution& substitution, Kernel::TermList& result) const;
+  bool safeApplySubstitution(Kernel::Literal* literal, const Kernel::Substitution& substitution, Kernel::Literal*& result) const;
   std::string certificatePositionSexpr(const std::vector<unsigned>& position) const;
   bool certificateSource(Kernel::Unit* unit, std::string& result);
   bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result);
