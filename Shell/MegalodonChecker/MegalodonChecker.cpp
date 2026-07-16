@@ -472,6 +472,69 @@ bool MegalodonChecker::certificateSubstitutionSexprForClause(
   return true;
 }
 
+std::string MegalodonChecker::certificateClauseSexprFromRenderedLiterals(
+  const std::vector<std::string>& literals) const
+{
+  std::ostringstream out;
+  out << "(clause";
+  for (const std::string& literal : literals) {
+    out << ' ' << literal;
+  }
+  out << ')';
+  return out.str();
+}
+
+bool MegalodonChecker::certificateInstantiationKernelMetadataSexpr(
+  const std::string& id,
+  const std::string& parentId,
+  const std::vector<std::string>& parentLiterals,
+  const std::string& substitution,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result) const
+{
+  const std::string parentClause = certificateClauseSexprFromRenderedLiterals(parentLiterals);
+  const std::string resultClause = certificateClauseSexprFromRenderedLiterals(resultLiterals);
+
+  std::vector<std::string> fields;
+  fields.push_back("schema=prover9-small-kernel-v1");
+  fields.push_back("rule=instantiation");
+  fields.push_back("primitive_expansion=prefix");
+  fields.push_back("primitive_expansion_prefix=" + id);
+  fields.push_back("primitive_expansion_requires=substitute");
+  fields.push_back("conclusion_unit=" + id);
+  fields.push_back("result_clause=" + resultClause);
+  fields.push_back("conclusion_clause=" + resultClause);
+  fields.push_back("substitution=" + substitution);
+  fields.push_back("result_literal_count=" + std::to_string(resultLiterals.size()));
+  for (std::size_t i = 0; i < resultLiterals.size(); ++i) {
+    fields.push_back("result_literal_" + std::to_string(i) + "=" + resultLiterals[i]);
+  }
+  fields.push_back("parent_count=1");
+  fields.push_back("parent_0_unit=" + parentId);
+  fields.push_back("parent_0_clause=" + parentClause);
+  fields.push_back("parent_0_literal_count=" + std::to_string(parentLiterals.size()));
+  for (std::size_t i = 0; i < parentLiterals.size(); ++i) {
+    fields.push_back("parent_0_literal_" + std::to_string(i) + "=" + parentLiterals[i]);
+  }
+  fields.push_back("parent_0_substitution=" + substitution);
+  fields.push_back("parent_0_substituted_literal_count=" + std::to_string(resultLiterals.size()));
+  for (std::size_t i = 0; i < resultLiterals.size(); ++i) {
+    fields.push_back("parent_0_substituted_literal_" + std::to_string(i) + "=" + resultLiterals[i]);
+  }
+
+  std::ostringstream out;
+  out << "(step_extra " << sexprQuote(id) << " \"kernel_v1\" (";
+  for (std::size_t i = 0; i < fields.size(); ++i) {
+    if (i != 0) {
+      out << ' ';
+    }
+    out << sexprQuote(fields[i]);
+  }
+  out << "))";
+  result = out.str();
+  return true;
+}
+
 bool MegalodonChecker::certificateSubstituteStepSexpr(
   const std::string& id,
   const std::string& parentId,
@@ -502,9 +565,7 @@ bool MegalodonChecker::certificateSubstituteStepPartsSexpr(
   std::vector<std::string>& metadata)
 {
   std::string substitutionSexpr;
-  std::string parentClause;
-  if (!certificateSubstitutionSexprForClause(substitution, parent, substitutionSexpr)
-    || !certificateClauseSexpr(parent, parentClause)) {
+  if (!certificateSubstitutionSexprForClause(substitution, parent, substitutionSexpr)) {
     return false;
   }
 
@@ -553,13 +614,7 @@ bool MegalodonChecker::certificateSubstituteStepPartsSexpr(
       replaceAll(literal, "(TMH " + sexprQuote("__mg_subst_" + std::to_string(i)) + ")", std::get<2>(replacements[i]));
     }
   }
-  std::ostringstream clause;
-  clause << "(clause";
-  for (const std::string& literal : substitutedLiterals) {
-    clause << ' ' << literal;
-  }
-  clause << ')';
-  const std::string resultClause = clause.str();
+  const std::string resultClause = certificateClauseSexprFromRenderedLiterals(substitutedLiterals);
 
   Lib::DHMap<unsigned, Kernel::TermList> resultVarSorts;
   for (Kernel::Literal* literal : parent->iterLits()) {
@@ -584,33 +639,6 @@ bool MegalodonChecker::certificateSubstituteStepPartsSexpr(
     return left.first < right.first;
   });
 
-  std::vector<std::string> fields;
-  fields.push_back("schema=prover9-small-kernel-v1");
-  fields.push_back("rule=instantiation");
-  fields.push_back("primitive_expansion=prefix");
-  fields.push_back("primitive_expansion_prefix=" + id);
-  fields.push_back("primitive_expansion_requires=substitute");
-  fields.push_back("conclusion_unit=" + id);
-  fields.push_back("result_clause=" + resultClause);
-  fields.push_back("conclusion_clause=" + resultClause);
-  fields.push_back("substitution=" + substitutionSexpr);
-  fields.push_back("result_literal_count=" + std::to_string(substitutedLiterals.size()));
-  for (std::size_t i = 0; i < substitutedLiterals.size(); ++i) {
-    fields.push_back("result_literal_" + std::to_string(i) + "=" + substitutedLiterals[i]);
-  }
-  fields.push_back("parent_count=1");
-  fields.push_back("parent_0_unit=" + parentId);
-  fields.push_back("parent_0_clause=" + parentClause);
-  fields.push_back("parent_0_literal_count=" + std::to_string(parentLiterals.size()));
-  for (std::size_t i = 0; i < parentLiterals.size(); ++i) {
-    fields.push_back("parent_0_literal_" + std::to_string(i) + "=" + parentLiterals[i]);
-  }
-  fields.push_back("parent_0_substitution=" + substitutionSexpr);
-  fields.push_back("parent_0_substituted_literal_count=" + std::to_string(substitutedLiterals.size()));
-  for (std::size_t i = 0; i < substitutedLiterals.size(); ++i) {
-    fields.push_back("parent_0_substituted_literal_" + std::to_string(i) + "=" + substitutedLiterals[i]);
-  }
-
   std::ostringstream stepOut;
   stepOut << "(substitute " << sexprQuote(id)
       << " (parent " << sexprQuote(parentId) << ") "
@@ -628,16 +656,17 @@ bool MegalodonChecker::certificateSubstituteStepPartsSexpr(
     metadataOut << "))";
     metadata.push_back(metadataOut.str());
   }
-  std::ostringstream metadataOut;
-  metadataOut << "(step_extra " << sexprQuote(id) << " \"kernel_v1\" (";
-  for (std::size_t i = 0; i < fields.size(); ++i) {
-    if (i != 0) {
-      metadataOut << ' ';
-    }
-    metadataOut << sexprQuote(fields[i]);
+  std::string kernelMetadata;
+  if (!certificateInstantiationKernelMetadataSexpr(
+        id,
+        parentId,
+        parentLiterals,
+        substitutionSexpr,
+        substitutedLiterals,
+        kernelMetadata)) {
+    return false;
   }
-  metadataOut << "))";
-  metadata.push_back(metadataOut.str());
+  metadata.push_back(kernelMetadata);
   step = stepOut.str();
   return true;
 }
@@ -4164,15 +4193,6 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
     syntheticMetadata.push_back(metadata.str());
   };
   const std::string unitId = "u" + std::to_string(unit->number());
-  auto clauseSexprFromRendered = [](const std::vector<std::string>& literals) {
-    std::ostringstream out;
-    out << "(clause";
-    for (const std::string& literal : literals) {
-      out << ' ' << literal;
-    }
-    out << ')';
-    return out.str();
-  };
   auto addSyntheticInstantiationMetadata =
     [&](const std::string& stepId,
         const std::string& parentId,
@@ -4182,45 +4202,16 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
       if (!recordSyntheticMetadata) {
         return;
       }
-      const std::string parentClause = clauseSexprFromRendered(parentLiterals);
-      const std::string resultClause = clauseSexprFromRendered(resultLiterals);
-      std::vector<std::string> fields;
-      fields.push_back("schema=prover9-small-kernel-v1");
-      fields.push_back("rule=instantiation");
-      fields.push_back("primitive_expansion=prefix");
-      fields.push_back("primitive_expansion_prefix=" + stepId);
-      fields.push_back("primitive_expansion_requires=substitute");
-      fields.push_back("conclusion_unit=" + stepId);
-      fields.push_back("result_clause=" + resultClause);
-      fields.push_back("conclusion_clause=" + resultClause);
-      fields.push_back("substitution=" + subst);
-      fields.push_back("result_literal_count=" + std::to_string(resultLiterals.size()));
-      for (std::size_t i = 0; i < resultLiterals.size(); ++i) {
-        fields.push_back("result_literal_" + std::to_string(i) + "=" + resultLiterals[i]);
+      std::string renderedMetadata;
+      if (certificateInstantiationKernelMetadataSexpr(
+            stepId,
+            parentId,
+            parentLiterals,
+            subst,
+            resultLiterals,
+            renderedMetadata)) {
+        syntheticMetadata.push_back(renderedMetadata);
       }
-      fields.push_back("parent_count=1");
-      fields.push_back("parent_0_unit=" + parentId);
-      fields.push_back("parent_0_clause=" + parentClause);
-      fields.push_back("parent_0_literal_count=" + std::to_string(parentLiterals.size()));
-      for (std::size_t i = 0; i < parentLiterals.size(); ++i) {
-        fields.push_back("parent_0_literal_" + std::to_string(i) + "=" + parentLiterals[i]);
-      }
-      fields.push_back("parent_0_substitution=" + subst);
-      fields.push_back("parent_0_substituted_literal_count=" + std::to_string(resultLiterals.size()));
-      for (std::size_t i = 0; i < resultLiterals.size(); ++i) {
-        fields.push_back("parent_0_substituted_literal_" + std::to_string(i) + "=" + resultLiterals[i]);
-      }
-
-      std::ostringstream metadata;
-      metadata << "(step_extra " << sexprQuote(stepId) << " \"kernel_v1\" (";
-      for (std::size_t i = 0; i < fields.size(); ++i) {
-        if (i != 0) {
-          metadata << ' ';
-        }
-        metadata << sexprQuote(fields[i]);
-      }
-      metadata << "))";
-      syntheticMetadata.push_back(metadata.str());
     };
   auto traceMacroSexpr = [&]() {
     std::string clause;
@@ -4265,7 +4256,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
           << " (selected " << selected << ")"
           << " (selected_substituted " << selectedSubstituted << ")"
           << " (unit_substituted " << unitSubstituted << ")"
-          << " (remaining " << clauseSexprFromRendered(remaining) << "))";
+          << " (remaining " << certificateClauseSexprFromRenderedLiterals(remaining) << "))";
     }
     out << ") (result " << clause << "))";
     result = out.str();
@@ -4562,7 +4553,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
                     << ": " << traceSelectedSubstitutedSexpr << std::endl;
         }
         std::cerr << "megalodon native URR current for u" << unit->number()
-                  << ": " << clauseSexprFromRendered(currentRendered) << std::endl;
+                  << ": " << certificateClauseSexprFromRenderedLiterals(currentRendered) << std::endl;
       }
       if (traceMacroSexpr()) {
         return true;
@@ -4590,7 +4581,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         "(substitute " + sexprQuote(substituteId)
         + " (parent " + sexprQuote(currentParentId) + ") "
         + subst
-        + " (result " + clauseSexprFromRendered(substitutedRendered) + "))");
+        + " (result " + certificateClauseSexprFromRenderedLiterals(substitutedRendered) + "))");
       addSyntheticInstantiationMetadata(
         substituteId,
         currentParentId,
@@ -4622,7 +4613,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         "(equality_symmetry " + sexprQuote(symmetryId)
         + " (parent " + sexprQuote(currentParentId) + ")"
         + " (literal " + std::to_string(selectedIndex) + ")"
-        + " (result " + clauseSexprFromRendered(symmetryRendered) + "))");
+        + " (result " + certificateClauseSexprFromRenderedLiterals(symmetryRendered) + "))");
       addSyntheticVariableSorts(symmetryId, symmetryClause);
       currentLiterals = symmetryClause;
       currentRendered = symmetryRendered;
@@ -4695,7 +4686,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
           "(equality_symmetry " + sexprQuote(symmetryId)
           + " (parent " + sexprQuote(currentParentId) + ")"
           + " (literal " + std::to_string(selectedIndex) + ")"
-          + " (result " + clauseSexprFromRendered(currentRendered) + "))");
+          + " (result " + certificateClauseSexprFromRenderedLiterals(currentRendered) + "))");
         addSyntheticVariableSorts(symmetryId, currentLiterals);
         currentParentId = symmetryId;
         selectedLiteral = currentLiterals[selectedIndex];
@@ -4719,7 +4710,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         "(equality_symmetry " + sexprQuote(symmetryId)
         + " (parent " + sexprQuote(unitParentId) + ")"
         + " (literal 0)"
-        + " (result " + clauseSexprFromRendered(unitRendered) + "))");
+        + " (result " + certificateClauseSexprFromRenderedLiterals(unitRendered) + "))");
       addSyntheticVariableSorts(symmetryId, unitLiterals);
       unitParentId = symmetryId;
     }
@@ -4736,7 +4727,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
       "(resolve " + sexprQuote(resolveId)
       + " (parents " + sexprQuote(currentParentId) + " " + sexprQuote(unitParentId) + ")"
       + " (pivot " + std::to_string(selectedIndex) + " 0)"
-      + " (result " + clauseSexprFromRendered(nextRendered) + "))");
+      + " (result " + certificateClauseSexprFromRenderedLiterals(nextRendered) + "))");
     addSyntheticVariableSorts(resolveId, nextLiterals);
     currentLiterals = nextLiterals;
     currentRendered = nextRendered;
@@ -4794,7 +4785,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
           "(substitute " + sexprQuote(renameId)
           + " (parent " + sexprQuote(currentParentId) + ") "
           + finalRenameSubst
-          + " (result " + clauseSexprFromRendered(renamedRendered) + "))");
+          + " (result " + certificateClauseSexprFromRenderedLiterals(renamedRendered) + "))");
         addSyntheticInstantiationMetadata(
           renameId,
           currentParentId,
@@ -4824,7 +4815,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
           "(factor " + sexprQuote(factorId)
           + " (parent " + sexprQuote(currentParentId) + ")"
           + " (literals " + std::to_string(left) + " " + std::to_string(right) + ")"
-          + " (result " + clauseSexprFromRendered(factored) + "))");
+          + " (result " + certificateClauseSexprFromRenderedLiterals(factored) + "))");
         if (right < currentLiterals.size()) {
           currentLiterals.erase(currentLiterals.begin() + right);
         }
@@ -4854,7 +4845,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
           "(equality_symmetry " + sexprQuote(symmetryId)
           + " (parent " + sexprQuote(currentParentId) + ")"
           + " (literal " + std::to_string(i) + ")"
-          + " (result " + clauseSexprFromRendered(candidate) + "))");
+          + " (result " + certificateClauseSexprFromRenderedLiterals(candidate) + "))");
         addSyntheticVariableSorts(symmetryId, currentLiterals);
         current = candidate;
         currentRendered = candidate;
@@ -4872,9 +4863,9 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
   if (normalized(current) != normalized(actual)) {
     if (std::getenv("MEGALODON_CERT_DEBUG")) {
       std::cerr << "megalodon native URR current for u" << unit->number()
-                << ": " << clauseSexprFromRendered(normalized(current)) << std::endl;
+                << ": " << certificateClauseSexprFromRenderedLiterals(normalized(current)) << std::endl;
       std::cerr << "megalodon native URR actual for u" << unit->number()
-                << ": " << clauseSexprFromRendered(normalized(actual)) << std::endl;
+                << ": " << certificateClauseSexprFromRenderedLiterals(normalized(actual)) << std::endl;
     }
     if (traceMacroSexpr()) {
       return true;

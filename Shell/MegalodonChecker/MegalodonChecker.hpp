@@ -138,6 +138,14 @@ private:
     const Kernel::Substitution& substitution,
     Kernel::Clause* parent,
     std::string& result);
+  std::string certificateClauseSexprFromRenderedLiterals(const std::vector<std::string>& literals) const;
+  bool certificateInstantiationKernelMetadataSexpr(
+    const std::string& id,
+    const std::string& parentId,
+    const std::vector<std::string>& parentLiterals,
+    const std::string& substitution,
+    const std::vector<std::string>& resultLiterals,
+    std::string& result) const;
   bool certificateSubstituteStepSexpr(
     const std::string& id,
     const std::string& parentId,
