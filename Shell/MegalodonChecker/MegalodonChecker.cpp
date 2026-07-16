@@ -9073,12 +9073,71 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
   std::vector<std::string> steps;
   std::vector<std::vector<std::string>> substitutedParentClauses(2);
   const std::string stepBase = "u" + std::to_string(unit->number());
+  std::map<std::string, std::string> knownVariableSorts;
+  auto rememberVariableSorts = [&](Kernel::Literal* literal) {
+    Lib::DHMap<unsigned, Kernel::TermList> varSorts;
+    Kernel::SortHelper::collectVariableSorts(literal, varSorts);
+    Lib::DHMap<unsigned, Kernel::TermList>::Iterator it(varSorts);
+    while (it.hasNext()) {
+      unsigned var;
+      Kernel::TermList sort;
+      it.next(var, sort);
+      std::string sortText;
+      if (sortToMegalodon(sort, sortText)) {
+        knownVariableSorts[variableName(var)] = sortText;
+      }
+    }
+  };
+  for (Kernel::Clause* parent : parents) {
+    for (Kernel::Literal* literal : parent->iterLits()) {
+      rememberVariableSorts(literal);
+    }
+  }
+  for (Kernel::Literal* literal : unit->asClause()->iterLits()) {
+    rememberVariableSorts(literal);
+  }
+  std::set<std::string> emittedSyntheticVariableSorts;
+  std::vector<std::string> syntheticVariableSortsMetadata;
+  auto addSyntheticVariableSorts =
+    [&](const std::string& id, const std::vector<std::string>& clause) {
+      if (id == stepBase || !emittedSyntheticVariableSorts.insert(id).second) {
+        return;
+      }
+      std::vector<std::string> variables = collectSexprVariables(clause);
+      if (variables.empty()) {
+        return;
+      }
+      std::ostringstream metadata;
+      bool any = false;
+      metadata << "(step_variable_sorts " << sexprQuote(id) << " (";
+      for (const std::string& variable : variables) {
+        auto sort = knownVariableSorts.find(variable);
+        if (sort == knownVariableSorts.end()) {
+          continue;
+        }
+        if (any) {
+          metadata << ' ';
+        }
+        metadata << sexprQuote(variable + ":" + sort->second);
+        any = true;
+      }
+      metadata << "))";
+      if (any) {
+        syntheticVariableSortsMetadata.push_back(metadata.str());
+      }
+    };
   for (std::size_t parentIndex = 0; parentIndex < 2; ++parentIndex) {
     std::string subst;
     bool nonIdentity = false;
     if (!certificateSubstitutionSexprForClause(replayInfo->substitutionForBanksSub[parentIndex], parents[parentIndex], subst)
       || !substitutedClauseLiterals(parents[parentIndex], replayInfo->substitutionForBanksSub[parentIndex], substitutedParentClauses[parentIndex])) {
       return false;
+    }
+    for (Kernel::Literal* literal : parents[parentIndex]->iterLits()) {
+      Kernel::Literal* substituted = Kernel::SubstHelper::apply(
+        literal,
+        replayInfo->substitutionForBanksSub[parentIndex]);
+      rememberVariableSorts(substituted);
     }
     nonIdentity = subst != "(subst)";
     parentIds[parentIndex] = "u" + std::to_string(parents[parentIndex]->number());
@@ -9089,6 +9148,7 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
         + " (parent " + sexprQuote(parentIds[parentIndex]) + ") "
         + subst
         + " (result " + clauseSexprFromLiterals(substitutedParentClauses[parentIndex]) + "))");
+      addSyntheticVariableSorts(substituteId, substitutedParentClauses[parentIndex]);
       parentIds[parentIndex] = substituteId;
     }
   }
@@ -9161,6 +9221,7 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
                 + " (parent " + sexprQuote(currentParentId) + ")"
                 + " (literals " + std::to_string(left) + " " + std::to_string(right) + ")"
                 + " (result " + clauseSexprFromLiterals(factored) + "))");
+              addSyntheticVariableSorts(factorId, factored);
               current = factored;
               currentParentId = factorId;
               changed = true;
@@ -9195,6 +9256,7 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
             + " (parent " + sexprQuote(currentParentId) + ")"
             + " (literal " + std::to_string(i) + ")"
             + " (result " + clauseSexprFromLiterals(candidate) + "))");
+            addSyntheticVariableSorts(symmetryId, candidate);
             current = candidate;
             currentParentId = symmetryId;
             changed = true;
@@ -9325,6 +9387,7 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
           + " (parent " + sexprQuote(currentParentId) + ") "
           + renamingSubstitutionSexpr(renaming)
           + " (result " + clauseSexprFromLiterals(renamed) + "))");
+        addSyntheticVariableSorts(renameId, renamed);
         current = renamed;
         currentParentId = renameId;
         emitDuplicateFactors(candidateSteps, current, currentParentId, prefix + "_post_rename");
@@ -9363,6 +9426,7 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
         + " (from " + fromSexpr + ")"
         + " (to " + toSexpr + ")"
         + " (result " + clauseSexprFromLiterals(paramClause) + "))");
+      addSyntheticVariableSorts(stepBase + "_paramodulate", paramClause);
       if (!finishCandidate(singleSteps, paramClause, stepBase + "_paramodulate", stepBase, steps)) {
         std::vector<std::string> equalityRemainder;
         for (unsigned i = 0; i < substitutedParentClauses[equalityParentIndex].size(); ++i) {
@@ -9457,6 +9521,7 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
               + " (from " + fromSexpr + ")"
               + " (to " + toSexpr + ")"
               + " (result " + clauseSexprFromLiterals(nextClause) + "))");
+            addSyntheticVariableSorts(rewriteId, nextClause);
             std::vector<bool> nextUsed = searchUsed;
             nextUsed[rewriteIndex] = true;
             if (finishClauseWideSearch(
@@ -9491,6 +9556,10 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
       out << steps[i];
     }
     result = out.str();
+    _certificateNativeMetadata.insert(
+      _certificateNativeMetadata.end(),
+      syntheticVariableSortsMetadata.begin(),
+      syntheticVariableSortsMetadata.end());
     return true;
   }
   return false;
