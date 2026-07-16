@@ -98,12 +98,12 @@ Literals use Megalodon's S-expression term syntax, for example:
 (neg (AP (AP (TPAP (TMH "5a6af35fb6d6bea477dd0f822b8e01ca0d57cc50dfd41744307bc94597fdaa4a") (SET)) (TMH "a")) (TMH "b")))
 ```
 
-Vampire HOL lambda terms are emitted as `(VLAMV "X" sort body)`. This is a
-certificate-level spelling for Vampire's explicit `vLAM`/`dbN` encoding, not a
-Megalodon kernel lambda. The importer may accept the older `LAMV` spelling for
-backward compatibility, but newly emitted native certificates should use
-`VLAMV` so FOOL atom-lift/lower steps can be checked without inventing a
-separate `Lam = vLAM` proof.
+Vampire HOL lambda terms and existential formula binders are emitted as
+`(VLAMV "X" sort body)`. This is a certificate-level spelling for Vampire's
+explicit `vLAM`/`dbN` encoding, not a Megalodon kernel lambda. The importer may
+accept the older `LAMV` spelling for backward compatibility, but newly emitted
+native certificates should use `VLAMV` so FOOL/ENNF/Skolem steps can be checked
+without inventing a separate `Lam = vLAM` proof.
 
 Every promoted rule constructor must be emitted directly by Vampire in this
 native format and checked by the Megalodon native importer. For counted core

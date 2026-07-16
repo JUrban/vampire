@@ -1681,7 +1681,7 @@ bool MegalodonChecker::certificateFormulaTermSexpr(Kernel::Formula* formula, std
       if (!certificateTypeSexpr(it->second, type)) {
         return false;
       }
-      body = "(AP (TMH \"vampire_exists_prop\") (LAMV "
+      body = "(AP (TMH \"vampire_exists_prop\") (VLAMV "
         + sexprQuote(variableName(it->first)) + " " + type + " " + body + "))";
     }
     result = body;
