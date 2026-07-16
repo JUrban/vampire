@@ -5843,11 +5843,16 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
         std::string sideParentId = "u" + std::to_string(parents[sideParentIndex]->number());
         if (sideNonIdentity) {
           sideParentId = stepBase + "_side_subst";
-          steps.push_back(
-            "(substitute " + sexprQuote(sideParentId)
-            + " (parent " + sexprQuote("u" + std::to_string(parents[sideParentIndex]->number())) + ") "
-            + sideSubst
-            + " (result " + sideClause + "))");
+          std::string sideSubstituteStep;
+          if (!certificateSubstituteStepSexpr(
+                sideParentId,
+                "u" + std::to_string(parents[sideParentIndex]->number()),
+                parents[sideParentIndex],
+                sideSubstitution,
+                sideSubstituteStep)) {
+            return false;
+          }
+          steps.push_back(sideSubstituteStep);
         }
         if (needsSideSymmetry) {
           std::vector<std::string> sideSymmetryLiterals = sideClauseLiterals;
@@ -8166,11 +8171,16 @@ bool MegalodonChecker::certificateForwardSubsumptionDemodulationStepsSexpr(Kerne
             std::string sideParentId = "u" + std::to_string(sideParent->number());
             if (nonIdentity) {
               sideParentId = stepBase + "_side_subst";
-              steps.push_back(
-                "(substitute " + sexprQuote(sideParentId)
-                + " (parent " + sexprQuote("u" + std::to_string(sideParent->number())) + ") "
-                + sideSubst
-                + " (result " + clauseSexprFromLiterals(sideSubstituted) + "))");
+              std::string sideSubstituteStep;
+              if (!certificateSubstituteStepSexpr(
+                    sideParentId,
+                    "u" + std::to_string(sideParent->number()),
+                    sideParent,
+                    sideSubstitution,
+                    sideSubstituteStep)) {
+                return false;
+              }
+              steps.push_back(sideSubstituteStep);
             }
 
             std::string fromSexpr;
