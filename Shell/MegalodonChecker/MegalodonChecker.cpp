@@ -4273,18 +4273,16 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
     }
     return false;
   };
-  auto swappedEqualityLiteral = [](const std::string& literal, std::string& swapped) {
+  auto swappedEqualityLiteral = [&](const std::string& literal, std::string& swapped) {
+    static const std::string megalodonEqualityHash =
+      "5a6af35fb6d6bea477dd0f822b8e01ca0d57cc50dfd41744307bc94597fdaa4a";
     const std::string posPrefix = "(pos (AP (AP (TMH \"=\") ";
     const std::string negPrefix = "(neg (AP (AP (TMH \"=\") ";
+    const std::string typedPosPrefix =
+      "(pos (AP (AP (TPAP (TMH " + sexprQuote(megalodonEqualityHash) + ") ";
+    const std::string typedNegPrefix =
+      "(neg (AP (AP (TPAP (TMH " + sexprQuote(megalodonEqualityHash) + ") ";
     std::string prefix;
-    if (literal.rfind(posPrefix, 0) == 0) {
-      prefix = posPrefix;
-    } else if (literal.rfind(negPrefix, 0) == 0) {
-      prefix = negPrefix;
-    } else {
-      return false;
-    }
-    std::size_t leftStart = prefix.size();
     auto termEnd = [&](std::size_t start, std::size_t& end) {
       if (start >= literal.size()) {
         return false;
@@ -4307,6 +4305,26 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
       }
       return false;
     };
+    if (literal.rfind(posPrefix, 0) == 0) {
+      prefix = posPrefix;
+    } else if (literal.rfind(negPrefix, 0) == 0) {
+      prefix = negPrefix;
+    } else if (literal.rfind(typedPosPrefix, 0) == 0 || literal.rfind(typedNegPrefix, 0) == 0) {
+      const std::string typedPrefix =
+        literal.rfind(typedPosPrefix, 0) == 0 ? typedPosPrefix : typedNegPrefix;
+      std::size_t typeStart = typedPrefix.size();
+      std::size_t typeEnd = std::string::npos;
+      if (!termEnd(typeStart, typeEnd)
+        || typeEnd + 2 >= literal.size()
+        || literal[typeEnd] != ')'
+        || literal[typeEnd + 1] != ' ') {
+        return false;
+      }
+      prefix = literal.substr(0, typeEnd + 2);
+    } else {
+      return false;
+    }
+    std::size_t leftStart = prefix.size();
     std::size_t leftEnd = std::string::npos;
     if (!termEnd(leftStart, leftEnd)
       || leftEnd + 2 >= literal.size()
