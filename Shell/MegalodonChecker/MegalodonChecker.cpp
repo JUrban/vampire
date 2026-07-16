@@ -5959,6 +5959,89 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
     std::sort(right.begin(), right.end());
     return left == right;
   };
+  auto isVampireVariableName = [](const std::string& name) {
+    if (name.size() < 2 || name[0] != 'X') {
+      return false;
+    }
+    for (std::size_t i = 1; i < name.size(); ++i) {
+      if (name[i] < '0' || name[i] > '9') {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto collectSexprVariables = [&](const std::vector<std::string>& clause) {
+    std::vector<std::string> variables;
+    const std::string marker = "(TMH \"";
+    for (const std::string& literal : clause) {
+      std::size_t pos = 0;
+      while ((pos = literal.find(marker, pos)) != std::string::npos) {
+        pos += marker.size();
+        std::size_t end = literal.find("\")", pos);
+        if (end == std::string::npos) {
+          break;
+        }
+        std::string name = literal.substr(pos, end - pos);
+        if (isVampireVariableName(name)) {
+          variables.push_back(name);
+        }
+        pos = end + 2;
+      }
+    }
+    std::sort(variables.begin(), variables.end());
+    variables.erase(std::unique(variables.begin(), variables.end()), variables.end());
+    return variables;
+  };
+  std::map<std::string, std::string> knownVariableSorts;
+  auto rememberVariableSorts = [&](Kernel::Literal* literal) {
+    Lib::DHMap<unsigned, Kernel::TermList> varSorts;
+    Kernel::SortHelper::collectVariableSorts(literal, varSorts);
+    Lib::DHMap<unsigned, Kernel::TermList>::Iterator it(varSorts);
+    while (it.hasNext()) {
+      unsigned var;
+      Kernel::TermList sort;
+      it.next(var, sort);
+      std::string sortText;
+      if (sortToMegalodon(sort, sortText)) {
+        knownVariableSorts[variableName(var)] = sortText;
+      }
+    }
+  };
+  for (Kernel::Clause* parent : parents) {
+    for (Kernel::Literal* literal : parent->iterLits()) {
+      rememberVariableSorts(literal);
+    }
+  }
+  for (Kernel::Literal* literal : unit->asClause()->iterLits()) {
+    rememberVariableSorts(literal);
+  }
+  std::set<std::string> emittedSyntheticVariableSorts;
+  auto syntheticVariableSortsMetadata =
+    [&](const std::string& id, const std::vector<std::string>& clause) {
+      if (!emittedSyntheticVariableSorts.insert(id).second) {
+        return std::string();
+      }
+      std::vector<std::string> variables = collectSexprVariables(clause);
+      if (variables.empty()) {
+        return std::string();
+      }
+      std::ostringstream metadata;
+      bool any = false;
+      metadata << "(step_variable_sorts " << sexprQuote(id) << " (";
+      for (const std::string& variable : variables) {
+        auto sort = knownVariableSorts.find(variable);
+        if (sort == knownVariableSorts.end()) {
+          continue;
+        }
+        if (any) {
+          metadata << ' ';
+        }
+        metadata << sexprQuote(variable + ":" + sort->second);
+        any = true;
+      }
+      metadata << "))";
+      return any ? metadata.str() : std::string();
+    };
   auto substitutedAtomSexpr =
     [&](Kernel::Literal* literal, const Kernel::Substitution& substitution, bool swapEquality, std::string& rendered) {
       Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
@@ -6096,6 +6179,13 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
           || sideLiteralIndex >= sideClauseLiterals.size()) {
           return false;
         }
+        for (Kernel::Literal* literal : sideParent->iterLits()) {
+          Kernel::Literal* substituted = nullptr;
+          if (!safeApplySubstitution(literal, sideSubstitution, substituted)) {
+            return false;
+          }
+          rememberVariableSorts(substituted);
+        }
         std::string primitivePrefix;
         std::string resolveSideParentId = sideParentId;
         auto applyRenderedSubstitutionToLiterals = [&](std::vector<std::string>& literals) {
@@ -6176,7 +6266,13 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
             return true;
           }
           sideClauseLiterals[literalIndex] = swappedSideSexpr;
+          rememberVariableSorts(swappedSide);
           const std::string sideSymmetryId = stepBase + "_side_symmetry" + std::to_string(sideSymmetryCount++);
+          std::string metadata = syntheticVariableSortsMetadata(sideSymmetryId, sideClauseLiterals);
+          if (!metadata.empty()) {
+            primitivePrefix += metadata;
+            primitivePrefix += "\n  ";
+          }
           primitivePrefix +=
             "(equality_symmetry " + sexprQuote(sideSymmetryId)
             + " (parent " + sexprQuote(resolveSideParentId) + ")"
@@ -6229,6 +6325,11 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
           return false;
         }
         const std::string resolveId = stepBase + "_resolve_0";
+        std::string resolveMetadata = syntheticVariableSortsMetadata(resolveId, resolveLiterals);
+        if (!resolveMetadata.empty()) {
+          primitivePrefix += resolveMetadata;
+          primitivePrefix += "\n  ";
+        }
         primitivePrefix +=
           "(resolve " + sexprQuote(resolveId)
           + " (parents " + sexprQuote(mainParentId)
@@ -6252,6 +6353,11 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
                 continue;
               }
               const std::string factorId = stepBase + "_factor" + std::to_string(factorCount++);
+              std::string factorMetadata = syntheticVariableSortsMetadata(factorId, candidate);
+              if (!factorMetadata.empty()) {
+                primitivePrefix += factorMetadata;
+                primitivePrefix += "\n  ";
+              }
               primitivePrefix +=
                 "(factor " + sexprQuote(factorId)
                 + " (parent " + sexprQuote(currentParentId) + ")"
