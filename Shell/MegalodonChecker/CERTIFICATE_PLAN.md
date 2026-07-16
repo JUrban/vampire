@@ -11,6 +11,14 @@ therefore prioritize a real primitive certificate builder and live core proofs,
 not more benchmark-specific printer fragments or metadata that depends on
 Megalodon reconstructing missing proof-search data.
 
+Second post-audit note, 2026-07-16: the `vampire/megalodon5` closed-corpus
+frontier found no real non-synthetic hammer certificate that enters the current
+native proof-term core. The 23 passing core cases are `core.cnf.*` fixtures;
+the 149 real closed hammer certificates first hit `formula_term_input` or
+`formula_input`. Vampire-side work must therefore emit first-class
+source/preprocessing records, in addition to clausal primitive expansions, so
+Megalodon can prove real clausal inputs from original Megalodon source facts.
+
 ## Decision
 
 The previous `--proof megalodon` rich-export experiment is retained as a
@@ -33,10 +41,12 @@ literals, ordering information, Skolem data, and AVATAR state. Megalodon should
 check those explicit records and elaborate the restricted core to native proof
 terms, not rediscover large transformations from before/after formulas.
 
-The next qualifying Vampire milestone is an internal primitive IR, for example
-`MegalodonKernelStep`, plus a single printer. Macro-specific code should build
-that IR first. Direct string assembly in individual inference cases is now a
-legacy migration technique, not the target architecture.
+The next qualifying Vampire milestone is an internal certificate IR, for
+example `MegalodonKernelStep` for clausal primitives plus matching
+source/preprocess transformation records, printed by one canonical printer.
+Macro-specific code should build that IR first. Direct string assembly in
+individual inference cases is now a legacy migration technique, not the target
+architecture.
 
 ## Initial Export Fragment
 
@@ -64,9 +74,11 @@ The restricted native S-expression certificate milestone should contain only:
 - `contradiction`.
 
 Skolemization, formula preprocessing, predicate definitions, and AVATAR are
-deferred layers. They may be emitted for diagnostics and regression auditing,
-but they do not extend the restricted core unless Vampire expands them into
-small primitive records with a corresponding Megalodon native proof-term check.
+separate layers. They may be emitted for diagnostics and regression auditing,
+but they do not extend the restricted clausal core. Real hammer proofs cannot
+count until Vampire emits enough explicit data for Megalodon to prove
+`formula_input` and `formula_term_input` from the original source context and
+from certified Smolka-style transformations.
 
 ## Export Requirements
 
@@ -138,7 +150,13 @@ certificate format and should have a corresponding negative test in the
 Megalodon importer.
 
 Do not add another broad `kernel_v1` or Megalodon-side textual replay case just
-to increase pass counts. The next implementation milestone is ten real live
-Vampire proofs lowered to the restricted native core without requiring
-certificate-derived `Known` propositions in Megalodon, followed by
-original-context source binding and a held-out corpus run.
+to increase pass counts. The next implementation milestone is:
+
+1. source/preprocess certificate records for `formula_input` and
+   `formula_term_input`;
+2. proof-producing handling of set-generated equalities, conjecture negation,
+   rectification, FOOL/boolean normalization, ENNF/CNF projection, and
+   Skolemization where they occur in the real closed corpus;
+3. a clausal primitive builder for the later refutation steps;
+4. ten real live Vampire proofs whose source/preprocess layer and clausal
+   primitive layer both check without certificate-derived `Known` propositions.
