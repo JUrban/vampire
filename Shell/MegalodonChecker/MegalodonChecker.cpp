@@ -6292,13 +6292,9 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
         if (!complementaryUnderSubstitution(selectedLiteral, sideLiteral, sideSubstitution, needsSideSymmetry)) {
           continue;
         }
-        std::string selectedSexpr;
-        std::string sidePivotSexpr;
         std::string sideSubstitutionSexpr;
         std::string resultClauseSexpr;
-        if (!certificateLiteralSexpr(selectedLiteral, selectedSexpr)
-          || !certificateLiteralSexpr(sideLiteral, sidePivotSexpr)
-          || !certificateSubstitutionSexpr(sideSubstitution, sideSubstitutionSexpr)
+        if (!certificateSubstitutionSexpr(sideSubstitution, sideSubstitutionSexpr)
           || !certificateClauseSexpr(unit->asClause(), resultClauseSexpr)) {
           return false;
         }
@@ -6518,12 +6514,9 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
         }
         result =
           primitivePrefix
-          + "(subsumption_resolution " + sexprQuote(stepBase)
-          + " (parents " + sexprQuote(mainParentId)
-          + " " + sexprQuote(sideParentId) + ")"
-          + " (selected " + selectedSexpr + ")"
-          + " (side_pivot " + sidePivotSexpr + ") "
-          + sideSubstitutionSexpr
+          + "(substitute " + sexprQuote(stepBase)
+          + " (parent " + sexprQuote(currentParentId) + ")"
+          + " (subst)"
           + " (result " + resultClauseSexpr + "))";
         return true;
       }
