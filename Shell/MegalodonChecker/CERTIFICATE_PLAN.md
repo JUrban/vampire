@@ -2,7 +2,14 @@
 
 Date: 2026-07-15
 
-Branch: `vampire/megalodon4`
+Branch: `vampire/megalodon5`
+
+Post-audit note, 2026-07-16: the July 16 Megalodon audit found that the broad
+native preprocessing frontier was non-qualifying because Megalodon dynamically
+installed certificate-derived `Known` propositions. Vampire-side work should
+therefore prioritize a real primitive certificate builder and live core proofs,
+not more benchmark-specific printer fragments or metadata that depends on
+Megalodon reconstructing missing proof-search data.
 
 ## Decision
 
@@ -25,6 +32,11 @@ records while Vampire still has substitutions, literal positions, selected
 literals, ordering information, Skolem data, and AVATAR state. Megalodon should
 check those explicit records and elaborate the restricted core to native proof
 terms, not rediscover large transformations from before/after formulas.
+
+The next qualifying Vampire milestone is an internal primitive IR, for example
+`MegalodonKernelStep`, plus a single printer. Macro-specific code should build
+that IR first. Direct string assembly in individual inference cases is now a
+legacy migration technique, not the target architecture.
 
 ## Initial Export Fragment
 
@@ -126,6 +138,7 @@ certificate format and should have a corresponding negative test in the
 Megalodon importer.
 
 Do not add another broad `kernel_v1` or Megalodon-side textual replay case just
-to increase pass counts. The next implementation milestone is ten committed
-original-context or source-bound proofs through the restricted native proof-term
-path, followed by a held-out corpus run.
+to increase pass counts. The next implementation milestone is ten real live
+Vampire proofs lowered to the restricted native core without requiring
+certificate-derived `Known` propositions in Megalodon, followed by
+original-context source binding and a held-out corpus run.
