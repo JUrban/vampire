@@ -7244,6 +7244,8 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
   Kernel::TermList otherRight = Kernel::SubstHelper::apply(*other->nthArgument(1), substitution);
   Kernel::TermList introducedLeft;
   Kernel::TermList introducedRight;
+  Kernel::TermList explicitSelectedLhs;
+  Kernel::TermList explicitOtherRhs;
   Kernel::TermList selectedRecorded = rewrite->rewrite.lhs;
   Kernel::TermList otherRecorded = rewrite->rewrite.rewritten;
   bool selectedRecordedIsLeft = selectedRecorded == *selected->nthArgument(0);
@@ -7264,28 +7266,44 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
     if (selectedShared == otherShared) {
       introducedLeft = selectedOther;
       introducedRight = otherOther;
+      explicitSelectedLhs = selectedShared;
+      explicitOtherRhs = otherOther;
       foundFactoringSides = true;
     }
   }
   if (!foundFactoringSides && selectedRight == otherRight) {
     introducedLeft = selectedLeft;
     introducedRight = otherLeft;
+    explicitSelectedLhs = selectedRight;
+    explicitOtherRhs = otherLeft;
     foundFactoringSides = true;
   } else if (!foundFactoringSides && selectedRight == otherLeft) {
     introducedLeft = selectedLeft;
     introducedRight = otherRight;
+    explicitSelectedLhs = selectedRight;
+    explicitOtherRhs = otherRight;
     foundFactoringSides = true;
   } else if (!foundFactoringSides && selectedLeft == otherRight) {
     introducedLeft = selectedRight;
     introducedRight = otherLeft;
+    explicitSelectedLhs = selectedLeft;
+    explicitOtherRhs = otherLeft;
     foundFactoringSides = true;
   } else if (!foundFactoringSides && selectedLeft == otherLeft) {
     introducedLeft = selectedRight;
     introducedRight = otherRight;
+    explicitSelectedLhs = selectedLeft;
+    explicitOtherRhs = otherRight;
     foundFactoringSides = true;
   }
   if (!foundFactoringSides) {
     return fail("factoring sides not found");
+  }
+  std::string selectedLhsSexpr;
+  std::string otherRhsSexpr;
+  if (!certificateTermSexpr(explicitSelectedLhs, selectedLhsSexpr)
+    || !certificateTermSexpr(explicitOtherRhs, otherRhsSexpr)) {
+    return fail("render explicit factoring side terms");
   }
   Kernel::TermList equalityArgumentSort = Kernel::SubstHelper::apply(Kernel::SortHelper::getEqualityArgumentSort(selected), substitution);
   Kernel::Literal* introduced = Kernel::Literal::createEquality(false, introducedLeft, introducedRight, equalityArgumentSort);
@@ -7348,6 +7366,8 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
       + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
       + " (selected " + std::to_string(selectedIndex) + ")"
       + " (other " + std::to_string(otherIndex) + ") "
+      + "(selected_lhs " + selectedLhsSexpr + ") "
+      + "(other_rhs " + otherRhsSexpr + ") "
       + subst
       + " (result " + clauseSexprFromLiterals(actual) + "))");
   } else {
@@ -7363,6 +7383,8 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
       + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
       + " (selected " + std::to_string(selectedIndex) + ")"
       + " (other " + std::to_string(otherIndex) + ") "
+      + "(selected_lhs " + selectedLhsSexpr + ") "
+      + "(other_rhs " + otherRhsSexpr + ") "
       + subst
       + " " + constraintsSexprFromLiterals(constraints)
       + " (result " + clauseSexprFromLiterals(actual) + "))");

@@ -45,6 +45,7 @@ The restricted native S-expression certificate milestone should contain only:
 - `resolve`,
 - `factor`,
 - `equality_resolution`,
+- `equality_factoring`,
 - `equality_symmetry`,
 - `paramodulate`,
 - `subsumption_resolution`,
@@ -94,7 +95,7 @@ Literals use Megalodon's S-expression term syntax, for example:
 (TMH "a")
 (AP (TMH "f") (TMH "a"))
 (pos (AP (TMH "p") (TMH "a")))
-(neg (AP (AP (TMH "=") (TMH "a")) (TMH "b")))
+(neg (AP (AP (TPAP (TMH "5a6af35fb6d6bea477dd0f822b8e01ca0d57cc50dfd41744307bc94597fdaa4a") (SET)) (TMH "a")) (TMH "b")))
 ```
 
 Every promoted rule constructor must be emitted directly by Vampire in this
