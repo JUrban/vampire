@@ -4173,6 +4173,55 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
     out << ')';
     return out.str();
   };
+  auto addSyntheticInstantiationMetadata =
+    [&](const std::string& stepId,
+        const std::string& parentId,
+        const std::vector<std::string>& parentLiterals,
+        const std::string& subst,
+        const std::vector<std::string>& resultLiterals) {
+      if (!recordSyntheticMetadata) {
+        return;
+      }
+      const std::string parentClause = clauseSexprFromRendered(parentLiterals);
+      const std::string resultClause = clauseSexprFromRendered(resultLiterals);
+      std::vector<std::string> fields;
+      fields.push_back("schema=prover9-small-kernel-v1");
+      fields.push_back("rule=instantiation");
+      fields.push_back("primitive_expansion=prefix");
+      fields.push_back("primitive_expansion_prefix=" + stepId);
+      fields.push_back("primitive_expansion_requires=substitute");
+      fields.push_back("conclusion_unit=" + stepId);
+      fields.push_back("result_clause=" + resultClause);
+      fields.push_back("conclusion_clause=" + resultClause);
+      fields.push_back("substitution=" + subst);
+      fields.push_back("result_literal_count=" + std::to_string(resultLiterals.size()));
+      for (std::size_t i = 0; i < resultLiterals.size(); ++i) {
+        fields.push_back("result_literal_" + std::to_string(i) + "=" + resultLiterals[i]);
+      }
+      fields.push_back("parent_count=1");
+      fields.push_back("parent_0_unit=" + parentId);
+      fields.push_back("parent_0_clause=" + parentClause);
+      fields.push_back("parent_0_literal_count=" + std::to_string(parentLiterals.size()));
+      for (std::size_t i = 0; i < parentLiterals.size(); ++i) {
+        fields.push_back("parent_0_literal_" + std::to_string(i) + "=" + parentLiterals[i]);
+      }
+      fields.push_back("parent_0_substitution=" + subst);
+      fields.push_back("parent_0_substituted_literal_count=" + std::to_string(resultLiterals.size()));
+      for (std::size_t i = 0; i < resultLiterals.size(); ++i) {
+        fields.push_back("parent_0_substituted_literal_" + std::to_string(i) + "=" + resultLiterals[i]);
+      }
+
+      std::ostringstream metadata;
+      metadata << "(step_extra " << sexprQuote(stepId) << " \"kernel_v1\" (";
+      for (std::size_t i = 0; i < fields.size(); ++i) {
+        if (i != 0) {
+          metadata << ' ';
+        }
+        metadata << sexprQuote(fields[i]);
+      }
+      metadata << "))";
+      syntheticMetadata.push_back(metadata.str());
+    };
   auto traceMacroSexpr = [&]() {
     std::string clause;
     if (!certificateClauseSexpr(unit->asClause(), clause)) {
@@ -4542,6 +4591,12 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         + " (parent " + sexprQuote(currentParentId) + ") "
         + subst
         + " (result " + clauseSexprFromRendered(substitutedRendered) + "))");
+      addSyntheticInstantiationMetadata(
+        substituteId,
+        currentParentId,
+        currentRendered,
+        subst,
+        substitutedRendered);
       addSyntheticVariableSorts(substituteId, substituted);
       currentLiterals = substituted;
       currentRendered = substitutedRendered;
@@ -4740,6 +4795,12 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
           + " (parent " + sexprQuote(currentParentId) + ") "
           + finalRenameSubst
           + " (result " + clauseSexprFromRendered(renamedRendered) + "))");
+        addSyntheticInstantiationMetadata(
+          renameId,
+          currentParentId,
+          currentRendered,
+          finalRenameSubst,
+          renamedRendered);
         addSyntheticVariableSorts(renameId, renamedLiterals);
         currentLiterals = renamedLiterals;
         currentRendered = renamedRendered;
@@ -4908,13 +4969,44 @@ bool MegalodonChecker::certificateResolveStepSexpr(Kernel::Unit* unit, std::stri
       return static_cast<unsigned>(std::count(literals.begin(), literals.end(), literal));
     };
   auto swappedEqualityLiteral = [&](const std::string& literal, std::string& swapped) {
+    static const std::string megalodonEqualityHash =
+      "5a6af35fb6d6bea477dd0f822b8e01ca0d57cc50dfd41744307bc94597fdaa4a";
     const std::string posPrefix = "(pos (AP (AP (TMH \"=\") ";
     const std::string negPrefix = "(neg (AP (AP (TMH \"=\") ";
+    const std::string typedPosPrefix =
+      "(pos (AP (AP (TPAP (TMH " + sexprQuote(megalodonEqualityHash) + ") ";
+    const std::string typedNegPrefix =
+      "(neg (AP (AP (TPAP (TMH " + sexprQuote(megalodonEqualityHash) + ") ";
     std::string prefix;
     if (literal.rfind(posPrefix, 0) == 0) {
       prefix = posPrefix;
     } else if (literal.rfind(negPrefix, 0) == 0) {
       prefix = negPrefix;
+    } else if (literal.rfind(typedPosPrefix, 0) == 0 || literal.rfind(typedNegPrefix, 0) == 0) {
+      const std::string typedPrefix =
+        literal.rfind(typedPosPrefix, 0) == 0 ? typedPosPrefix : typedNegPrefix;
+      std::size_t typeStart = typedPrefix.size();
+      std::size_t typeEnd = std::string::npos;
+      auto termEnd = [&](std::size_t start, std::size_t& end) {
+        int depth = 0;
+        for (std::size_t i = start; i < literal.size(); ++i) {
+          if (literal[i] == '(') {
+            ++depth;
+          } else if (literal[i] == ')') {
+            --depth;
+            if (depth == 0) {
+              end = i + 1;
+              return true;
+            }
+          }
+        }
+        return false;
+      };
+      if (!termEnd(typeStart, typeEnd) || typeEnd + 2 >= literal.size()
+        || literal[typeEnd] != ')' || literal[typeEnd + 1] != ' ') {
+        return false;
+      }
+      prefix = literal.substr(0, typeEnd + 2);
     } else {
       return false;
     }
@@ -6797,13 +6889,44 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
     return left == right;
   };
   auto swappedEqualityLiteral = [&](const std::string& literal, std::string& swapped) {
+    static const std::string megalodonEqualityHash =
+      "5a6af35fb6d6bea477dd0f822b8e01ca0d57cc50dfd41744307bc94597fdaa4a";
     const std::string posPrefix = "(pos (AP (AP (TMH \"=\") ";
     const std::string negPrefix = "(neg (AP (AP (TMH \"=\") ";
+    const std::string typedPosPrefix =
+      "(pos (AP (AP (TPAP (TMH " + sexprQuote(megalodonEqualityHash) + ") ";
+    const std::string typedNegPrefix =
+      "(neg (AP (AP (TPAP (TMH " + sexprQuote(megalodonEqualityHash) + ") ";
     std::string prefix;
     if (literal.rfind(posPrefix, 0) == 0) {
       prefix = posPrefix;
     } else if (literal.rfind(negPrefix, 0) == 0) {
       prefix = negPrefix;
+    } else if (literal.rfind(typedPosPrefix, 0) == 0 || literal.rfind(typedNegPrefix, 0) == 0) {
+      const std::string typedPrefix =
+        literal.rfind(typedPosPrefix, 0) == 0 ? typedPosPrefix : typedNegPrefix;
+      std::size_t typeStart = typedPrefix.size();
+      std::size_t typeEnd = std::string::npos;
+      auto termEnd = [&](std::size_t start, std::size_t& end) {
+        int depth = 0;
+        for (std::size_t i = start; i < literal.size(); ++i) {
+          if (literal[i] == '(') {
+            ++depth;
+          } else if (literal[i] == ')') {
+            --depth;
+            if (depth == 0) {
+              end = i + 1;
+              return true;
+            }
+          }
+        }
+        return false;
+      };
+      if (!termEnd(typeStart, typeEnd) || typeEnd + 2 >= literal.size()
+        || literal[typeEnd] != ')' || literal[typeEnd + 1] != ' ') {
+        return false;
+      }
+      prefix = literal.substr(0, typeEnd + 2);
     } else {
       return false;
     }
@@ -8381,13 +8504,44 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
     return out.str();
   };
   auto swappedEqualityLiteral = [&](const std::string& literal, std::string& swapped) {
+    static const std::string megalodonEqualityHash =
+      "5a6af35fb6d6bea477dd0f822b8e01ca0d57cc50dfd41744307bc94597fdaa4a";
     const std::string posPrefix = "(pos (AP (AP (TMH \"=\") ";
     const std::string negPrefix = "(neg (AP (AP (TMH \"=\") ";
+    const std::string typedPosPrefix =
+      "(pos (AP (AP (TPAP (TMH " + sexprQuote(megalodonEqualityHash) + ") ";
+    const std::string typedNegPrefix =
+      "(neg (AP (AP (TPAP (TMH " + sexprQuote(megalodonEqualityHash) + ") ";
     std::string prefix;
     if (literal.rfind(posPrefix, 0) == 0) {
       prefix = posPrefix;
     } else if (literal.rfind(negPrefix, 0) == 0) {
       prefix = negPrefix;
+    } else if (literal.rfind(typedPosPrefix, 0) == 0 || literal.rfind(typedNegPrefix, 0) == 0) {
+      const std::string typedPrefix =
+        literal.rfind(typedPosPrefix, 0) == 0 ? typedPosPrefix : typedNegPrefix;
+      std::size_t typeStart = typedPrefix.size();
+      std::size_t typeEnd = std::string::npos;
+      auto termEnd = [&](std::size_t start, std::size_t& end) {
+        int depth = 0;
+        for (std::size_t i = start; i < literal.size(); ++i) {
+          if (literal[i] == '(') {
+            ++depth;
+          } else if (literal[i] == ')') {
+            --depth;
+            if (depth == 0) {
+              end = i + 1;
+              return true;
+            }
+          }
+        }
+        return false;
+      };
+      if (!termEnd(typeStart, typeEnd) || typeEnd + 2 >= literal.size()
+        || literal[typeEnd] != ')' || literal[typeEnd + 1] != ' ') {
+        return false;
+      }
+      prefix = literal.substr(0, typeEnd + 2);
     } else {
       return false;
     }
@@ -8884,15 +9038,14 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
 
                 std::vector<std::string> currentClause = substitutedParents[targetParentIndex];
                 std::string currentParentId = parentIds[targetParentIndex];
+                unsigned currentTargetIndex = targetIndex;
                 bool expanded = true;
                 for (std::size_t rewriteIndex = 0; rewriteIndex < targetRewrites.size(); ++rewriteIndex) {
                   const TargetRewrite& rewrite = targetRewrites[rewriteIndex];
-                  auto literalIt = std::find(currentClause.begin(), currentClause.end(), rewrite.literal);
-                  if (literalIt == currentClause.end()) {
+                  if (currentTargetIndex >= currentClause.size()) {
                     expanded = false;
                     break;
                   }
-                  unsigned currentTargetIndex = literalIt - currentClause.begin();
                   std::vector<std::string> nextClause = currentClause;
                   nextClause.erase(nextClause.begin() + currentTargetIndex);
                   nextClause.insert(nextClause.end(), equalityRemainder.begin(), equalityRemainder.end());
@@ -8906,6 +9059,7 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                     + " (from " + fromSexpr + ")"
                     + " (to " + toSexpr + ")"
                     + " (result " + clauseSexprFromLiterals(nextClause) + "))");
+                  currentTargetIndex = nextClause.size() - 1;
                   currentClause = nextClause;
                   currentParentId = rewriteId;
                 }
