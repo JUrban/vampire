@@ -5180,8 +5180,8 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
       if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
         return false;
       }
-      rendered = "(AP (AP (TMH \"=\") " + lhs + ") " + rhs + ")";
-      return true;
+      return certificateEqualityAtomSexpr(
+        Kernel::SortHelper::getEqualityArgumentSort(positive), lhs, rhs, rendered);
     }
     Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
     return certificateAtomSexpr(substituted, rendered);
@@ -5235,17 +5235,20 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
     return left == right;
   };
   auto swappedEqualityLiteral = [&](const std::string& literal, std::string& swapped) {
-    const std::string posPrefix = "(pos (AP (AP (TMH \"=\") ";
-    const std::string negPrefix = "(neg (AP (AP (TMH \"=\") ";
-    std::string prefix;
+    const std::string posPrefix = "(pos ";
+    const std::string negPrefix = "(neg ";
+    std::string polarityPrefix;
     if (literal.rfind(posPrefix, 0) == 0) {
-      prefix = posPrefix;
+      polarityPrefix = posPrefix;
     } else if (literal.rfind(negPrefix, 0) == 0) {
-      prefix = negPrefix;
+      polarityPrefix = negPrefix;
     } else {
       return false;
     }
-    std::size_t leftStart = prefix.size();
+    const std::string atomPrefix = polarityPrefix + "(AP (AP ";
+    if (literal.rfind(atomPrefix, 0) != 0) {
+      return false;
+    }
     auto termEnd = [&](std::size_t start, std::size_t& end) {
       if (start >= literal.size()) {
         return false;
@@ -5268,6 +5271,16 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
       }
       return false;
     };
+    std::size_t equalityStart = atomPrefix.size();
+    std::size_t equalityEnd = std::string::npos;
+    if (!termEnd(equalityStart, equalityEnd) || equalityEnd >= literal.size() || literal[equalityEnd] != ' ') {
+      return false;
+    }
+    std::string equalityHead = literal.substr(equalityStart, equalityEnd - equalityStart);
+    if (equalityHead != "(TMH \"=\")" && equalityHead.rfind("(TPAP (TMH ", 0) != 0) {
+      return false;
+    }
+    std::size_t leftStart = equalityEnd + 1;
     std::size_t leftEnd = std::string::npos;
     if (!termEnd(leftStart, leftEnd)
       || leftEnd + 2 >= literal.size()
@@ -5285,7 +5298,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
       return false;
     }
     std::string right = literal.substr(rightStart, rightEnd - rightStart);
-    swapped = prefix + right + ") " + left + "))";
+    swapped = atomPrefix + equalityHead + " " + right + ") " + left + "))";
     return true;
   };
   auto canNormalizeBySymmetry =
@@ -5897,8 +5910,8 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
           || !certificateTermSexpr(Kernel::SubstHelper::apply(*positive->nthArgument(rightIndex), substitution), rhs)) {
           return false;
         }
-        rendered = "(AP (AP (TMH \"=\") " + lhs + ") " + rhs + ")";
-        return true;
+        return certificateEqualityAtomSexpr(
+          Kernel::SortHelper::getEqualityArgumentSort(positive), lhs, rhs, rendered);
       }
       Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
       return certificateAtomSexpr(substituted, rendered);
