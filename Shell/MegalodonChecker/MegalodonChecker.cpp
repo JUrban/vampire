@@ -7110,8 +7110,14 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
       if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
         return false;
       }
+      Kernel::TermList equalitySort =
+        Kernel::SubstHelper::apply(Kernel::SortHelper::getEqualityArgumentSort(positive), substitution);
+      std::string atom;
+      if (!certificateEqualityAtomSexpr(equalitySort, lhs, rhs, atom)) {
+        return false;
+      }
       rendered = std::string("(") + (literal->isPositive() ? "pos " : "neg ")
-        + "(AP (AP (TMH \"=\") " + lhs + ") " + rhs + "))";
+        + atom + ")";
       return true;
     }
     Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
@@ -7147,7 +7153,10 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
     return true;
   };
   auto isNegativeEqualityLiteral = [](const std::string& literal) {
-    return literal.rfind("(neg (AP (AP (TMH \"=\") ", 0) == 0;
+    static const std::string megalodonEqualityHash =
+      "5a6af35fb6d6bea477dd0f822b8e01ca0d57cc50dfd41744307bc94597fdaa4a";
+    return literal.rfind("(neg (AP (AP (TMH \"=\") ", 0) == 0
+      || literal.rfind(std::string("(neg (AP (AP (TPAP (TMH \"") + megalodonEqualityHash + "\") ", 0) == 0;
   };
   auto normalized = [](std::vector<std::string> literals) {
     std::sort(literals.begin(), literals.end());
@@ -7155,8 +7164,8 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
     return literals;
   };
   auto swappedEqualityLiteral = [&](const std::string& literal, std::string& swapped) {
-    const std::string posPrefix = "(pos (AP (AP (TMH \"=\") ";
-    const std::string negPrefix = "(neg (AP (AP (TMH \"=\") ";
+    const std::string posPrefix = "(pos ";
+    const std::string negPrefix = "(neg ";
     std::string prefix;
     if (literal.rfind(posPrefix, 0) == 0) {
       prefix = posPrefix;
@@ -7180,7 +7189,17 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
       }
       return false;
     };
-    std::size_t leftStart = prefix.size();
+    const std::string apPrefix = "(AP (AP ";
+    if (literal.compare(prefix.size(), apPrefix.size(), apPrefix) != 0) {
+      return false;
+    }
+    std::size_t equalityStart = prefix.size() + apPrefix.size();
+    std::size_t equalityEnd = std::string::npos;
+    if (!termEnd(equalityStart, equalityEnd) || equalityEnd >= literal.size() || literal[equalityEnd] != ' ') {
+      return false;
+    }
+    std::string equalityHead = literal.substr(equalityStart, equalityEnd - equalityStart);
+    std::size_t leftStart = equalityEnd + 1;
     std::size_t leftEnd = std::string::npos;
     if (!termEnd(leftStart, leftEnd) || leftEnd + 2 >= literal.size() || literal[leftEnd] != ')' || literal[leftEnd + 1] != ' ') {
       return false;
@@ -7192,7 +7211,7 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
     }
     std::string left = literal.substr(leftStart, leftEnd - leftStart);
     std::string right = literal.substr(rightStart, rightEnd - rightStart);
-    swapped = prefix + right + ") " + left + "))";
+    swapped = prefix + apPrefix + equalityHead + " " + right + ") " + left + "))";
     return true;
   };
 
