@@ -36,6 +36,13 @@ global source facts mechanically distinguishable from local/unhashed theorem
 hypotheses. Vampire should preserve source hashes and roles accurately because
 those fields are now part of the fail-closed original-context boundary.
 
+Fifth post-audit note, 2026-07-16: resolved global source facts are no longer
+only audited. Megalodon's native proof-term elaborators can consume successful
+`Known hash` source proofs and omit those inputs from the source-assumption
+spine. This increases the importance of emitting exact source roles and hashes:
+incorrect hashes will now prevent the corresponding source from being
+discharged into the original context.
+
 ## Decision
 
 The previous `--proof megalodon` rich-export experiment is retained as a
