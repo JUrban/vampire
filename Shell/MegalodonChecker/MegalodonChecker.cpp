@@ -10763,13 +10763,14 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
             expected.push_back(rewrittenTarget);
             std::vector<std::vector<std::string>> expectedVariants;
             expectedVariants.push_back(expected);
+            std::vector<std::string> simultaneousExpected;
+            std::string simultaneousRewrittenTarget;
             Kernel::Literal* simultaneousTarget =
               Kernel::EqHelper::replace(candidate.effectiveTarget, candidate.effectiveFrom, candidate.effectiveTo);
-            std::string simultaneousRewrittenTarget;
             if (simultaneousTarget != candidate.effectiveTarget
               && certificateLiteralSexpr(simultaneousTarget, simultaneousRewrittenTarget)
               && simultaneousRewrittenTarget != rewrittenTarget) {
-              std::vector<std::string> simultaneousExpected = removeAt(effectiveEqualityClause, equalityIndex);
+              simultaneousExpected = removeAt(effectiveEqualityClause, equalityIndex);
               simultaneousExpected.insert(simultaneousExpected.end(), targetRest.begin(), targetRest.end());
               simultaneousExpected.push_back(simultaneousRewrittenTarget);
               expectedVariants.push_back(simultaneousExpected);
@@ -10779,16 +10780,16 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
               firstDirectExpected = clauseSexprFromLiterals(expected);
               firstDirectActual = clauseSexprFromLiterals(actualDirect);
             }
-            bool expectedMatches = false;
-            for (const auto& expectedVariant : expectedVariants) {
-              if (sameMultiset(expectedVariant, actualDirect)
-                || sameModuloEqualitySymmetry(expectedVariant, actualDirect)
-                || sameModuloVariableRenaming(expectedVariant, actualDirect)) {
-                expectedMatches = true;
-                break;
-              }
-            }
-            if (!expectedMatches) {
+            const bool directExpectedMatches =
+              sameMultiset(expected, actualDirect)
+              || sameModuloEqualitySymmetry(expected, actualDirect)
+              || sameModuloVariableRenaming(expected, actualDirect);
+            const bool simultaneousExpectedMatches =
+              !simultaneousExpected.empty()
+              && (sameMultiset(simultaneousExpected, actualDirect)
+                || sameModuloEqualitySymmetry(simultaneousExpected, actualDirect)
+                || sameModuloVariableRenaming(simultaneousExpected, actualDirect));
+            if (!directExpectedMatches && !simultaneousExpectedMatches) {
               continue;
             }
             std::string fromSexpr;
@@ -10834,16 +10835,82 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
                   equalityParentId)) {
               continue;
             }
-            steps.push_back(
-              "(paramodulate " + sexprQuote(stepBase)
-              + " (equality " + sexprQuote(equalityParentId)
-              + " " + std::to_string(equalityIndex) + ")"
-              + " (target " + sexprQuote(targetParentId)
-              + " " + std::to_string(targetIndex) + ") "
-              + certificatePositionSexpr(position)
-              + " (from " + fromSexpr + ")"
-              + " (to " + toSexpr + ")"
-              + " (result " + clauseSexprFromLiterals(actualDirect) + "))");
+            if (directExpectedMatches) {
+              steps.push_back(
+                "(paramodulate " + sexprQuote(stepBase)
+                + " (equality " + sexprQuote(equalityParentId)
+                + " " + std::to_string(equalityIndex) + ")"
+                + " (target " + sexprQuote(targetParentId)
+                + " " + std::to_string(targetIndex) + ") "
+                + certificatePositionSexpr(position)
+                + " (from " + fromSexpr + ")"
+                + " (to " + toSexpr + ")"
+                + " (result " + clauseSexprFromLiterals(expected) + "))");
+            } else {
+              struct DirectRewriteStep {
+                std::vector<unsigned> position;
+                std::string rewritten;
+              };
+              std::vector<DirectRewriteStep> rewriteSteps;
+              Kernel::Literal* currentLiteral = candidate.effectiveTarget;
+              for (unsigned guard = 0; guard < 16; ++guard) {
+                std::vector<unsigned> stepPosition;
+                std::string stepRewritten;
+                Kernel::Literal* nextLiteral = nullptr;
+                if (!certificateRewriteLiteralAtMegalodonPosition(
+                      currentLiteral,
+                      candidate.effectiveFrom,
+                      candidate.effectiveTo,
+                      stepPosition,
+                      nextLiteral)
+                  || !certificateLiteralSexpr(nextLiteral, stepRewritten)) {
+                  break;
+                }
+                rewriteSteps.push_back({stepPosition, stepRewritten});
+                currentLiteral = nextLiteral;
+                if (stepRewritten == simultaneousRewrittenTarget) {
+                  break;
+                }
+              }
+              if (rewriteSteps.empty()
+                || rewriteSteps.back().rewritten != simultaneousRewrittenTarget) {
+                continue;
+              }
+
+              std::vector<std::string> equalityRemainder = removeAt(effectiveEqualityClause, equalityIndex);
+              std::vector<std::string> currentClause = effectiveTargetClause;
+              std::string currentParentId = targetParentId;
+              unsigned currentTargetIndex = targetIndex;
+              bool expanded = true;
+              for (std::size_t rewriteIndex = 0; rewriteIndex < rewriteSteps.size(); ++rewriteIndex) {
+                if (currentTargetIndex >= currentClause.size()) {
+                  expanded = false;
+                  break;
+                }
+                std::vector<std::string> nextClause = removeAt(currentClause, currentTargetIndex);
+                nextClause.insert(nextClause.end(), equalityRemainder.begin(), equalityRemainder.end());
+                nextClause.push_back(rewriteSteps[rewriteIndex].rewritten);
+                const std::string rewriteId = rewriteIndex + 1 == rewriteSteps.size()
+                  ? stepBase
+                  : stepBase + "_paramodulate" + std::to_string(rewriteIndex);
+                steps.push_back(
+                  "(paramodulate " + sexprQuote(rewriteId)
+                  + " (equality " + sexprQuote(equalityParentId)
+                  + " " + std::to_string(equalityIndex) + ")"
+                  + " (target " + sexprQuote(currentParentId)
+                  + " " + std::to_string(currentTargetIndex) + ") "
+                  + certificatePositionSexpr(rewriteSteps[rewriteIndex].position)
+                  + " (from " + fromSexpr + ")"
+                  + " (to " + toSexpr + ")"
+                  + " (result " + clauseSexprFromLiterals(nextClause) + "))");
+                currentClause = nextClause;
+                currentParentId = rewriteId;
+                currentTargetIndex = currentClause.size() - 1;
+              }
+              if (!expanded || !sameMultiset(currentClause, actualDirect)) {
+                continue;
+              }
+            }
 
             std::ostringstream out;
             for (std::size_t i = 0; i < steps.size(); ++i) {
