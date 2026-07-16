@@ -14126,7 +14126,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         if (u->inference().rule() == Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION
           || u->inference().rule() == Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION) {
           std::string primitiveExpansion;
-          if (certificateSatSubsumptionResolutionStepSexpr(u, primitiveExpansion)) {
+          if (certificateNativeStepSexpr(u, info, primitiveExpansion)) {
             addPrimitiveExpansionChainFields(
               kernelFields,
               primitiveExpansion,
