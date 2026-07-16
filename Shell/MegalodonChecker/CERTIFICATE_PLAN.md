@@ -19,6 +19,15 @@ the 149 real closed hammer certificates first hit `formula_term_input` or
 source/preprocessing records, in addition to clausal primitive expansions, so
 Megalodon can prove real clausal inputs from original Megalodon source facts.
 
+Third post-audit note, 2026-07-16: Megalodon now has a
+`-vampirecertv1sourceaudit` gate and a parallel closed-corpus harness that
+counts source obligations as checked THF formulas, unsupported formulas,
+missing formulas, generated equalities, `set_reflexivity`, and `$true`
+obligations. This does not reduce the Vampire-side obligation: future
+source/preprocess records still need to provide enough proof data for
+Megalodon to build proof terms, not merely enough labels for source-map
+validation.
+
 ## Decision
 
 The previous `--proof megalodon` rich-export experiment is retained as a
