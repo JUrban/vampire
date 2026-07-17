@@ -14141,27 +14141,35 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         kernelFields.push_back("trace_step_count=" + std::to_string(urr->steps.size()));
         for (std::size_t traceIndex = 0; traceIndex < urr->steps.size(); ++traceIndex) {
           const auto& trace = urr->steps[traceIndex];
-          std::string prefix = "trace_step_" + std::to_string(traceIndex);
+          MegalodonKernelSyntax::RenderedKernelUrrTraceStep traceStep;
+          traceStep.index = traceIndex;
           if (trace.unitParent != nullptr) {
-            kernelFields.push_back(prefix + "_unit_parent=u" + std::to_string(trace.unitParent->number()));
+            traceStep.hasUnitParent = true;
+            traceStep.unitParent = "u" + std::to_string(trace.unitParent->number());
             std::string clause;
             if (clauseSexprForKernel(trace.unitParent, clause)) {
-              kernelFields.push_back(prefix + "_unit_parent_clause=" + clause);
+              traceStep.hasUnitParentClause = true;
+              traceStep.unitParentClause = clause;
             }
           }
           std::string rendered;
           if (literalSexprForKernel(trace.selected, rendered)) {
-            kernelFields.push_back(prefix + "_selected=" + rendered);
+            traceStep.hasSelected = true;
+            traceStep.selected = rendered;
           }
           if (literalSexprForKernel(trace.selectedSubstituted, rendered)) {
-            kernelFields.push_back(prefix + "_selected_substituted=" + rendered);
+            traceStep.hasSelectedSubstituted = true;
+            traceStep.selectedSubstituted = rendered;
           }
           if (literalSexprForKernel(trace.unitSubstituted, rendered)) {
-            kernelFields.push_back(prefix + "_unit_substituted=" + rendered);
+            traceStep.hasUnitSubstituted = true;
+            traceStep.unitSubstituted = rendered;
           }
           if (literalVectorClauseSexprForKernel(trace.remainingAfter, rendered)) {
-            kernelFields.push_back(prefix + "_remaining_after=" + rendered);
+            traceStep.hasRemainingAfter = true;
+            traceStep.remainingAfter = rendered;
           }
+          MegalodonKernelSyntax::appendUrrTraceStep(kernelFields, traceStep);
         }
         std::string remaining;
         if (literalVectorClauseSexprForKernel(urr->remaining, remaining)) {

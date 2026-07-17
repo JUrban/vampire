@@ -169,6 +169,31 @@ void appendRewrite(
   }
 }
 
+void appendUrrTraceStep(
+  std::vector<std::string>& fields,
+  const RenderedKernelUrrTraceStep& step)
+{
+  const std::string prefix = "trace_step_" + std::to_string(step.index);
+  if (step.hasUnitParent) {
+    fields.push_back(prefix + "_unit_parent=" + step.unitParent);
+  }
+  if (step.hasUnitParentClause) {
+    fields.push_back(prefix + "_unit_parent_clause=" + step.unitParentClause);
+  }
+  if (step.hasSelected) {
+    fields.push_back(prefix + "_selected=" + step.selected);
+  }
+  if (step.hasSelectedSubstituted) {
+    fields.push_back(prefix + "_selected_substituted=" + step.selectedSubstituted);
+  }
+  if (step.hasUnitSubstituted) {
+    fields.push_back(prefix + "_unit_substituted=" + step.unitSubstituted);
+  }
+  if (step.hasRemainingAfter) {
+    fields.push_back(prefix + "_remaining_after=" + step.remainingAfter);
+  }
+}
+
 namespace {
 
 bool hasFieldWithPrefix(

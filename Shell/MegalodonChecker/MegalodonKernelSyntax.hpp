@@ -1,6 +1,7 @@
 #ifndef __MEGALODON_KERNEL_SYNTAX__
 #define __MEGALODON_KERNEL_SYNTAX__
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -70,6 +71,22 @@ struct RenderedKernelRewrite {
   std::string rewrittenTarget;
 };
 
+struct RenderedKernelUrrTraceStep {
+  std::size_t index = 0;
+  bool hasUnitParent = false;
+  std::string unitParent;
+  bool hasUnitParentClause = false;
+  std::string unitParentClause;
+  bool hasSelected = false;
+  std::string selected;
+  bool hasSelectedSubstituted = false;
+  std::string selectedSubstituted;
+  bool hasUnitSubstituted = false;
+  std::string unitSubstituted;
+  bool hasRemainingAfter = false;
+  std::string remainingAfter;
+};
+
 struct MegalodonKernelStep {
   std::string id;
   std::string rule;
@@ -127,6 +144,10 @@ void appendLiteralSelection(
 void appendRewrite(
   std::vector<std::string>& fields,
   const RenderedKernelRewrite& rewrite);
+
+void appendUrrTraceStep(
+  std::vector<std::string>& fields,
+  const RenderedKernelUrrTraceStep& step);
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step);
 
