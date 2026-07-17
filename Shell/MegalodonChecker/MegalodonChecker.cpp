@@ -11887,7 +11887,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       }
     }
   };
-  auto addKernelSatProofFields = [&](std::vector<std::string>& fields, SAT::SATClause* root) {
+  auto populateKernelSatProofSteps = [&](MegalodonKernelSyntax::RenderedKernelAvatarRefutation& refutation, SAT::SATClause* root) {
     struct CompareSATClauses {
       bool operator()(SAT::SATClause* left, SAT::SATClause* right) const
       {
@@ -11914,46 +11914,52 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       }
     }
 
-    fields.push_back("sat_proof_step_count=" + std::to_string(proof.size()));
     std::size_t proofIndex = 0;
     for (SAT::SATClause* clause : proof) {
-      std::string prefix = "sat_proof_step_" + std::to_string(proofIndex);
-      fields.push_back(prefix + "_id=" + std::to_string(clause->number));
+      MegalodonKernelSyntax::RenderedKernelSatProofStep step;
+      step.index = proofIndex;
+      step.id = clause->number;
       std::string rendered;
       if (satClauseSexprForKernel(clause, rendered)) {
-        fields.push_back(prefix + "_clause=" + rendered);
+        step.hasClause = true;
+        step.clause = MegalodonKernelSyntax::clause(rendered);
       }
       SAT::SATInference* inference = clause->inference();
       if (inference == nullptr) {
-        fields.push_back(prefix + "_kind=unknown");
+        step.kind = "unknown";
+        refutation.proofSteps.push_back(step);
         ++proofIndex;
         continue;
       }
       switch (inference->getType()) {
         case SAT::SATInference::FO_CONVERSION: {
-          fields.push_back(prefix + "_kind=input");
+          step.kind = "input";
           Kernel::Unit* origin = inference->foConversion()->getOrigin();
           if (origin != nullptr) {
-            fields.push_back(prefix + "_origin_unit=u" + std::to_string(origin->number()));
+            step.hasOriginUnit = true;
+            step.originUnit = MegalodonKernelSyntax::unitRef("u" + std::to_string(origin->number()));
           }
           break;
         }
         case SAT::SATInference::PROP_INF: {
-          fields.push_back(prefix + "_kind=rup");
+          step.kind = "rup";
           SAT::PropInference* prop = static_cast<SAT::PropInference*>(inference);
           unsigned parentIndex = 0;
           for (SAT::SATClause* parent : iterTraits(prop->getPremises()->iter())) {
-            std::string parentPrefix = prefix + "_parent_" + std::to_string(parentIndex);
-            fields.push_back(parentPrefix + "_id=" + std::to_string(parent->number));
+            MegalodonKernelSyntax::RenderedKernelSatProofParent renderedParent;
+            renderedParent.index = parentIndex;
+            renderedParent.id = parent->number;
             if (satClauseSexprForKernel(parent, rendered)) {
-              fields.push_back(parentPrefix + "_clause=" + rendered);
+              renderedParent.hasClause = true;
+              renderedParent.clause = MegalodonKernelSyntax::clause(rendered);
             }
+            step.parents.push_back(renderedParent);
             ++parentIndex;
           }
-          fields.push_back(prefix + "_parent_count=" + std::to_string(parentIndex));
           break;
         }
       }
+      refutation.proofSteps.push_back(step);
       ++proofIndex;
     }
   };
@@ -12204,7 +12210,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const MegalodonKernelSyntax::RenderedKernelAvatarComponent* avatarComponent = nullptr,
         const MegalodonKernelSyntax::RenderedKernelAvatarDefinition* avatarDefinition = nullptr,
         const MegalodonKernelSyntax::RenderedKernelSplitDependency* splitDependency = nullptr,
-        const MegalodonKernelSyntax::RenderedKernelAvatarSplitStep* avatarSplit = nullptr) {
+        const MegalodonKernelSyntax::RenderedKernelAvatarSplitStep* avatarSplit = nullptr,
+        const MegalodonKernelSyntax::RenderedKernelAvatarRefutation* avatarRefutation = nullptr) {
     MegalodonKernelSyntax::MegalodonKernelStep step =
       MegalodonKernelSyntax::kernelStep(
         "u" + std::to_string(u->number()),
@@ -12247,6 +12254,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     if (avatarSplit != nullptr) {
       MegalodonKernelSyntax::setAvatarSplit(step, *avatarSplit);
+    }
+    if (avatarRefutation != nullptr) {
+      MegalodonKernelSyntax::setAvatarRefutation(step, *avatarRefutation);
     }
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
       MegalodonKernelSyntax::addPrimitiveExpansion(
@@ -13099,27 +13109,33 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     )
     && u->asClause()->length() == 0) {
     std::vector<std::string> kernelFields;
-    kernelFields.push_back("result_clause=(clause)");
+    MegalodonKernelSyntax::RenderedKernelAvatarRefutation avatarRefutation;
+    avatarRefutation.hasResultClause = true;
+    avatarRefutation.resultClause = MegalodonKernelSyntax::clause("(clause)");
     if (SAT::SATClause* refutation = u->inference().satPremise()) {
       std::string refutationClause;
       if (satClauseSexprForKernel(refutation, refutationClause)) {
-        kernelFields.push_back("sat_refutation_clause=" + refutationClause);
+        avatarRefutation.hasSatRefutationClause = true;
+        avatarRefutation.satRefutationClause = MegalodonKernelSyntax::clause(refutationClause);
       }
       unsigned satInputIndex = 0;
       SAT::SATInference::visitFOConversions(refutation, [&](SAT::SATClause* clause) {
-        std::string prefix = "sat_input_" + std::to_string(satInputIndex);
+        MegalodonKernelSyntax::RenderedKernelSatInput input;
+        input.index = satInputIndex;
         std::string rendered;
         if (satClauseSexprForKernel(clause, rendered)) {
-          kernelFields.push_back(prefix + "_clause=" + rendered);
+          input.hasClause = true;
+          input.clause = MegalodonKernelSyntax::clause(rendered);
         }
         Kernel::Unit* origin = clause->inference()->foConversion()->getOrigin();
         if (origin != nullptr) {
-          kernelFields.push_back(prefix + "_origin_unit=u" + std::to_string(origin->number()));
+          input.hasOriginUnit = true;
+          input.originUnit = MegalodonKernelSyntax::unitRef("u" + std::to_string(origin->number()));
         }
+        avatarRefutation.inputs.push_back(input);
         ++satInputIndex;
       });
-      kernelFields.push_back("sat_input_count=" + std::to_string(satInputIndex));
-      addKernelSatProofFields(kernelFields, refutation);
+      populateKernelSatProofSteps(avatarRefutation, refutation);
     } else {
       unsigned satInputIndex = 0;
       for (Kernel::Unit* parent : iterTraits(u->getParents())) {
@@ -13131,17 +13147,35 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         if (satExtra->clause == nullptr) {
           continue;
         }
-        std::string prefix = "sat_input_" + std::to_string(satInputIndex);
+        MegalodonKernelSyntax::RenderedKernelSatInput input;
+        input.index = satInputIndex;
         std::string rendered;
         if (satClauseSexprForKernel(satExtra->clause, rendered)) {
-          kernelFields.push_back(prefix + "_clause=" + rendered);
+          input.hasClause = true;
+          input.clause = MegalodonKernelSyntax::clause(rendered);
         }
-        kernelFields.push_back(prefix + "_origin_unit=u" + std::to_string(parent->number()));
+        input.hasOriginUnit = true;
+        input.originUnit = MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number()));
+        avatarRefutation.inputs.push_back(input);
         ++satInputIndex;
       }
-      kernelFields.push_back("sat_input_count=" + std::to_string(satInputIndex));
     }
-    emitKernelV1("avatar_refutation", kernelFields);
+    emitKernelV1(
+      "avatar_refutation",
+      kernelFields,
+      false,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      &avatarRefutation);
   }
 
   auto isNormalFormRule = [](Kernel::InferenceRule rule) {

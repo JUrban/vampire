@@ -252,6 +252,14 @@ void setAvatarSplit(
   step.avatarSplit = avatarSplit;
 }
 
+void setAvatarRefutation(
+  MegalodonKernelStep& step,
+  const RenderedKernelAvatarRefutation& avatarRefutation)
+{
+  step.hasAvatarRefutation = true;
+  step.avatarRefutation = avatarRefutation;
+}
+
 void setConclusion(
   MegalodonKernelStep& step,
   const RenderedKernelConclusion& conclusion)
@@ -901,6 +909,72 @@ void appendAvatarSplitFields(
   fields.push_back("parent_var_binding_count=" + std::to_string(split.parentVarBindings.size()));
 }
 
+void appendSatInputFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelSatInput& input)
+{
+  const std::string prefix = "sat_input_" + std::to_string(input.index);
+  if (input.hasClause) {
+    fields.push_back(prefix + "_clause=" + input.clause.sexpr);
+  }
+  if (input.hasOriginUnit) {
+    fields.push_back(prefix + "_origin_unit=" + input.originUnit.value);
+  }
+}
+
+void appendSatProofParentFields(
+  std::vector<std::string>& fields,
+  const std::string& stepPrefix,
+  const RenderedKernelSatProofParent& parent)
+{
+  const std::string prefix = stepPrefix + "_parent_" + std::to_string(parent.index);
+  fields.push_back(prefix + "_id=" + std::to_string(parent.id));
+  if (parent.hasClause) {
+    fields.push_back(prefix + "_clause=" + parent.clause.sexpr);
+  }
+}
+
+void appendSatProofStepFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelSatProofStep& step)
+{
+  const std::string prefix = "sat_proof_step_" + std::to_string(step.index);
+  fields.push_back(prefix + "_id=" + std::to_string(step.id));
+  if (step.hasClause) {
+    fields.push_back(prefix + "_clause=" + step.clause.sexpr);
+  }
+  fields.push_back(prefix + "_kind=" + step.kind);
+  if (step.hasOriginUnit) {
+    fields.push_back(prefix + "_origin_unit=" + step.originUnit.value);
+  }
+  for (const RenderedKernelSatProofParent& parent : step.parents) {
+    appendSatProofParentFields(fields, prefix, parent);
+  }
+  if (step.kind == "rup" || !step.parents.empty()) {
+    fields.push_back(prefix + "_parent_count=" + std::to_string(step.parents.size()));
+  }
+}
+
+void appendAvatarRefutationFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelAvatarRefutation& refutation)
+{
+  if (refutation.hasResultClause) {
+    fields.push_back("result_clause=" + refutation.resultClause.sexpr);
+  }
+  if (refutation.hasSatRefutationClause) {
+    fields.push_back("sat_refutation_clause=" + refutation.satRefutationClause.sexpr);
+  }
+  for (const RenderedKernelSatInput& input : refutation.inputs) {
+    appendSatInputFields(fields, input);
+  }
+  fields.push_back("sat_input_count=" + std::to_string(refutation.inputs.size()));
+  fields.push_back("sat_proof_step_count=" + std::to_string(refutation.proofSteps.size()));
+  for (const RenderedKernelSatProofStep& step : refutation.proofSteps) {
+    appendSatProofStepFields(fields, step);
+  }
+}
+
 }
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
@@ -945,6 +1019,9 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
   }
   if (step.hasAvatarSplit) {
     appendAvatarSplitFields(fields, step.avatarSplit);
+  }
+  if (step.hasAvatarRefutation) {
+    appendAvatarRefutationFields(fields, step.avatarRefutation);
   }
   if (step.hasConclusion) {
     appendConclusionFields(fields, step.conclusion);

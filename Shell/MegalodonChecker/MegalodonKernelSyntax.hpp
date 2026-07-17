@@ -232,6 +232,41 @@ struct RenderedKernelAvatarSplitStep {
   std::vector<RenderedKernelAvatarParentVarBinding> parentVarBindings;
 };
 
+struct RenderedKernelSatInput {
+  std::size_t index = 0;
+  bool hasClause = false;
+  RenderedKernelClause clause;
+  bool hasOriginUnit = false;
+  RenderedKernelUnitRef originUnit;
+};
+
+struct RenderedKernelSatProofParent {
+  std::size_t index = 0;
+  unsigned id = 0;
+  bool hasClause = false;
+  RenderedKernelClause clause;
+};
+
+struct RenderedKernelSatProofStep {
+  std::size_t index = 0;
+  unsigned id = 0;
+  bool hasClause = false;
+  RenderedKernelClause clause;
+  std::string kind;
+  bool hasOriginUnit = false;
+  RenderedKernelUnitRef originUnit;
+  std::vector<RenderedKernelSatProofParent> parents;
+};
+
+struct RenderedKernelAvatarRefutation {
+  bool hasResultClause = false;
+  RenderedKernelClause resultClause;
+  bool hasSatRefutationClause = false;
+  RenderedKernelClause satRefutationClause;
+  std::vector<RenderedKernelSatInput> inputs;
+  std::vector<RenderedKernelSatProofStep> proofSteps;
+};
+
 struct RenderedKernelPrimitiveParentSubstitution {
   std::size_t parentIndex = 0;
   RenderedKernelSubstitution substitution;
@@ -396,6 +431,8 @@ struct MegalodonKernelStep {
   RenderedKernelSplitDependency splitDependency;
   bool hasAvatarSplit = false;
   RenderedKernelAvatarSplitStep avatarSplit;
+  bool hasAvatarRefutation = false;
+  RenderedKernelAvatarRefutation avatarRefutation;
   bool hasConclusion = false;
   RenderedKernelConclusion conclusion;
   bool hasParents = false;
@@ -491,6 +528,10 @@ void setSplitDependency(
 void setAvatarSplit(
   MegalodonKernelStep& step,
   const RenderedKernelAvatarSplitStep& avatarSplit);
+
+void setAvatarRefutation(
+  MegalodonKernelStep& step,
+  const RenderedKernelAvatarRefutation& avatarRefutation);
 
 void setConclusion(
   MegalodonKernelStep& step,
