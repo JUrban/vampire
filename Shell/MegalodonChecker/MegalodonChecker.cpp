@@ -5836,6 +5836,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
 
     std::string stepBase = "u" + std::to_string(unit->number());
     std::vector<std::string> steps;
+    std::vector<MegalodonKernelSyntax::PrimitiveStep> localPrimitiveSteps;
     std::string parentIds[2];
     for (std::size_t parentIndex = 0; parentIndex < 2; ++parentIndex) {
       std::string parentId = "u" + std::to_string(parents[parentIndex]->number());
@@ -5859,6 +5860,14 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
           return false;
         }
         steps.push_back(substituteStep);
+        localPrimitiveSteps.push_back(
+          MegalodonKernelSyntax::primitiveClauseStep(
+            "substitute",
+            substituteId,
+            {parentId},
+            clause,
+            {{"substitution", subst}},
+            substituteStep));
         parentId = substituteId;
       }
       parentIds[parentIndex] = parentId;
@@ -5877,6 +5886,14 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
       + " (parents " + sexprQuote(parentIds[leftIndex]) + " " + sexprQuote(parentIds[rightIndex]) + ")"
       + " (pivot " + std::to_string(leftPivotIndex) + " " + std::to_string(rightPivotIndex) + ")"
       + " (result " + conclusion + "))");
+    localPrimitiveSteps.push_back(
+      MegalodonKernelSyntax::primitiveClauseStep(
+        "resolve",
+        stepBase,
+        {parentIds[leftIndex], parentIds[rightIndex]},
+        conclusion,
+        {{"pivot_left", std::to_string(leftPivotIndex)}, {"pivot_right", std::to_string(rightPivotIndex)}},
+        steps.back()));
 
     std::ostringstream out;
     for (std::size_t i = 0; i < steps.size(); ++i) {
@@ -5886,10 +5903,13 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
       out << steps[i];
     }
     rendered = out.str();
+    if (primitiveSteps != nullptr) {
+      *primitiveSteps = localPrimitiveSteps;
+    }
     return true;
   };
 
-  if (hasReplaySubstitutions && extra != nullptr && primitiveSteps == nullptr) {
+  if (hasReplaySubstitutions && extra != nullptr) {
     if (rule == Kernel::InferenceRule::RESOLUTION) {
       const auto* selected = static_cast<const Inferences::TwoLiteralInferenceExtra*>(extra);
       if (orientation(selected->selectedLiteral.selectedLiteral, 0, selected->otherLiteral, 1, result)) {
