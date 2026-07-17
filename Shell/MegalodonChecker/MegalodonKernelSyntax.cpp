@@ -285,6 +285,9 @@ bool appendPrimitiveExpansionChainFields(
     && primitiveSteps.back().id != expectedFinalId) {
     return false;
   }
+  if (!primitiveSteps.back().hasResultClause) {
+    return false;
+  }
   std::vector<std::string> requiredRules;
   for (const auto& step : primitiveSteps) {
     if (step.rule.empty() || step.id.empty() || step.rendered.empty()) {
@@ -300,6 +303,8 @@ bool appendPrimitiveExpansionChainFields(
   if (!requiredRules.empty()) {
     fields.push_back("primitive_expansion_requires=" + requiredRules.front());
   }
+  fields.push_back(
+    "primitive_expansion_final_result_clause=" + primitiveSteps.back().resultClause);
   fields.push_back("primitive_expansion_step_count=" + std::to_string(primitiveSteps.size()));
   for (std::size_t i = 0; i < primitiveSteps.size(); ++i) {
     fields.push_back(
