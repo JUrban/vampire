@@ -47,6 +47,29 @@ struct RenderedKernelLiteralSelection {
   std::string substituted;
 };
 
+struct RenderedKernelRewrite {
+  bool hasTargetSubstituted = false;
+  std::string targetSubstituted;
+  bool hasEqualitySubstituted = false;
+  std::string equalitySubstituted;
+  bool hasTargetLocation = false;
+  int targetParentIndex = -1;
+  int targetLiteralIndex = -1;
+  bool hasEqualityLocation = false;
+  int equalityParentIndex = -1;
+  int equalityLiteralIndex = -1;
+  bool hasDirection = false;
+  std::string direction;
+  bool hasPosition = false;
+  std::string position;
+  bool hasFrom = false;
+  std::string from;
+  bool hasTo = false;
+  std::string to;
+  bool hasRewrittenTarget = false;
+  std::string rewrittenTarget;
+};
+
 struct MegalodonKernelStep {
   std::string id;
   std::string rule;
@@ -100,6 +123,10 @@ void setParentList(
 void appendLiteralSelection(
   std::vector<std::string>& fields,
   const RenderedKernelLiteralSelection& selection);
+
+void appendRewrite(
+  std::vector<std::string>& fields,
+  const RenderedKernelRewrite& rewrite);
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step);
 

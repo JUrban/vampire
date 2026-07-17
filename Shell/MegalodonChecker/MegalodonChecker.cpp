@@ -11974,17 +11974,23 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         return;
       }
 
+      MegalodonKernelSyntax::RenderedKernelRewrite rewrite;
+      rewrite.hasTargetLocation = true;
+      rewrite.targetParentIndex = targetParent;
+      rewrite.targetLiteralIndex = targetIndex;
+      rewrite.hasEqualityLocation = true;
+      rewrite.equalityParentIndex = equalityParent;
+      rewrite.equalityLiteralIndex = equalityIndex;
+
       std::string rendered;
       if (literalSexprForKernel(targetSubstituted, rendered)) {
-        fields.push_back("target_substituted=" + rendered);
+        rewrite.hasTargetSubstituted = true;
+        rewrite.targetSubstituted = rendered;
       }
       if (literalSexprForKernel(equalitySubstituted, rendered)) {
-        fields.push_back("equality_substituted=" + rendered);
+        rewrite.hasEqualitySubstituted = true;
+        rewrite.equalitySubstituted = rendered;
       }
-      fields.push_back("target_parent_index=" + std::to_string(targetParent));
-      fields.push_back("target_literal_index=" + std::to_string(targetIndex));
-      fields.push_back("equality_parent_index=" + std::to_string(equalityParent));
-      fields.push_back("equality_literal_index=" + std::to_string(equalityIndex));
 
       for (unsigned direction = 0; direction < 2; ++direction) {
         Kernel::TermList from = *equalitySubstituted->nthArgument(direction == 0 ? 0 : 1);
@@ -11999,13 +12005,23 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               rewrittenTarget)) {
           continue;
         }
-        fields.push_back("rewrite_direction=" + std::string(direction == 0 ? "forward" : "backward"));
-        fields.push_back("rewrite_position=" + certificatePositionSexpr(position));
-        addKernelTermField(fields, "from", from);
-        addKernelTermField(fields, "to", to);
-        if (literalSexprForKernel(rewrittenTarget, rendered)) {
-          fields.push_back("rewritten_target=" + rendered);
+        rewrite.hasDirection = true;
+        rewrite.direction = direction == 0 ? "forward" : "backward";
+        rewrite.hasPosition = true;
+        rewrite.position = certificatePositionSexpr(position);
+        if (termSexprForKernel(from, rendered)) {
+          rewrite.hasFrom = true;
+          rewrite.from = rendered;
         }
+        if (termSexprForKernel(to, rendered)) {
+          rewrite.hasTo = true;
+          rewrite.to = rendered;
+        }
+        if (literalSexprForKernel(rewrittenTarget, rendered)) {
+          rewrite.hasRewrittenTarget = true;
+          rewrite.rewrittenTarget = rendered;
+        }
+        MegalodonKernelSyntax::appendRewrite(fields, rewrite);
         return;
       }
     };

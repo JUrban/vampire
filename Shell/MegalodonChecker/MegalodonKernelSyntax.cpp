@@ -134,6 +134,41 @@ void appendLiteralSelection(
   }
 }
 
+void appendRewrite(
+  std::vector<std::string>& fields,
+  const RenderedKernelRewrite& rewrite)
+{
+  if (rewrite.hasTargetSubstituted) {
+    fields.push_back("target_substituted=" + rewrite.targetSubstituted);
+  }
+  if (rewrite.hasEqualitySubstituted) {
+    fields.push_back("equality_substituted=" + rewrite.equalitySubstituted);
+  }
+  if (rewrite.hasTargetLocation) {
+    fields.push_back("target_parent_index=" + std::to_string(rewrite.targetParentIndex));
+    fields.push_back("target_literal_index=" + std::to_string(rewrite.targetLiteralIndex));
+  }
+  if (rewrite.hasEqualityLocation) {
+    fields.push_back("equality_parent_index=" + std::to_string(rewrite.equalityParentIndex));
+    fields.push_back("equality_literal_index=" + std::to_string(rewrite.equalityLiteralIndex));
+  }
+  if (rewrite.hasDirection) {
+    fields.push_back("rewrite_direction=" + rewrite.direction);
+  }
+  if (rewrite.hasPosition) {
+    fields.push_back("rewrite_position=" + rewrite.position);
+  }
+  if (rewrite.hasFrom) {
+    fields.push_back("from=" + rewrite.from);
+  }
+  if (rewrite.hasTo) {
+    fields.push_back("to=" + rewrite.to);
+  }
+  if (rewrite.hasRewrittenTarget) {
+    fields.push_back("rewritten_target=" + rewrite.rewrittenTarget);
+  }
+}
+
 namespace {
 
 bool hasFieldWithPrefix(
