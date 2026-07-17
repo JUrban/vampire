@@ -14466,11 +14466,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           certificateUnitResultingResolutionStepsSexpr(u, primitiveExpansion)
           && primitiveExpansion.find("(unit_resulting_resolution ") == std::string::npos
           && primitiveExpansion.find("(resolve \"" + unitPrefix + "_resolve") != std::string::npos;
-        if (hasResolvePrimitiveExpansion) {
-          MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
+        if (hasResolvePrimitiveExpansion
+          && MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
             kernelFields,
             primitiveExpansion,
-            "unit_resulting_resolution");
+            "unit_resulting_resolution",
+            unitPrefix)) {
           emitKernelV1(
             "unit_resulting_resolution",
             kernelFields,

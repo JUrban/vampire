@@ -180,7 +180,8 @@ void appendPrimitiveExpansion(
 bool appendPrimitiveExpansionChainFields(
   std::vector<std::string>& fields,
   const std::string& expansion,
-  const std::string& finalRule)
+  const std::string& finalRule,
+  const std::string& expectedFinalId)
 {
   std::vector<std::pair<std::string, std::string>> primitiveSteps;
   std::vector<std::string> requiredRules;
@@ -229,6 +230,10 @@ bool appendPrimitiveExpansionChainFields(
     }
   }
   if (primitiveSteps.empty()) {
+    return false;
+  }
+  if (!expectedFinalId.empty()
+    && primitiveSteps.back().second != expectedFinalId) {
     return false;
   }
   fields.push_back("primitive_expansion_step_count=" + std::to_string(primitiveSteps.size()));
