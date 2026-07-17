@@ -496,33 +496,34 @@ bool MegalodonChecker::certificateInstantiationKernelMetadataSexpr(
   const std::string parentClause = certificateClauseSexprFromRenderedLiterals(parentLiterals);
   const std::string resultClause = certificateClauseSexprFromRenderedLiterals(resultLiterals);
 
-  std::vector<std::string> fields;
-  fields.push_back("schema=" + MegalodonKernelSyntax::schema());
-  fields.push_back("rule=instantiation");
-  MegalodonKernelSyntax::appendPrimitiveExpansion(
-    fields,
+  MegalodonKernelSyntax::MegalodonKernelStep step =
+    MegalodonKernelSyntax::kernelStep(id, "instantiation");
+  MegalodonKernelSyntax::addPrimitiveExpansion(
+    step,
     MegalodonKernelSyntax::primitiveExpansion(id, "substitute"));
-  fields.push_back("conclusion_unit=" + id);
-  fields.push_back("result_clause=" + resultClause);
-  fields.push_back("conclusion_clause=" + resultClause);
-  fields.push_back("substitution=" + substitution);
-  fields.push_back("result_literal_count=" + std::to_string(resultLiterals.size()));
+  std::vector<std::string>& stepFields = step.fields;
+  stepFields.push_back("conclusion_unit=" + id);
+  stepFields.push_back("result_clause=" + resultClause);
+  stepFields.push_back("conclusion_clause=" + resultClause);
+  stepFields.push_back("substitution=" + substitution);
+  stepFields.push_back("result_literal_count=" + std::to_string(resultLiterals.size()));
   for (std::size_t i = 0; i < resultLiterals.size(); ++i) {
-    fields.push_back("result_literal_" + std::to_string(i) + "=" + resultLiterals[i]);
+    stepFields.push_back("result_literal_" + std::to_string(i) + "=" + resultLiterals[i]);
   }
-  fields.push_back("parent_count=1");
-  fields.push_back("parent_0_unit=" + parentId);
-  fields.push_back("parent_0_clause=" + parentClause);
-  fields.push_back("parent_0_literal_count=" + std::to_string(parentLiterals.size()));
+  stepFields.push_back("parent_count=1");
+  stepFields.push_back("parent_0_unit=" + parentId);
+  stepFields.push_back("parent_0_clause=" + parentClause);
+  stepFields.push_back("parent_0_literal_count=" + std::to_string(parentLiterals.size()));
   for (std::size_t i = 0; i < parentLiterals.size(); ++i) {
-    fields.push_back("parent_0_literal_" + std::to_string(i) + "=" + parentLiterals[i]);
+    stepFields.push_back("parent_0_literal_" + std::to_string(i) + "=" + parentLiterals[i]);
   }
-  fields.push_back("parent_0_substitution=" + substitution);
-  fields.push_back("parent_0_substituted_literal_count=" + std::to_string(resultLiterals.size()));
+  stepFields.push_back("parent_0_substitution=" + substitution);
+  stepFields.push_back("parent_0_substituted_literal_count=" + std::to_string(resultLiterals.size()));
   for (std::size_t i = 0; i < resultLiterals.size(); ++i) {
-    fields.push_back("parent_0_substituted_literal_" + std::to_string(i) + "=" + resultLiterals[i]);
+    stepFields.push_back("parent_0_substituted_literal_" + std::to_string(i) + "=" + resultLiterals[i]);
   }
 
+  const std::vector<std::string> fields = MegalodonKernelSyntax::kernelStepFields(step);
   std::ostringstream out;
   out << "(step_extra " << sexprQuote(id) << " \"kernel_v1\" (";
   for (std::size_t i = 0; i < fields.size(); ++i) {
@@ -12172,17 +12173,22 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       }
     };
   auto emitKernelV1 = [&](const std::string& kernelRule, std::vector<std::string> fields) {
+    MegalodonKernelSyntax::MegalodonKernelStep step =
+      MegalodonKernelSyntax::kernelStep(
+        "u" + std::to_string(u->number()),
+        kernelRule);
+    MegalodonKernelSyntax::addFields(step, fields);
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
-      MegalodonKernelSyntax::appendPrimitiveExpansion(
-        fields,
+      MegalodonKernelSyntax::addPrimitiveExpansion(
+        step,
         MegalodonKernelSyntax::primitiveExpansion(
           "u" + std::to_string(u->number()),
           primitiveRule));
     };
-    if (MegalodonKernelSyntax::appendFixedPrimitiveExpansionForRule(
-          fields,
-          "u" + std::to_string(u->number()),
-          kernelRule)) {
+    const auto fixedPrimitives =
+      MegalodonKernelSyntax::requiredPrimitivesForRule(kernelRule);
+    if (fixedPrimitives.size() == 1) {
+      addPrimitiveExpansion(fixedPrimitives[0]);
     } else if (kernelRule == "cnf_clause") {
       std::string primitiveStep;
       if (certificateCnfLiteralStepSexpr(u, primitiveStep)) {
@@ -12220,8 +12226,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             : "equality_factoring");
       }
     }
-    fields.insert(fields.begin(), "rule=" + kernelRule);
-    fields.insert(fields.begin(), "schema=" + MegalodonKernelSyntax::schema());
+    fields = MegalodonKernelSyntax::kernelStepFields(step);
     addKernelConclusionFields(fields);
     addKernelParentFields(fields);
     emit("kernel_v1", fields);

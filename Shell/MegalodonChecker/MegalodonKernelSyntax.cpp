@@ -62,6 +62,49 @@ void appendPrimitiveExpansion(
   fields.push_back("primitive_expansion_requires=" + expansion.requiredRule);
 }
 
+MegalodonKernelStep kernelStep(
+  const std::string& id,
+  const std::string& rule)
+{
+  MegalodonKernelStep step;
+  step.id = id;
+  step.rule = rule;
+  return step;
+}
+
+void addField(
+  MegalodonKernelStep& step,
+  const std::string& field)
+{
+  step.fields.push_back(field);
+}
+
+void addFields(
+  MegalodonKernelStep& step,
+  const std::vector<std::string>& fields)
+{
+  step.fields.insert(step.fields.end(), fields.begin(), fields.end());
+}
+
+void addPrimitiveExpansion(
+  MegalodonKernelStep& step,
+  const PrimitiveExpansion& expansion)
+{
+  step.primitiveExpansions.push_back(expansion);
+}
+
+std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
+{
+  std::vector<std::string> fields;
+  fields.push_back("schema=" + schema());
+  fields.push_back("rule=" + step.rule);
+  for (const PrimitiveExpansion& expansion : step.primitiveExpansions) {
+    appendPrimitiveExpansion(fields, expansion);
+  }
+  fields.insert(fields.end(), step.fields.begin(), step.fields.end());
+  return fields;
+}
+
 bool appendFixedPrimitiveExpansionForRule(
   std::vector<std::string>& fields,
   const std::string& prefix,
