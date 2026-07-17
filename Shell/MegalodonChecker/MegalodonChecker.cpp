@@ -13735,6 +13735,75 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       }
       MegalodonKernelSyntax::RenderedKernelRectifyRenamings rectifyRenamings;
       rectifyRenamings.reportedCount = rectifyInfo->renamings.size();
+      std::map<std::string, std::string> rectifyVariableMap;
+      auto addRectifyVariableMapEntry =
+        [&](unsigned sourceVar, unsigned targetVar, Kernel::TermList sourceSort, Kernel::TermList targetSort) {
+          std::string sourceType;
+          std::string targetType;
+          if (!sortToMegalodon(sourceSort, sourceType)
+              || !sortToMegalodon(targetSort, targetType)
+              || sourceType != targetType) {
+            return;
+          }
+          const std::string sourceName = variableName(sourceVar);
+          const std::string targetName = variableName(targetVar);
+          if (sourceName == targetName) {
+            return;
+          }
+          auto it = rectifyVariableMap.find(sourceName);
+          if (it == rectifyVariableMap.end()) {
+            rectifyVariableMap[sourceName] = targetName;
+          } else if (it->second != targetName) {
+            rectifyVariableMap[sourceName] = "";
+          }
+        };
+      std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned)> collectRectifyVariableMap;
+      collectRectifyVariableMap =
+        [&](Kernel::Formula* source, Kernel::Formula* target, unsigned depth) {
+          if (source == nullptr || target == nullptr || depth > 64) {
+            return;
+          }
+          if (source->connective() != target->connective()) {
+            return;
+          }
+          switch (source->connective()) {
+            case Kernel::FORALL:
+            case Kernel::EXISTS: {
+              Kernel::VSList::Iterator sourceVars(source->vars());
+              Kernel::VSList::Iterator targetVars(target->vars());
+              while (sourceVars.hasNext() && targetVars.hasNext()) {
+                auto sourceVar = sourceVars.next();
+                auto targetVar = targetVars.next();
+                addRectifyVariableMapEntry(sourceVar.first, targetVar.first, sourceVar.second, targetVar.second);
+              }
+              if (sourceVars.hasNext() || targetVars.hasNext()) {
+                return;
+              }
+              collectRectifyVariableMap(source->qarg(), target->qarg(), depth + 1);
+              return;
+            }
+            case Kernel::AND:
+            case Kernel::OR: {
+              Kernel::FormulaList::Iterator sourceArgs(source->args());
+              Kernel::FormulaList::Iterator targetArgs(target->args());
+              while (sourceArgs.hasNext() && targetArgs.hasNext()) {
+                collectRectifyVariableMap(sourceArgs.next(), targetArgs.next(), depth + 1);
+              }
+              return;
+            }
+            case Kernel::IMP:
+            case Kernel::IFF:
+            case Kernel::XOR:
+              collectRectifyVariableMap(source->left(), target->left(), depth + 1);
+              collectRectifyVariableMap(source->right(), target->right(), depth + 1);
+              return;
+            case Kernel::NOT:
+              collectRectifyVariableMap(source->uarg(), target->uarg(), depth + 1);
+              return;
+            default:
+              return;
+          }
+        };
       unsigned kernelRenamingIndex = 0;
       const unsigned kernelRenamingLimit = 64;
       for (auto [newFormula, formulaAndSubst] : rectifyInfo->renamings) {
@@ -13743,6 +13812,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           break;
         }
         auto [formula, substitution] = formulaAndSubst;
+        collectRectifyVariableMap(formula, newFormula, 0);
         MegalodonKernelSyntax::RenderedKernelRectifyRenaming renaming;
         renaming.index = kernelRenamingIndex;
         std::string renamingSource;
@@ -13762,6 +13832,25 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         }
         rectifyRenamings.renamings.push_back(renaming);
         ++kernelRenamingIndex;
+      }
+      std::vector<std::string> variableMapItems;
+      for (const auto& entry : rectifyVariableMap) {
+        if (entry.second.empty()) {
+          variableMapItems.clear();
+          break;
+        }
+        variableMapItems.push_back(
+          "(" + sexprQuote(entry.first) + " (TMH " + sexprQuote(entry.second) + "))");
+      }
+      if (!variableMapItems.empty()) {
+        std::ostringstream variableMap;
+        variableMap << "(subst";
+        for (const std::string& item : variableMapItems) {
+          variableMap << " " << item;
+        }
+        variableMap << ")";
+        rectifyRenamings.hasVariableMap = true;
+        rectifyRenamings.variableMap = MegalodonKernelSyntax::substitution(variableMap.str());
       }
       emitKernelV1(
         "rectify_formula",

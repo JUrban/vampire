@@ -375,6 +375,8 @@ struct RenderedKernelRectifyRenamings {
   std::size_t reportedCount = 0;
   std::vector<RenderedKernelRectifyRenaming> renamings;
   bool truncated = false;
+  bool hasVariableMap = false;
+  RenderedKernelSubstitution variableMap;
 };
 
 struct RenderedKernelCnfClause {

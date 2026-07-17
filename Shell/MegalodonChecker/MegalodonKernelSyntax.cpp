@@ -821,6 +821,9 @@ void appendRectifyRenamingFields(
   const RenderedKernelRectifyRenamings& renamings)
 {
   fields.push_back("renaming_count=" + std::to_string(renamings.reportedCount));
+  if (renamings.hasVariableMap) {
+    fields.push_back("rectify_variable_map=" + renamings.variableMap.sexpr);
+  }
   for (const RenderedKernelRectifyRenaming& renaming : renamings.renamings) {
     const std::string prefix = "renaming_" + std::to_string(renaming.index);
     if (renaming.hasSource) {
