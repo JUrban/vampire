@@ -441,6 +441,9 @@ struct MegalodonKernelStep {
 
 const std::string& schema();
 
+std::vector<std::string> structuralRules();
+std::vector<std::string> supportedRules();
+bool isSupportedRule(const std::string& rule);
 std::vector<std::string> requiredPrimitivesForRule(const std::string& rule);
 
 RenderedKernelUnitRef unitRef(const std::string& value);

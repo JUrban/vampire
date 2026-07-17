@@ -20,6 +20,7 @@
 #include "Parse/TPTP.hpp"
 #include "Lib/DHMap.hpp"
 #include "Lib/Environment.hpp"
+#include "Lib/Exception.hpp"
 #include "Lib/SharedSet.hpp"
 #include "SAT/SATInference.hpp"
 #include "SATSubsumption/SATSubsumptionAndResolution.hpp"
@@ -12212,6 +12213,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const MegalodonKernelSyntax::RenderedKernelSplitDependency* splitDependency = nullptr,
         const MegalodonKernelSyntax::RenderedKernelAvatarSplitStep* avatarSplit = nullptr,
         const MegalodonKernelSyntax::RenderedKernelAvatarRefutation* avatarRefutation = nullptr) {
+    if (!MegalodonKernelSyntax::isSupportedRule(kernelRule)) {
+      INVALID_OPERATION("unsupported Megalodon kernel_v1 rule: " + kernelRule);
+    }
     MegalodonKernelSyntax::MegalodonKernelStep step =
       MegalodonKernelSyntax::kernelStep(
         "u" + std::to_string(u->number()),

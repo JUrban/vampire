@@ -43,6 +43,14 @@ spine. This increases the importance of emitting exact source roles and hashes:
 incorrect hashes will now prevent the corresponding source from being
 discharged into the original context.
 
+Sixth post-audit note, 2026-07-17: `MegalodonKernelSyntax` now exposes the
+supported `kernel_v1` rule vocabulary and distinguishes structural migration
+rules from primitive-contract rules. `emitKernelV1` fails before printing if a
+caller tries to emit an unsupported rule name. This is not yet the full
+primitive proof IR requested by the audit, but it closes the immediate
+vocabulary loophole: new kernel metadata cannot be added silently by ad hoc
+string emission.
+
 ## Decision
 
 The previous `--proof megalodon` rich-export experiment is retained as a
@@ -71,6 +79,12 @@ source/preprocess transformation records, printed by one canonical printer.
 Macro-specific code should build that IR first. Direct string assembly in
 individual inference cases is now a legacy migration technique, not the target
 architecture.
+
+The branch currently has a rendering-level `MegalodonKernelStep` structure.
+The remaining audit gap is to make macro handlers build a normalized list of
+primitive steps first, then print that list. The rendering structure alone
+does not count as the Prover9/Ivy-style IR until it becomes the required path
+for macro lowering.
 
 ## Initial Export Fragment
 

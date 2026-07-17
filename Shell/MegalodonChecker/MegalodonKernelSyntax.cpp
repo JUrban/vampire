@@ -12,6 +12,15 @@ const std::string& schema()
   return value;
 }
 
+std::vector<std::string> structuralRules()
+{
+  return {
+    "predicate_definition",
+    "predicate_definition_fold",
+    "predicate_definition_fold_chain",
+  };
+}
+
 std::vector<std::string> requiredPrimitivesForRule(const std::string& rule)
 {
   static const std::vector<std::pair<std::string, std::vector<std::string>>> contracts = {
@@ -45,6 +54,48 @@ std::vector<std::string> requiredPrimitivesForRule(const std::string& rule)
     }
   }
   return {};
+}
+
+std::vector<std::string> supportedRules()
+{
+  std::vector<std::string> rules = structuralRules();
+  static const std::vector<std::string> contractRules = {
+    "fool_formula",
+    "rectify_formula",
+    "formula_normalize",
+    "skolemize",
+    "cnf_clause",
+    "formula_copy",
+    "fool_exhaustiveness",
+    "truth_conflict",
+    "equality_resolution",
+    "equality_factoring",
+    "avatar_component",
+    "avatar_split",
+    "avatar_refutation",
+    "avatar_definition",
+    "split_dependency",
+    "superposition",
+    "rewrite",
+    "subsumption_resolution",
+    "unit_resulting_resolution",
+    "resolution",
+    "factoring",
+    "instantiation",
+  };
+  rules.insert(rules.end(), contractRules.begin(), contractRules.end());
+  return rules;
+}
+
+bool isSupportedRule(const std::string& rule)
+{
+  const auto rules = supportedRules();
+  for (const std::string& supported : rules) {
+    if (supported == rule) {
+      return true;
+    }
+  }
+  return false;
 }
 
 RenderedKernelUnitRef unitRef(const std::string& value)
