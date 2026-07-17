@@ -160,6 +160,14 @@ void addPrimitiveParentSubstitution(
   step.primitiveParentSubstitutions.push_back(substitution);
 }
 
+void setSubsumptionResolutionPivot(
+  MegalodonKernelStep& step,
+  const RenderedKernelSubsumptionResolutionPivot& pivot)
+{
+  step.hasSubsumptionResolutionPivot = true;
+  step.subsumptionResolutionPivot = pivot;
+}
+
 void setConclusion(
   MegalodonKernelStep& step,
   const RenderedKernelConclusion& conclusion)
@@ -348,6 +356,31 @@ void appendPrimitiveParentSubstitutionFields(
   }
 }
 
+void appendSubsumptionResolutionPivotFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelSubsumptionResolutionPivot& pivot)
+{
+  fields.push_back("main_parent_index=" + std::to_string(pivot.mainParentIndex));
+  fields.push_back("side_parent_index=" + std::to_string(pivot.sideParentIndex));
+  if (pivot.hasSideSubstitution) {
+    fields.push_back("side_substitution=" + pivot.sideSubstitution.sexpr);
+  }
+  if (pivot.hasSidePivot) {
+    fields.push_back("side_pivot=" + pivot.sidePivot.sexpr);
+  }
+  if (pivot.hasSidePivotLocation) {
+    fields.push_back("side_pivot_parent_index=" + std::to_string(pivot.sidePivotParentIndex));
+    fields.push_back("side_pivot_literal_index=" + std::to_string(pivot.sidePivotLiteralIndex));
+    fields.push_back("side_pivot_parent_unit=" + pivot.sidePivotParentUnit.value);
+  }
+  if (pivot.hasSidePivotSubstituted) {
+    fields.push_back("side_pivot_substituted=" + pivot.sidePivotSubstituted.sexpr);
+  }
+  if (pivot.sidePivotMatchesBySymmetry) {
+    fields.push_back("side_pivot_matches_by_symmetry=1");
+  }
+}
+
 }
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
@@ -362,6 +395,9 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
     fields.push_back(field.rendered);
   }
   appendPrimitiveParentSubstitutionFields(fields, step.primitiveParentSubstitutions);
+  if (step.hasSubsumptionResolutionPivot) {
+    appendSubsumptionResolutionPivotFields(fields, step.subsumptionResolutionPivot);
+  }
   if (step.hasConclusion) {
     appendConclusionFields(fields, step.conclusion);
   }

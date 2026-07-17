@@ -12193,7 +12193,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
   auto emitKernelV1 =
     [&](const std::string& kernelRule,
         std::vector<std::string> fields,
-        bool includePrimitiveParentSubstitutions = false) {
+        bool includePrimitiveParentSubstitutions = false,
+        const MegalodonKernelSyntax::RenderedKernelSubsumptionResolutionPivot* subsumptionPivot = nullptr) {
     MegalodonKernelSyntax::MegalodonKernelStep step =
       MegalodonKernelSyntax::kernelStep(
         "u" + std::to_string(u->number()),
@@ -12201,6 +12202,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     MegalodonKernelSyntax::addFields(step, fields);
     if (includePrimitiveParentSubstitutions) {
       addKernelPrimitiveParentSubstitutions(step);
+    }
+    if (subsumptionPivot != nullptr) {
+      MegalodonKernelSyntax::setSubsumptionResolutionPivot(step, *subsumptionPivot);
     }
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
       MegalodonKernelSyntax::addPrimitiveExpansion(
@@ -14492,14 +14496,17 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       const auto* selected = static_cast<const Inferences::LiteralInferenceExtra*>(extra);
       {
         std::vector<std::string> kernelFields;
+        MegalodonKernelSyntax::RenderedKernelSubsumptionResolutionPivot subsumptionPivot;
+        bool hasSubsumptionPivot = false;
         addKernelLiteralFields(kernelFields, "selected", selected->selectedLiteral, 0);
         if (parentClauses.size() == 2) {
           auto [selectedParentIndex, selectedLiteralIndex] = literalPosition(selected->selectedLiteral, 0);
           if (selectedParentIndex >= 0 && selectedLiteralIndex >= 0) {
             std::size_t mainParentIndex = static_cast<std::size_t>(selectedParentIndex);
             std::size_t sideParentIndex = mainParentIndex == 0 ? 1 : 0;
-            kernelFields.push_back("main_parent_index=" + std::to_string(mainParentIndex));
-            kernelFields.push_back("side_parent_index=" + std::to_string(sideParentIndex));
+            subsumptionPivot.mainParentIndex = mainParentIndex;
+            subsumptionPivot.sideParentIndex = sideParentIndex;
+            hasSubsumptionPivot = true;
             SATSubsumption::SATSubsumptionAndResolution satSR;
             if (satSR.checkSubsumptionResolutionWithLiteral(
                   parentClauses[sideParentIndex],
@@ -14508,7 +14515,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               Kernel::Substitution substitution = satSR.getBindingsForSubsumptionResolutionWithLiteral();
               std::string sideSubstitution;
               if (substitutionSexprForKernel(substitution, sideSubstitution)) {
-                kernelFields.push_back("side_substitution=" + sideSubstitution);
+                subsumptionPivot.hasSideSubstitution = true;
+                subsumptionPivot.sideSubstitution =
+                  MegalodonKernelSyntax::substitution(sideSubstitution);
               }
               for (unsigned sideLiteralIndex = 0;
                    sideLiteralIndex < parentClauses[sideParentIndex]->length();
@@ -14544,16 +14553,21 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                 std::string sidePivot;
                 std::string sidePivotSubstituted;
                 if (literalSexprForKernel(sideLiteral, sidePivot)) {
-                  kernelFields.push_back("side_pivot=" + sidePivot);
+                  subsumptionPivot.hasSidePivot = true;
+                  subsumptionPivot.sidePivot = MegalodonKernelSyntax::literal(sidePivot);
                 }
-                kernelFields.push_back("side_pivot_parent_index=" + std::to_string(sideParentIndex));
-                kernelFields.push_back("side_pivot_literal_index=" + std::to_string(sideLiteralIndex));
-                kernelFields.push_back("side_pivot_parent_unit=u" + std::to_string(parentClauses[sideParentIndex]->number()));
+                subsumptionPivot.hasSidePivotLocation = true;
+                subsumptionPivot.sidePivotParentIndex = sideParentIndex;
+                subsumptionPivot.sidePivotLiteralIndex = sideLiteralIndex;
+                subsumptionPivot.sidePivotParentUnit =
+                  MegalodonKernelSyntax::unitRef("u" + std::to_string(parentClauses[sideParentIndex]->number()));
                 if (literalSexprForKernel(sideSubstituted, sidePivotSubstituted)) {
-                  kernelFields.push_back("side_pivot_substituted=" + sidePivotSubstituted);
+                  subsumptionPivot.hasSidePivotSubstituted = true;
+                  subsumptionPivot.sidePivotSubstituted =
+                    MegalodonKernelSyntax::literal(sidePivotSubstituted);
                 }
                 if (matchesBySymmetry) {
-                  kernelFields.push_back("side_pivot_matches_by_symmetry=1");
+                  subsumptionPivot.sidePivotMatchesBySymmetry = true;
                 }
                 break;
               }
@@ -14574,7 +14588,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           u->inference().rule() == Kernel::InferenceRule::EQUALITY_RESOLUTION
             ? "equality_resolution"
             : "subsumption_resolution",
-          kernelFields);
+          kernelFields,
+          false,
+          hasSubsumptionPivot ? &subsumptionPivot : nullptr);
       }
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(selected->selectedLiteral));

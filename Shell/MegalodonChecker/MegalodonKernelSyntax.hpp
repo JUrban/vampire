@@ -124,12 +124,30 @@ struct RenderedKernelPrimitiveParentSubstitution {
   RenderedKernelSubstitution substitution;
 };
 
+struct RenderedKernelSubsumptionResolutionPivot {
+  std::size_t mainParentIndex = 0;
+  std::size_t sideParentIndex = 0;
+  bool hasSideSubstitution = false;
+  RenderedKernelSubstitution sideSubstitution;
+  bool hasSidePivot = false;
+  RenderedKernelLiteral sidePivot;
+  bool hasSidePivotLocation = false;
+  std::size_t sidePivotParentIndex = 0;
+  std::size_t sidePivotLiteralIndex = 0;
+  RenderedKernelUnitRef sidePivotParentUnit;
+  bool hasSidePivotSubstituted = false;
+  RenderedKernelLiteral sidePivotSubstituted;
+  bool sidePivotMatchesBySymmetry = false;
+};
+
 struct MegalodonKernelStep {
   std::string id;
   std::string rule;
   std::vector<PrimitiveExpansion> primitiveExpansions;
   std::vector<MigrationField> migrationFields;
   std::vector<RenderedKernelPrimitiveParentSubstitution> primitiveParentSubstitutions;
+  bool hasSubsumptionResolutionPivot = false;
+  RenderedKernelSubsumptionResolutionPivot subsumptionResolutionPivot;
   bool hasConclusion = false;
   RenderedKernelConclusion conclusion;
   bool hasParents = false;
@@ -180,6 +198,10 @@ void addPrimitiveExpansion(
 void addPrimitiveParentSubstitution(
   MegalodonKernelStep& step,
   const RenderedKernelPrimitiveParentSubstitution& substitution);
+
+void setSubsumptionResolutionPivot(
+  MegalodonKernelStep& step,
+  const RenderedKernelSubsumptionResolutionPivot& pivot);
 
 void setConclusion(
   MegalodonKernelStep& step,
