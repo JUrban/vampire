@@ -82,6 +82,11 @@ RenderedKernelPosition position(const std::string& sexpr)
   return {sexpr};
 }
 
+RenderedKernelType type(const std::string& sexpr)
+{
+  return {sexpr};
+}
+
 std::vector<RenderedKernelLiteral> literals(const std::vector<std::string>& sexprs)
 {
   std::vector<RenderedKernelLiteral> rendered;
@@ -166,6 +171,13 @@ void setSubsumptionResolutionPivot(
 {
   step.hasSubsumptionResolutionPivot = true;
   step.subsumptionResolutionPivot = pivot;
+}
+
+void addSkolemIntroducedSymbol(
+  MegalodonKernelStep& step,
+  const RenderedKernelSkolemIntroducedSymbol& introduced)
+{
+  step.skolemIntroducedSymbols.push_back(introduced);
 }
 
 void setConclusion(
@@ -381,6 +393,87 @@ void appendSubsumptionResolutionPivotFields(
   }
 }
 
+void appendSkolemDependencyFields(
+  std::vector<std::string>& fields,
+  const std::string& prefix,
+  const RenderedKernelSkolemDependency& dependency)
+{
+  if (dependency.hasTerm) {
+    fields.push_back(prefix + "_term=" + dependency.term.sexpr);
+  }
+  if (dependency.hasVariable) {
+    fields.push_back(prefix + "_var=" + dependency.variable);
+  }
+  if (dependency.hasSort) {
+    fields.push_back(prefix + "_sort=" + dependency.sort);
+  }
+  if (dependency.hasSortSexpr) {
+    fields.push_back(prefix + "_sort_sexpr=" + dependency.sortSexpr.sexpr);
+  }
+}
+
+void appendSkolemIntroducedSymbolFields(
+  std::vector<std::string>& fields,
+  const std::vector<RenderedKernelSkolemIntroducedSymbol>& introducedSymbols)
+{
+  if (introducedSymbols.empty()) {
+    return;
+  }
+  fields.push_back("introduced_count=" + std::to_string(introducedSymbols.size()));
+  for (const RenderedKernelSkolemIntroducedSymbol& introduced : introducedSymbols) {
+    const std::string prefix = "introduced_" + std::to_string(introduced.index);
+    if (introduced.hasKind) {
+      fields.push_back(prefix + "_kind=" + introduced.kind);
+    }
+    if (introduced.hasRawSymbol) {
+      fields.push_back(prefix + "_raw_symbol=" + introduced.rawSymbol);
+    }
+    if (introduced.hasReplacedVariable) {
+      fields.push_back(prefix + "_replaced_var=" + introduced.replacedVariable);
+    }
+    if (introduced.hasSymbol) {
+      fields.push_back(prefix + "_symbol=" + introduced.symbol);
+    }
+    if (introduced.hasDeclaration) {
+      fields.push_back(prefix + "_declaration=" + introduced.declaration);
+    }
+    if (introduced.hasReplacedVariableSort) {
+      fields.push_back(prefix + "_replaced_var_sort=" + introduced.replacedVariableSort);
+    }
+    if (introduced.hasReplacedVariableSortSexpr) {
+      fields.push_back(prefix + "_replaced_var_sort_sexpr=" + introduced.replacedVariableSortSexpr.sexpr);
+    }
+    if (introduced.hasWitnessTerm) {
+      fields.push_back(prefix + "_witness_term=" + introduced.witnessTerm.sexpr);
+    }
+    if (introduced.hasWitnessSort) {
+      fields.push_back(prefix + "_witness_sort=" + introduced.witnessSort);
+    }
+    if (introduced.hasWitnessSortSexpr) {
+      fields.push_back(prefix + "_witness_sort_sexpr=" + introduced.witnessSortSexpr.sexpr);
+    }
+    if (introduced.hasSourceVariableApplicationCount) {
+      fields.push_back(
+        prefix + "_source_variable_application_count="
+        + std::to_string(introduced.sourceVariableApplicationCount));
+    }
+    if (!introduced.dependencies.empty()) {
+      fields.push_back(prefix + "_dependency_count=" + std::to_string(introduced.dependencies.size()));
+      for (std::size_t dependencyIndex = 0;
+           dependencyIndex < introduced.dependencies.size();
+           ++dependencyIndex) {
+        appendSkolemDependencyFields(
+          fields,
+          prefix + "_dependency_" + std::to_string(dependencyIndex),
+          introduced.dependencies[dependencyIndex]);
+      }
+    }
+    if (introduced.hasChoicePrinciple) {
+      fields.push_back(prefix + "_choice_principle=" + introduced.choicePrinciple);
+    }
+  }
+}
+
 }
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
@@ -398,6 +491,7 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
   if (step.hasSubsumptionResolutionPivot) {
     appendSubsumptionResolutionPivotFields(fields, step.subsumptionResolutionPivot);
   }
+  appendSkolemIntroducedSymbolFields(fields, step.skolemIntroducedSymbols);
   if (step.hasConclusion) {
     appendConclusionFields(fields, step.conclusion);
   }

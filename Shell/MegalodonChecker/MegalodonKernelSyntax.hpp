@@ -41,6 +41,10 @@ struct RenderedKernelPosition {
   std::string sexpr;
 };
 
+struct RenderedKernelType {
+  std::string sexpr;
+};
+
 struct MigrationField {
   std::string rendered;
 };
@@ -140,6 +144,46 @@ struct RenderedKernelSubsumptionResolutionPivot {
   bool sidePivotMatchesBySymmetry = false;
 };
 
+struct RenderedKernelSkolemDependency {
+  bool hasTerm = false;
+  RenderedKernelTerm term;
+  bool hasVariable = false;
+  std::string variable;
+  bool hasSort = false;
+  std::string sort;
+  bool hasSortSexpr = false;
+  RenderedKernelType sortSexpr;
+};
+
+struct RenderedKernelSkolemIntroducedSymbol {
+  std::size_t index = 0;
+  bool hasKind = false;
+  std::string kind;
+  bool hasRawSymbol = false;
+  std::string rawSymbol;
+  bool hasReplacedVariable = false;
+  std::string replacedVariable;
+  bool hasSymbol = false;
+  std::string symbol;
+  bool hasDeclaration = false;
+  std::string declaration;
+  bool hasReplacedVariableSort = false;
+  std::string replacedVariableSort;
+  bool hasReplacedVariableSortSexpr = false;
+  RenderedKernelType replacedVariableSortSexpr;
+  bool hasWitnessTerm = false;
+  RenderedKernelTerm witnessTerm;
+  bool hasWitnessSort = false;
+  std::string witnessSort;
+  bool hasWitnessSortSexpr = false;
+  RenderedKernelType witnessSortSexpr;
+  bool hasSourceVariableApplicationCount = false;
+  std::size_t sourceVariableApplicationCount = 0;
+  std::vector<RenderedKernelSkolemDependency> dependencies;
+  bool hasChoicePrinciple = false;
+  std::string choicePrinciple;
+};
+
 struct MegalodonKernelStep {
   std::string id;
   std::string rule;
@@ -148,6 +192,7 @@ struct MegalodonKernelStep {
   std::vector<RenderedKernelPrimitiveParentSubstitution> primitiveParentSubstitutions;
   bool hasSubsumptionResolutionPivot = false;
   RenderedKernelSubsumptionResolutionPivot subsumptionResolutionPivot;
+  std::vector<RenderedKernelSkolemIntroducedSymbol> skolemIntroducedSymbols;
   bool hasConclusion = false;
   RenderedKernelConclusion conclusion;
   bool hasParents = false;
@@ -165,6 +210,7 @@ RenderedKernelLiteral literal(const std::string& sexpr);
 RenderedKernelClause clause(const std::string& sexpr);
 RenderedKernelSubstitution substitution(const std::string& sexpr);
 RenderedKernelPosition position(const std::string& sexpr);
+RenderedKernelType type(const std::string& sexpr);
 std::vector<RenderedKernelLiteral> literals(const std::vector<std::string>& sexprs);
 MigrationField migrationField(const std::string& rendered);
 RenderedKernelPrimitiveParentSubstitution primitiveParentSubstitution(
@@ -202,6 +248,10 @@ void addPrimitiveParentSubstitution(
 void setSubsumptionResolutionPivot(
   MegalodonKernelStep& step,
   const RenderedKernelSubsumptionResolutionPivot& pivot);
+
+void addSkolemIntroducedSymbol(
+  MegalodonKernelStep& step,
+  const RenderedKernelSkolemIntroducedSymbol& introduced);
 
 void setConclusion(
   MegalodonKernelStep& step,

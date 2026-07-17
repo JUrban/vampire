@@ -12194,7 +12194,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     [&](const std::string& kernelRule,
         std::vector<std::string> fields,
         bool includePrimitiveParentSubstitutions = false,
-        const MegalodonKernelSyntax::RenderedKernelSubsumptionResolutionPivot* subsumptionPivot = nullptr) {
+        const MegalodonKernelSyntax::RenderedKernelSubsumptionResolutionPivot* subsumptionPivot = nullptr,
+        const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemIntroducedSymbol>* skolemIntroducedSymbols = nullptr) {
     MegalodonKernelSyntax::MegalodonKernelStep step =
       MegalodonKernelSyntax::kernelStep(
         "u" + std::to_string(u->number()),
@@ -12205,6 +12206,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     if (subsumptionPivot != nullptr) {
       MegalodonKernelSyntax::setSubsumptionResolutionPivot(step, *subsumptionPivot);
+    }
+    if (skolemIntroducedSymbols != nullptr) {
+      for (const auto& introduced : *skolemIntroducedSymbols) {
+        MegalodonKernelSyntax::addSkolemIntroducedSymbol(step, introduced);
+      }
     }
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
       MegalodonKernelSyntax::addPrimitiveExpansion(
@@ -13773,9 +13779,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         ++kernelParentIndex;
       }
       kernelFields.push_back("proof_parent_count=" + std::to_string(kernelParentIndex));
+      std::vector<MegalodonKernelSyntax::RenderedKernelSkolemIntroducedSymbol> skolemIntroducedSymbols;
       if (_is->hasIntroducedSymbols(u)) {
         auto& symbols = _is->getIntroducedSymbols(u);
-        kernelFields.push_back("introduced_count=" + std::to_string(symbols.size()));
         Kernel::Formula* sourceFormulaForSkolem = nullptr;
         for (Kernel::Unit* parent : iterTraits(u->getParents())) {
           if (!parent->isClause()) {
@@ -13797,19 +13803,25 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         }
         unsigned symbolIndex = 0;
         for (auto symbol : iterTraits(Kernel::InferenceStore::SymbolStack::ConstIterator(symbols))) {
-          const std::string prefix = "introduced_" + std::to_string(symbolIndex);
-          kernelFields.push_back(prefix + "_kind=" + std::to_string(static_cast<int>(symbol.first)));
-          kernelFields.push_back(prefix + "_raw_symbol=" + std::to_string(symbol.second));
+          MegalodonKernelSyntax::RenderedKernelSkolemIntroducedSymbol introduced;
+          introduced.index = symbolIndex;
+          introduced.hasKind = true;
+          introduced.kind = std::to_string(static_cast<int>(symbol.first));
+          introduced.hasRawSymbol = true;
+          introduced.rawSymbol = std::to_string(symbol.second);
           long replacedVar = _is->variableReplacedByIntroducedSymbol(symbol.second);
           if (replacedVar >= 0) {
-            kernelFields.push_back(prefix + "_replaced_var=" + variableName(static_cast<unsigned>(replacedVar)));
+            introduced.hasReplacedVariable = true;
+            introduced.replacedVariable = variableName(static_cast<unsigned>(replacedVar));
           }
           if (symbol.first == SymbolType::FUNC) {
             std::string name = functionName(symbol.second);
-            kernelFields.push_back(prefix + "_symbol=" + name);
+            introduced.hasSymbol = true;
+            introduced.symbol = name;
             std::string declaration = functionDeclaration(symbol.second, name);
             if (!declaration.empty()) {
-              kernelFields.push_back(prefix + "_declaration=" + declaration);
+              introduced.hasDeclaration = true;
+              introduced.declaration = declaration;
             }
             if (replacedVar >= 0 && sourceFormulaForSkolem != nullptr) {
               auto replacedSort = sourceVariableSorts.find(static_cast<unsigned>(replacedVar));
@@ -13817,10 +13829,13 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                 std::string replacedSortText;
                 std::string replacedSortSexpr;
                 if (sortToMegalodon(replacedSort->second, replacedSortText)) {
-                  kernelFields.push_back(prefix + "_replaced_var_sort=" + replacedSortText);
+                  introduced.hasReplacedVariableSort = true;
+                  introduced.replacedVariableSort = replacedSortText;
                 }
                 if (certificateTypeSexpr(replacedSort->second, replacedSortSexpr)) {
-                  kernelFields.push_back(prefix + "_replaced_var_sort_sexpr=" + replacedSortSexpr);
+                  introduced.hasReplacedVariableSortSexpr = true;
+                  introduced.replacedVariableSortSexpr =
+                    MegalodonKernelSyntax::type(replacedSortSexpr);
                 }
               }
               Kernel::TermList witness;
@@ -13834,43 +13849,50 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                   parentApplicationCount)) {
                 std::string witnessSexpr;
                 if (certificateTermSexpr(witness, witnessSexpr)) {
-                  kernelFields.push_back(prefix + "_witness_term=" + witnessSexpr);
+                  introduced.hasWitnessTerm = true;
+                  introduced.witnessTerm = MegalodonKernelSyntax::term(witnessSexpr);
                 }
                 Kernel::TermList witnessSort;
                 if (Kernel::SortHelper::tryGetResultSort(witness, witnessSort)) {
                   std::string witnessSortText;
                   std::string witnessSortSexpr;
                   if (sortToMegalodon(witnessSort, witnessSortText)) {
-                    kernelFields.push_back(prefix + "_witness_sort=" + witnessSortText);
+                    introduced.hasWitnessSort = true;
+                    introduced.witnessSort = witnessSortText;
                   }
                   if (certificateTypeSexpr(witnessSort, witnessSortSexpr)) {
-                    kernelFields.push_back(prefix + "_witness_sort_sexpr=" + witnessSortSexpr);
+                    introduced.hasWitnessSortSexpr = true;
+                    introduced.witnessSortSexpr = MegalodonKernelSyntax::type(witnessSortSexpr);
                   }
                 }
-                kernelFields.push_back(prefix + "_source_variable_application_count=" + std::to_string(parentApplicationCount));
+                introduced.hasSourceVariableApplicationCount = true;
+                introduced.sourceVariableApplicationCount = parentApplicationCount;
                 Kernel::TermList witnessHead;
                 std::vector<Kernel::TermList> dependencies;
                 decomposeApplicationSpine(witness, witnessHead, dependencies);
                 if (termHasHeadFunctor(witnessHead, symbol.second)) {
-                  kernelFields.push_back(prefix + "_dependency_count=" + std::to_string(dependencies.size()));
                   for (std::size_t dependencyIndex = 0; dependencyIndex < dependencies.size(); ++dependencyIndex) {
-                    const std::string dependencyPrefix = prefix + "_dependency_" + std::to_string(dependencyIndex);
+                    MegalodonKernelSyntax::RenderedKernelSkolemDependency dependency;
                     std::string dependencySexpr;
                     if (certificateTermSexpr(dependencies[dependencyIndex], dependencySexpr)) {
-                      kernelFields.push_back(dependencyPrefix + "_term=" + dependencySexpr);
+                      dependency.hasTerm = true;
+                      dependency.term = MegalodonKernelSyntax::term(dependencySexpr);
                     }
                     if (dependencies[dependencyIndex].isVar()) {
                       unsigned dependencyVar = dependencies[dependencyIndex].var();
-                      kernelFields.push_back(dependencyPrefix + "_var=" + variableName(dependencyVar));
+                      dependency.hasVariable = true;
+                      dependency.variable = variableName(dependencyVar);
                       auto dependencySort = sourceVariableSorts.find(dependencyVar);
                       if (dependencySort != sourceVariableSorts.end()) {
                         std::string dependencySortText;
                         std::string dependencySortSexpr;
                         if (sortToMegalodon(dependencySort->second, dependencySortText)) {
-                          kernelFields.push_back(dependencyPrefix + "_sort=" + dependencySortText);
+                          dependency.hasSort = true;
+                          dependency.sort = dependencySortText;
                         }
                         if (certificateTypeSexpr(dependencySort->second, dependencySortSexpr)) {
-                          kernelFields.push_back(dependencyPrefix + "_sort_sexpr=" + dependencySortSexpr);
+                          dependency.hasSortSexpr = true;
+                          dependency.sortSexpr = MegalodonKernelSyntax::type(dependencySortSexpr);
                         }
                       }
                     } else {
@@ -13879,32 +13901,45 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                         std::string dependencySortText;
                         std::string dependencySortSexpr;
                         if (sortToMegalodon(dependencySort, dependencySortText)) {
-                          kernelFields.push_back(dependencyPrefix + "_sort=" + dependencySortText);
+                          dependency.hasSort = true;
+                          dependency.sort = dependencySortText;
                         }
                         if (certificateTypeSexpr(dependencySort, dependencySortSexpr)) {
-                          kernelFields.push_back(dependencyPrefix + "_sort_sexpr=" + dependencySortSexpr);
+                          dependency.hasSortSexpr = true;
+                          dependency.sortSexpr = MegalodonKernelSyntax::type(dependencySortSexpr);
                         }
                       }
                     }
+                    introduced.dependencies.push_back(dependency);
                   }
                 }
-                kernelFields.push_back(prefix + "_choice_principle=classical_choice");
+                introduced.hasChoicePrinciple = true;
+                introduced.choicePrinciple = "classical_choice";
               }
             }
           } else if (symbol.first == SymbolType::PRED) {
             std::string name = predicateName(symbol.second);
-            kernelFields.push_back(prefix + "_symbol=" + name);
+            introduced.hasSymbol = true;
+            introduced.symbol = name;
             std::string declaration = predicateDeclaration(symbol.second, name);
             if (!declaration.empty()) {
-              kernelFields.push_back(prefix + "_declaration=" + declaration);
+              introduced.hasDeclaration = true;
+              introduced.declaration = declaration;
             }
           } else {
-            kernelFields.push_back(prefix + "_symbol=" + recoverMegalodonSymbolName(env.signature->typeConName(symbol.second), "T"));
+            introduced.hasSymbol = true;
+            introduced.symbol = recoverMegalodonSymbolName(env.signature->typeConName(symbol.second), "T");
           }
+          skolemIntroducedSymbols.push_back(introduced);
           ++symbolIndex;
         }
       }
-      emitKernelV1("skolemize", kernelFields);
+      emitKernelV1(
+        "skolemize",
+        kernelFields,
+        false,
+        nullptr,
+        skolemIntroducedSymbols.empty() ? nullptr : &skolemIntroducedSymbols);
     }
     std::vector<std::string> fields;
     fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
