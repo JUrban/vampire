@@ -11759,25 +11759,19 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     text = out.str();
     return true;
   };
-  auto addKernelParentFields = [&](std::vector<std::string>& fields) {
-    fields.push_back("parent_count=" + std::to_string(parentClauses.size()));
+  auto setKernelParents = [&](MegalodonKernelSyntax::MegalodonKernelStep& step) {
+    MegalodonKernelSyntax::setParentList(step);
     for (std::size_t parentIndex = 0; parentIndex < parentClauses.size(); ++parentIndex) {
       Kernel::Clause* parent = parentClauses[parentIndex];
-      fields.push_back("parent_" + std::to_string(parentIndex) + "_unit=u" + std::to_string(parent->number()));
+      MegalodonKernelSyntax::RenderedKernelParent renderedParent;
+      renderedParent.unit = "u" + std::to_string(parent->number());
       std::string clause;
       if (clauseSexprForKernel(parent, clause)) {
-        fields.push_back("parent_" + std::to_string(parentIndex) + "_clause=" + clause);
+        renderedParent.hasClause = true;
+        renderedParent.clause = clause;
       }
-      std::vector<std::string> renderedParentLiterals;
-      if (appendCertificateClauseLiteralsSexpr(parent, renderedParentLiterals)) {
-        fields.push_back(
-          "parent_" + std::to_string(parentIndex) + "_literal_count="
-          + std::to_string(renderedParentLiterals.size()));
-        for (std::size_t literalIndex = 0; literalIndex < renderedParentLiterals.size(); ++literalIndex) {
-          fields.push_back(
-            "parent_" + std::to_string(parentIndex) + "_literal_" + std::to_string(literalIndex)
-            + "=" + renderedParentLiterals[literalIndex]);
-        }
+      if (appendCertificateClauseLiteralsSexpr(parent, renderedParent.literals)) {
+        renderedParent.hasLiterals = true;
       }
       if (
         info != nullptr
@@ -11786,7 +11780,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       ) {
         std::string subst;
         if (substitutionSexprForKernel(info->substitutionForBanksSub[parentIndex], subst)) {
-          fields.push_back("parent_" + std::to_string(parentIndex) + "_substitution=" + subst);
+          renderedParent.hasSubstitution = true;
+          renderedParent.substitution = subst;
         }
         std::vector<std::string> substitutedLiterals;
         for (Kernel::Literal* literal : info->premises[parentIndex]->iterLits()) {
@@ -11798,59 +11793,34 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           }
         }
         if (appendCertificateSplitLiteralsSexpr(info->premises[parentIndex], substitutedLiterals)) {
-          fields.push_back(
-            "parent_" + std::to_string(parentIndex) + "_substituted_literal_count="
-            + std::to_string(substitutedLiterals.size()));
-          for (std::size_t literalIndex = 0; literalIndex < substitutedLiterals.size(); ++literalIndex) {
-            fields.push_back(
-              "parent_" + std::to_string(parentIndex) + "_substituted_literal_" + std::to_string(literalIndex)
-              + "=" + substitutedLiterals[literalIndex]);
-          }
+          renderedParent.hasSubstitutedLiterals = true;
+          renderedParent.substitutedLiterals = substitutedLiterals;
         }
       }
+      MegalodonKernelSyntax::addParent(step, renderedParent);
     }
   };
-  auto addKernelConclusionFields = [&](std::vector<std::string>& fields) {
-    fields.push_back("conclusion_unit=u" + std::to_string(u->number()));
-    fields.push_back("vampire_rule=" + std::string(Kernel::ruleName(u->inference().rule())));
+  auto setKernelConclusion = [&](MegalodonKernelSyntax::MegalodonKernelStep& step) {
+    MegalodonKernelSyntax::RenderedKernelConclusion conclusion;
+    conclusion.unit = "u" + std::to_string(u->number());
+    conclusion.vampireRule = std::string(Kernel::ruleName(u->inference().rule()));
     if (u->isClause()) {
       std::string clause;
       if (clauseSexprForKernel(u->asClause(), clause)) {
-        fields.push_back("conclusion_clause=" + clause);
-        bool hasResultClause = false;
-        for (const std::string& field : fields) {
-          if (field.rfind("result_clause=", 0) == 0) {
-            hasResultClause = true;
-            break;
-          }
-        }
-        if (!hasResultClause) {
-          fields.push_back("result_clause=" + clause);
-        }
+        conclusion.hasClause = true;
+        conclusion.clause = clause;
       }
-      std::vector<std::string> renderedLiterals;
-      if (appendCertificateClauseLiteralsSexpr(u->asClause(), renderedLiterals)) {
-        fields.push_back("result_literal_count=" + std::to_string(renderedLiterals.size()));
-        for (std::size_t literalIndex = 0; literalIndex < renderedLiterals.size(); ++literalIndex) {
-          fields.push_back("result_literal_" + std::to_string(literalIndex) + "=" + renderedLiterals[literalIndex]);
-        }
+      if (appendCertificateClauseLiteralsSexpr(u->asClause(), conclusion.resultLiterals)) {
+        conclusion.hasResultLiterals = true;
       }
     } else {
       std::string formula;
       if (certificateFormulaTermSexpr(u->getFormula(), formula)) {
-        fields.push_back("conclusion_formula=" + formula);
-        bool hasResultFormula = false;
-        for (const std::string& field : fields) {
-          if (field.rfind("result_formula=", 0) == 0) {
-            hasResultFormula = true;
-            break;
-          }
-        }
-        if (!hasResultFormula) {
-          fields.push_back("result_formula=" + formula);
-        }
+        conclusion.hasFormula = true;
+        conclusion.formula = formula;
       }
     }
+    MegalodonKernelSyntax::setConclusion(step, conclusion);
   };
   auto addKernelLiteralFields =
     [&](std::vector<std::string>& fields,
@@ -12226,9 +12196,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             : "equality_factoring");
       }
     }
+    setKernelConclusion(step);
+    setKernelParents(step);
     fields = MegalodonKernelSyntax::kernelStepFields(step);
-    addKernelConclusionFields(fields);
-    addKernelParentFields(fields);
     emit("kernel_v1", fields);
   };
 

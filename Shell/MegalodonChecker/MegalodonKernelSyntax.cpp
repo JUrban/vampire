@@ -1,5 +1,6 @@
 #include "Shell/MegalodonChecker/MegalodonKernelSyntax.hpp"
 
+#include <cstddef>
 #include <utility>
 
 namespace Shell {
@@ -93,6 +94,106 @@ void addPrimitiveExpansion(
   step.primitiveExpansions.push_back(expansion);
 }
 
+void setConclusion(
+  MegalodonKernelStep& step,
+  const RenderedKernelConclusion& conclusion)
+{
+  step.hasConclusion = true;
+  step.conclusion = conclusion;
+}
+
+void addParent(
+  MegalodonKernelStep& step,
+  const RenderedKernelParent& parent)
+{
+  step.hasParents = true;
+  step.parents.push_back(parent);
+}
+
+void setParentList(
+  MegalodonKernelStep& step)
+{
+  step.hasParents = true;
+}
+
+namespace {
+
+bool hasFieldWithPrefix(
+  const std::vector<std::string>& fields,
+  const std::string& prefix)
+{
+  for (const std::string& field : fields) {
+    if (field.rfind(prefix, 0) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void appendConclusionFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelConclusion& conclusion)
+{
+  fields.push_back("conclusion_unit=" + conclusion.unit);
+  fields.push_back("vampire_rule=" + conclusion.vampireRule);
+  if (conclusion.hasClause) {
+    fields.push_back("conclusion_clause=" + conclusion.clause);
+    if (!hasFieldWithPrefix(fields, "result_clause=")) {
+      fields.push_back("result_clause=" + conclusion.clause);
+    }
+    if (conclusion.hasResultLiterals) {
+      fields.push_back("result_literal_count=" + std::to_string(conclusion.resultLiterals.size()));
+      for (std::size_t literalIndex = 0; literalIndex < conclusion.resultLiterals.size(); ++literalIndex) {
+        fields.push_back(
+          "result_literal_" + std::to_string(literalIndex) + "=" + conclusion.resultLiterals[literalIndex]);
+      }
+    }
+    return;
+  }
+  if (conclusion.hasFormula) {
+    fields.push_back("conclusion_formula=" + conclusion.formula);
+    if (!hasFieldWithPrefix(fields, "result_formula=")) {
+      fields.push_back("result_formula=" + conclusion.formula);
+    }
+  }
+}
+
+void appendParentFields(
+  std::vector<std::string>& fields,
+  const std::vector<RenderedKernelParent>& parents)
+{
+  fields.push_back("parent_count=" + std::to_string(parents.size()));
+  for (std::size_t parentIndex = 0; parentIndex < parents.size(); ++parentIndex) {
+    const RenderedKernelParent& parent = parents[parentIndex];
+    const std::string prefix = "parent_" + std::to_string(parentIndex);
+    fields.push_back(prefix + "_unit=" + parent.unit);
+    if (parent.hasClause) {
+      fields.push_back(prefix + "_clause=" + parent.clause);
+    }
+    if (parent.hasLiterals) {
+      fields.push_back(prefix + "_literal_count=" + std::to_string(parent.literals.size()));
+      for (std::size_t literalIndex = 0; literalIndex < parent.literals.size(); ++literalIndex) {
+        fields.push_back(
+          prefix + "_literal_" + std::to_string(literalIndex) + "=" + parent.literals[literalIndex]);
+      }
+    }
+    if (parent.hasSubstitution) {
+      fields.push_back(prefix + "_substitution=" + parent.substitution);
+    }
+    if (parent.hasSubstitutedLiterals) {
+      fields.push_back(
+        prefix + "_substituted_literal_count=" + std::to_string(parent.substitutedLiterals.size()));
+      for (std::size_t literalIndex = 0; literalIndex < parent.substitutedLiterals.size(); ++literalIndex) {
+        fields.push_back(
+          prefix + "_substituted_literal_" + std::to_string(literalIndex)
+          + "=" + parent.substitutedLiterals[literalIndex]);
+      }
+    }
+  }
+}
+
+}
+
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
 {
   std::vector<std::string> fields;
@@ -102,6 +203,12 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
     appendPrimitiveExpansion(fields, expansion);
   }
   fields.insert(fields.end(), step.fields.begin(), step.fields.end());
+  if (step.hasConclusion) {
+    appendConclusionFields(fields, step.conclusion);
+  }
+  if (step.hasParents) {
+    appendParentFields(fields, step.parents);
+  }
   return fields;
 }
 
