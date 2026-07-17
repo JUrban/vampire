@@ -12299,7 +12299,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const MegalodonKernelSyntax::RenderedKernelAvatarDefinition* avatarDefinition = nullptr,
         const MegalodonKernelSyntax::RenderedKernelSplitDependency* splitDependency = nullptr,
         const MegalodonKernelSyntax::RenderedKernelAvatarSplitStep* avatarSplit = nullptr,
-        const MegalodonKernelSyntax::RenderedKernelAvatarRefutation* avatarRefutation = nullptr) {
+        const MegalodonKernelSyntax::RenderedKernelAvatarRefutation* avatarRefutation = nullptr,
+        const MegalodonKernelSyntax::RenderedKernelPredicateDefinition* predicateDefinition = nullptr) {
     if (!MegalodonKernelSyntax::isSupportedRule(kernelRule)) {
       INVALID_OPERATION("unsupported Megalodon kernel_v1 rule: " + kernelRule);
     }
@@ -12348,6 +12349,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     if (avatarRefutation != nullptr) {
       MegalodonKernelSyntax::setAvatarRefutation(step, *avatarRefutation);
+    }
+    if (predicateDefinition != nullptr) {
+      MegalodonKernelSyntax::setPredicateDefinition(step, *predicateDefinition);
     }
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
       MegalodonKernelSyntax::addPrimitiveExpansion(
@@ -14414,24 +14418,50 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         fields.push_back("formula=" + formulaText);
         {
           std::vector<std::string> kernelFields;
-          kernelFields.push_back("introduced_symbol=" + name);
+          MegalodonKernelSyntax::RenderedKernelPredicateDefinition predicateDefinition;
+          predicateDefinition.introducedSymbol = name;
           if (!sort.empty()) {
-            kernelFields.push_back("sort=" + sort);
+            predicateDefinition.hasSort = true;
+            predicateDefinition.sort = sort;
           }
           std::string symbolName;
           if (certificatePredicateDefinitionSymbol(u->getFormula(), symbolName)) {
-            kernelFields.push_back("definiendum_symbol=" + symbolName);
+            predicateDefinition.hasDefiniendumSymbol = true;
+            predicateDefinition.definiendumSymbol = symbolName;
+          }
+          std::string bodyFormula;
+          if (certificateFormulaTermSexpr(formula, bodyFormula)) {
+            predicateDefinition.hasBodyFormula = true;
+            predicateDefinition.bodyFormula = MegalodonKernelSyntax::formula(bodyFormula);
           }
           std::string resultFormula;
           if (certificateFormulaTermSexpr(u->getFormula(), resultFormula)) {
-            kernelFields.push_back("result_formula=" + resultFormula);
+            predicateDefinition.hasResultFormula = true;
+            predicateDefinition.resultFormula = MegalodonKernelSyntax::formula(resultFormula);
           }
-          kernelFields.push_back("body_variable_sort_count=" + std::to_string(renderedBodyVarSorts.size()));
           for (std::size_t index = 0; index < renderedBodyVarSorts.size(); ++index) {
-            kernelFields.push_back(
-              "body_variable_sort_" + std::to_string(index) + "=" + renderedBodyVarSorts[index].second);
+            MegalodonKernelSyntax::RenderedKernelPredicateDefinitionVariable variable;
+            variable.index = index;
+            variable.renderedSort = renderedBodyVarSorts[index].second;
+            predicateDefinition.bodyVariables.push_back(variable);
           }
-          emitKernelV1("predicate_definition", kernelFields);
+          emitKernelV1(
+            "predicate_definition",
+            kernelFields,
+            false,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            &predicateDefinition);
         }
         emit("predicate_definition", fields);
       }

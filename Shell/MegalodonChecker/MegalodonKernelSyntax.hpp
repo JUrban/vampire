@@ -415,6 +415,28 @@ struct RenderedKernelDefinitionFold {
   RenderedKernelFormula resultFormula;
 };
 
+struct RenderedKernelPredicateDefinitionVariable {
+  std::size_t index = 0;
+  std::string renderedSort;
+};
+
+struct RenderedKernelPredicateDefinition {
+  std::string introducedSymbol;
+  bool hasSort = false;
+  std::string sort;
+  bool hasDefiniendumSymbol = false;
+  std::string definiendumSymbol;
+  bool hasBodyFormula = false;
+  RenderedKernelFormula bodyFormula;
+  bool hasResultFormula = false;
+  RenderedKernelFormula resultFormula;
+  std::vector<RenderedKernelPredicateDefinitionVariable> bodyVariables;
+  std::string proofShape = "classical_definitional_split";
+  std::string classicalPrinciple = "xm";
+  std::string positiveBranch = "definition_body";
+  std::string negativeBranch = "negated_definiendum";
+};
+
 struct MegalodonKernelStep {
   std::string id;
   std::string rule;
@@ -432,6 +454,8 @@ struct MegalodonKernelStep {
   RenderedKernelCnfClause cnfClause;
   bool hasDefinitionFold = false;
   RenderedKernelDefinitionFold definitionFold;
+  bool hasPredicateDefinition = false;
+  RenderedKernelPredicateDefinition predicateDefinition;
   bool hasUrrTrace = false;
   RenderedKernelUrrTrace urrTrace;
   bool hasAvatarComponent = false;
@@ -546,6 +570,10 @@ void setCnfClause(
 void setDefinitionFold(
   MegalodonKernelStep& step,
   const RenderedKernelDefinitionFold& definitionFold);
+
+void setPredicateDefinition(
+  MegalodonKernelStep& step,
+  const RenderedKernelPredicateDefinition& predicateDefinition);
 
 void setUrrTrace(
   MegalodonKernelStep& step,

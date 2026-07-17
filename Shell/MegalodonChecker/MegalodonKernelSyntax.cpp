@@ -16,7 +16,6 @@ const std::string& schema()
 std::vector<std::string> structuralRules()
 {
   return {
-    "predicate_definition",
     "predicate_definition_fold",
     "predicate_definition_fold_chain",
   };
@@ -40,6 +39,7 @@ std::vector<std::string> requiredPrimitivesForRule(const std::string& rule)
     {"avatar_refutation", {"avatar_refutation"}},
     {"avatar_definition", {"avatar_definition"}},
     {"split_dependency", {"split_dependency"}},
+    {"predicate_definition", {"predicate_definition_intro"}},
     {"superposition", {"paramodulate"}},
     {"rewrite", {"paramodulate"}},
     {"subsumption_resolution", {"resolve"}},
@@ -76,6 +76,7 @@ std::vector<std::string> supportedRules()
     "avatar_refutation",
     "avatar_definition",
     "split_dependency",
+    "predicate_definition",
     "superposition",
     "rewrite",
     "subsumption_resolution",
@@ -431,6 +432,14 @@ void setDefinitionFold(
 {
   step.hasDefinitionFold = true;
   step.definitionFold = definitionFold;
+}
+
+void setPredicateDefinition(
+  MegalodonKernelStep& step,
+  const RenderedKernelPredicateDefinition& predicateDefinition)
+{
+  step.hasPredicateDefinition = true;
+  step.predicateDefinition = predicateDefinition;
 }
 
 void setUrrTrace(
@@ -886,6 +895,35 @@ void appendDefinitionFoldFields(
   }
 }
 
+void appendPredicateDefinitionFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelPredicateDefinition& definition)
+{
+  fields.push_back("introduced_symbol=" + definition.introducedSymbol);
+  if (definition.hasSort) {
+    fields.push_back("sort=" + definition.sort);
+  }
+  if (definition.hasDefiniendumSymbol) {
+    fields.push_back("definiendum_symbol=" + definition.definiendumSymbol);
+  }
+  if (definition.hasBodyFormula) {
+    fields.push_back("body_formula=" + definition.bodyFormula.sexpr);
+  }
+  if (definition.hasResultFormula) {
+    fields.push_back("result_formula=" + definition.resultFormula.sexpr);
+  }
+  fields.push_back("body_variable_sort_count=" + std::to_string(definition.bodyVariables.size()));
+  for (const RenderedKernelPredicateDefinitionVariable& variable : definition.bodyVariables) {
+    fields.push_back(
+      "body_variable_sort_" + std::to_string(variable.index)
+      + "=" + variable.renderedSort);
+  }
+  fields.push_back("proof_shape=" + definition.proofShape);
+  fields.push_back("classical_principle=" + definition.classicalPrinciple);
+  fields.push_back("positive_branch=" + definition.positiveBranch);
+  fields.push_back("negative_branch=" + definition.negativeBranch);
+}
+
 void appendUrrTraceFields(
   std::vector<std::string>& fields,
   const RenderedKernelUrrTrace& trace)
@@ -1225,6 +1263,9 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
   }
   if (step.hasDefinitionFold) {
     appendDefinitionFoldFields(fields, step.definitionFold);
+  }
+  if (step.hasPredicateDefinition) {
+    appendPredicateDefinitionFields(fields, step.predicateDefinition);
   }
   if (step.hasUrrTrace) {
     appendUrrTraceFields(fields, step.urrTrace);
