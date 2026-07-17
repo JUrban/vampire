@@ -244,6 +244,14 @@ void setSplitDependency(
   step.splitDependency = splitDependency;
 }
 
+void setAvatarSplit(
+  MegalodonKernelStep& step,
+  const RenderedKernelAvatarSplitStep& avatarSplit)
+{
+  step.hasAvatarSplit = true;
+  step.avatarSplit = avatarSplit;
+}
+
 void setConclusion(
   MegalodonKernelStep& step,
   const RenderedKernelConclusion& conclusion)
@@ -773,6 +781,126 @@ void appendSplitDependencyFields(
   }
 }
 
+void appendAvatarSatLiteralFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelAvatarSatLiteral& literal)
+{
+  const std::string prefix = "sat_literal_" + std::to_string(literal.index);
+  fields.push_back(prefix + "_var=" + std::to_string(literal.variable));
+  fields.push_back(prefix + "_positive=" + std::string(literal.positive ? "1" : "0"));
+}
+
+void appendAvatarComponentParentFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelAvatarComponentParent& parent)
+{
+  const std::string legacyPrefix = "component_parent_" + std::to_string(parent.parentIndex);
+  fields.push_back(legacyPrefix + "_unit=" + parent.unit.value);
+  fields.push_back(legacyPrefix + "_split_level=" + std::to_string(parent.split.level));
+  fields.push_back(legacyPrefix + "_split_var=" + std::to_string(parent.split.variable));
+  fields.push_back(
+    legacyPrefix + "_split_positive=" + std::string(parent.split.positive ? "1" : "0"));
+  if (parent.hasClause) {
+    fields.push_back(legacyPrefix + "_clause=" + parent.clause);
+  }
+
+  const std::string refPrefix = "component_parent_ref_" + std::to_string(parent.refIndex);
+  fields.push_back(refPrefix + "_unit=u" + parent.unit.value);
+  fields.push_back(refPrefix + "_split_level=" + std::to_string(parent.split.level));
+  fields.push_back(refPrefix + "_split_var=" + std::to_string(parent.split.variable));
+  fields.push_back(
+    refPrefix + "_split_positive=" + std::string(parent.split.positive ? "1" : "0"));
+  if (parent.hasClauseSexpr) {
+    fields.push_back(refPrefix + "_clause=" + parent.clauseSexpr.sexpr);
+  }
+}
+
+void appendAvatarLiteralClassFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelAvatarLiteralClass& literalClass)
+{
+  const std::string prefix = "literal_class_" + std::to_string(literalClass.index);
+  fields.push_back(prefix + "_literal_count=" + std::to_string(literalClass.literalCount));
+  for (std::size_t literalIndex = 0; literalIndex < literalClass.literals.size(); ++literalIndex) {
+    fields.push_back(
+      prefix + "_literal_" + std::to_string(literalIndex) + "="
+      + literalClass.literals[literalIndex]);
+  }
+  if (literalClass.hasMatchedSplitLevel) {
+    fields.push_back(
+      prefix + "_matched_split_level=" + std::to_string(literalClass.matchedSplitLevel));
+  }
+}
+
+void appendAvatarParentVarBindingFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelAvatarParentVarBinding& binding)
+{
+  const std::string prefix = "parent_var_binding_" + std::to_string(binding.index);
+  fields.push_back(prefix + "_parent_var=" + binding.parentVar);
+  if (binding.hasComponentVar) {
+    fields.push_back(prefix + "_component_var=" + binding.componentVar);
+  }
+  if (binding.hasSplitVar) {
+    fields.push_back(prefix + "_split_var=" + std::to_string(binding.splitVar));
+  }
+}
+
+void appendAvatarSplitFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelAvatarSplitStep& split)
+{
+  fields.push_back("source_unit=" + split.sourceUnit.value);
+  if (split.hasSourceClause) {
+    fields.push_back("source_clause=" + split.sourceClause.sexpr);
+    fields.push_back("parent_0_clause=" + split.sourceClause.sexpr);
+  }
+  if (split.hasResultClause) {
+    fields.push_back("result_clause=" + split.resultClause.sexpr);
+  } else if (split.hasResultFormula) {
+    fields.push_back("result_formula=" + split.resultFormula.sexpr);
+  }
+
+  fields.push_back("rule=" + split.vampireRule);
+  if (split.hasSourceText) {
+    fields.push_back("source=" + split.sourceText);
+  }
+  if (split.hasTargetText) {
+    fields.push_back("target=" + split.targetText);
+  }
+
+  for (const RenderedKernelAvatarSplit& previous : split.previousSplits) {
+    const std::string prefix = "previous_split_" + std::to_string(previous.index);
+    fields.push_back(prefix + "_level=" + std::to_string(previous.level));
+    fields.push_back(prefix + "_var=" + std::to_string(previous.variable));
+    fields.push_back(prefix + "_positive=" + std::string(previous.positive ? "1" : "0"));
+  }
+  fields.push_back("previous_split_count=" + std::to_string(split.previousSplits.size()));
+
+  for (const RenderedKernelAvatarSatLiteral& literal : split.satLiterals) {
+    appendAvatarSatLiteralFields(fields, literal);
+  }
+  if (!split.satLiterals.empty()) {
+    fields.push_back("sat_literal_count=" + std::to_string(split.satLiterals.size()));
+  }
+
+  for (const RenderedKernelAvatarComponentParent& parent : split.componentParents) {
+    appendAvatarComponentParentFields(fields, parent);
+  }
+  fields.push_back("component_parent_count=" + std::to_string(split.componentParentCount));
+  fields.push_back("component_parent_ref_count=" + std::to_string(split.componentParents.size()));
+
+  for (const RenderedKernelAvatarLiteralClass& literalClass : split.literalClasses) {
+    appendAvatarLiteralClassFields(fields, literalClass);
+  }
+  fields.push_back("literal_class_count=" + std::to_string(split.literalClasses.size()));
+
+  for (const RenderedKernelAvatarParentVarBinding& binding : split.parentVarBindings) {
+    appendAvatarParentVarBindingFields(fields, binding);
+  }
+  fields.push_back("parent_var_binding_count=" + std::to_string(split.parentVarBindings.size()));
+}
+
 }
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
@@ -814,6 +942,9 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
   }
   if (step.hasSplitDependency) {
     appendSplitDependencyFields(fields, step.splitDependency);
+  }
+  if (step.hasAvatarSplit) {
+    appendAvatarSplitFields(fields, step.avatarSplit);
   }
   if (step.hasConclusion) {
     appendConclusionFields(fields, step.conclusion);

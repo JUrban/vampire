@@ -177,6 +177,61 @@ struct RenderedKernelSplitDependency {
   RenderedKernelClause resultClause;
 };
 
+struct RenderedKernelAvatarSatLiteral {
+  std::size_t index = 0;
+  unsigned variable = 0;
+  bool positive = false;
+};
+
+struct RenderedKernelAvatarComponentParent {
+  std::size_t parentIndex = 0;
+  std::size_t refIndex = 0;
+  RenderedKernelUnitRef unit;
+  RenderedKernelAvatarSplit split;
+  bool hasClause = false;
+  std::string clause;
+  bool hasClauseSexpr = false;
+  RenderedKernelClause clauseSexpr;
+};
+
+struct RenderedKernelAvatarLiteralClass {
+  std::size_t index = 0;
+  std::size_t literalCount = 0;
+  std::vector<std::string> literals;
+  bool hasMatchedSplitLevel = false;
+  unsigned matchedSplitLevel = 0;
+};
+
+struct RenderedKernelAvatarParentVarBinding {
+  std::size_t index = 0;
+  std::string parentVar;
+  bool hasComponentVar = false;
+  std::string componentVar;
+  bool hasSplitVar = false;
+  unsigned splitVar = 0;
+};
+
+struct RenderedKernelAvatarSplitStep {
+  RenderedKernelUnitRef sourceUnit;
+  bool hasSourceClause = false;
+  RenderedKernelClause sourceClause;
+  bool hasResultClause = false;
+  RenderedKernelClause resultClause;
+  bool hasResultFormula = false;
+  RenderedKernelFormula resultFormula;
+  std::string vampireRule;
+  bool hasSourceText = false;
+  std::string sourceText;
+  bool hasTargetText = false;
+  std::string targetText;
+  std::vector<RenderedKernelAvatarSplit> previousSplits;
+  std::vector<RenderedKernelAvatarSatLiteral> satLiterals;
+  std::vector<RenderedKernelAvatarComponentParent> componentParents;
+  std::size_t componentParentCount = 0;
+  std::vector<RenderedKernelAvatarLiteralClass> literalClasses;
+  std::vector<RenderedKernelAvatarParentVarBinding> parentVarBindings;
+};
+
 struct RenderedKernelPrimitiveParentSubstitution {
   std::size_t parentIndex = 0;
   RenderedKernelSubstitution substitution;
@@ -339,6 +394,8 @@ struct MegalodonKernelStep {
   RenderedKernelAvatarDefinition avatarDefinition;
   bool hasSplitDependency = false;
   RenderedKernelSplitDependency splitDependency;
+  bool hasAvatarSplit = false;
+  RenderedKernelAvatarSplitStep avatarSplit;
   bool hasConclusion = false;
   RenderedKernelConclusion conclusion;
   bool hasParents = false;
@@ -430,6 +487,10 @@ void setAvatarDefinition(
 void setSplitDependency(
   MegalodonKernelStep& step,
   const RenderedKernelSplitDependency& splitDependency);
+
+void setAvatarSplit(
+  MegalodonKernelStep& step,
+  const RenderedKernelAvatarSplitStep& avatarSplit);
 
 void setConclusion(
   MegalodonKernelStep& step,

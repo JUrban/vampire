@@ -12203,7 +12203,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const MegalodonKernelSyntax::RenderedKernelUrrTrace* urrTrace = nullptr,
         const MegalodonKernelSyntax::RenderedKernelAvatarComponent* avatarComponent = nullptr,
         const MegalodonKernelSyntax::RenderedKernelAvatarDefinition* avatarDefinition = nullptr,
-        const MegalodonKernelSyntax::RenderedKernelSplitDependency* splitDependency = nullptr) {
+        const MegalodonKernelSyntax::RenderedKernelSplitDependency* splitDependency = nullptr,
+        const MegalodonKernelSyntax::RenderedKernelAvatarSplitStep* avatarSplit = nullptr) {
     MegalodonKernelSyntax::MegalodonKernelStep step =
       MegalodonKernelSyntax::kernelStep(
         "u" + std::to_string(u->number()),
@@ -12243,6 +12244,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     if (splitDependency != nullptr) {
       MegalodonKernelSyntax::setSplitDependency(step, *splitDependency);
+    }
+    if (avatarSplit != nullptr) {
+      MegalodonKernelSyntax::setAvatarSplit(step, *avatarSplit);
     }
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
       MegalodonKernelSyntax::addPrimitiveExpansion(
@@ -12835,14 +12839,21 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       if (mainParentUnit->isClause()) {
         Kernel::Clause* mainParent = mainParentUnit->asClause();
         std::vector<std::string> fields;
+        MegalodonKernelSyntax::RenderedKernelAvatarSplitStep avatarSplit;
+        avatarSplit.sourceUnit = MegalodonKernelSyntax::unitRef("u" + std::to_string(mainParentUnit->number()));
+        avatarSplit.vampireRule = Kernel::ruleName(u->inference().rule());
         fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
         std::string sourceText;
         if (renderClauseForExtra(mainParent, sourceText)) {
           fields.push_back("source=" + sourceText);
+          avatarSplit.hasSourceText = true;
+          avatarSplit.sourceText = sourceText;
         }
         std::string targetText;
         if (renderUnitForExtra(u, targetText)) {
           fields.push_back("target=" + targetText);
+          avatarSplit.hasTargetText = true;
+          avatarSplit.targetText = targetText;
         }
 
         std::set<unsigned> previousSplitVars;
@@ -12851,6 +12862,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           for (unsigned split : iterTraits(mainParent->splits()->iter())) {
             SATLiteral splitLiteral = Splitter::getLiteralFromName(split);
             previousSplitVars.insert(splitLiteral.var());
+            MegalodonKernelSyntax::RenderedKernelAvatarSplit previousSplit;
+            previousSplit.index = previousIndex;
+            previousSplit.level = split;
+            previousSplit.variable = splitLiteral.var();
+            previousSplit.positive = splitLiteral.positive();
+            avatarSplit.previousSplits.push_back(previousSplit);
             fields.push_back("previous_split_" + std::to_string(previousIndex) + "_level=" + std::to_string(split));
             fields.push_back("previous_split_" + std::to_string(previousIndex) + "_var=" + std::to_string(splitLiteral.var()));
             fields.push_back("previous_split_" + std::to_string(previousIndex) + "_positive=" + (splitLiteral.positive() ? "1" : "0"));
@@ -12866,6 +12883,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           const auto* avatarClause = static_cast<const Indexing::SATClauseExtra*>(satExtra);
           unsigned satIndex = 0;
           for (SATLiteral literal : avatarClause->clause->iter()) {
+            MegalodonKernelSyntax::RenderedKernelAvatarSatLiteral renderedLiteral;
+            renderedLiteral.index = satIndex;
+            renderedLiteral.variable = literal.var();
+            renderedLiteral.positive = literal.positive();
+            avatarSplit.satLiterals.push_back(renderedLiteral);
             fields.push_back("sat_literal_" + std::to_string(satIndex) + "_var=" + std::to_string(literal.var()));
             fields.push_back("sat_literal_" + std::to_string(satIndex) + "_positive=" + (literal.positive() ? "1" : "0"));
             ++satIndex;
@@ -12898,6 +12920,13 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           if (previousSplitVars.find(componentLiteral.var()) == previousSplitVars.end()) {
             splitToParentMap.insert({componentLiteral.var(), {parentIndex - 1, splitExtra->component}});
           }
+          MegalodonKernelSyntax::RenderedKernelAvatarComponentParent componentParent;
+          componentParent.parentIndex = parentIndex - 1;
+          componentParent.refIndex = componentParentRefIndex;
+          componentParent.unit = MegalodonKernelSyntax::unitRef(std::to_string(splitParent->number()));
+          componentParent.split.level = componentLevel;
+          componentParent.split.variable = componentLiteral.var();
+          componentParent.split.positive = componentLiteral.positive();
           std::string prefix = "component_parent_" + std::to_string(parentIndex - 1);
           fields.push_back(prefix + "_unit=" + std::to_string(splitParent->number()));
           fields.push_back(prefix + "_split_level=" + std::to_string(componentLevel));
@@ -12906,6 +12935,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           std::string componentText;
           if (renderClauseForExtra(splitExtra->component, componentText)) {
             fields.push_back(prefix + "_clause=" + componentText);
+            componentParent.hasClause = true;
+            componentParent.clause = componentText;
           }
           std::string normalizedPrefix =
             "component_parent_ref_" + std::to_string(componentParentRefIndex);
@@ -12916,11 +12947,15 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           std::string componentClause;
           if (clauseSexprForKernel(splitExtra->component, componentClause)) {
             fields.push_back(normalizedPrefix + "_clause=" + componentClause);
+            componentParent.hasClauseSexpr = true;
+            componentParent.clauseSexpr = MegalodonKernelSyntax::clause(componentClause);
           }
+          avatarSplit.componentParents.push_back(componentParent);
           ++componentParentRefIndex;
           ++parentIndex;
         }
         fields.push_back("component_parent_count=" + std::to_string(parentIndex > 1 ? parentIndex - 2 : 0));
+        avatarSplit.componentParentCount = parentIndex > 1 ? parentIndex - 2 : 0;
         fields.push_back("component_parent_ref_count=" + std::to_string(componentParentRefIndex));
 
         Stack<LiteralStack> disjointLiterals;
@@ -12938,12 +12973,16 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         decltype(disjointLiterals)::Iterator classes(disjointLiterals);
         while (classes.hasNext()) {
           LiteralStack klass = classes.next();
+          MegalodonKernelSyntax::RenderedKernelAvatarLiteralClass literalClass;
+          literalClass.index = classIndex;
+          literalClass.literalCount = klass.size();
           std::string classPrefix = "literal_class_" + std::to_string(classIndex);
           fields.push_back(classPrefix + "_literal_count=" + std::to_string(klass.size()));
           for (unsigned literalIndex = 0; literalIndex < klass.size(); ++literalIndex) {
             std::string literalText;
             if (skeletonLiteralToMegalodon(klass[literalIndex], literalText)) {
               fields.push_back(classPrefix + "_literal_" + std::to_string(literalIndex) + "=" + literalText);
+              literalClass.literals.push_back(literalText);
             }
           }
           Substitution subst;
@@ -12961,6 +13000,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                 varToSplitMap.insert({var, Splitter::getLiteralFromName(splitLevel).var()});
               }
               fields.push_back(classPrefix + "_matched_split_level=" + std::to_string(splitLevel));
+              literalClass.hasMatchedSplitLevel = true;
+              literalClass.matchedSplitLevel = splitLevel;
               break;
             }
             if (Kernel::MLVariant::isVariant(klass.begin(), component, /*complementary=*/false, &subst)) {
@@ -12971,9 +13012,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                 }
               }
               fields.push_back(classPrefix + "_matched_split_level=" + std::to_string(splitLevel));
+              literalClass.hasMatchedSplitLevel = true;
+              literalClass.matchedSplitLevel = splitLevel;
               break;
             }
           }
+          avatarSplit.literalClasses.push_back(literalClass);
           ++classIndex;
         }
         fields.push_back("literal_class_count=" + std::to_string(classIndex));
@@ -12991,35 +13035,57 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           if (!substituted.isVar() && splitVar == varToSplitMap.end()) {
             continue;
           }
+          MegalodonKernelSyntax::RenderedKernelAvatarParentVarBinding binding;
+          binding.index = bindingIndex;
+          binding.parentVar = variableName(var);
           std::string prefix = "parent_var_binding_" + std::to_string(bindingIndex);
           fields.push_back(prefix + "_parent_var=" + variableName(var));
           if (substituted.isVar()) {
             fields.push_back(prefix + "_component_var=" + variableName(substituted.var()));
+            binding.hasComponentVar = true;
+            binding.componentVar = variableName(substituted.var());
           }
           if (splitVar != varToSplitMap.end()) {
             fields.push_back(prefix + "_split_var=" + std::to_string(splitVar->second));
+            binding.hasSplitVar = true;
+            binding.splitVar = splitVar->second;
           }
+          avatarSplit.parentVarBindings.push_back(binding);
           ++bindingIndex;
         }
         fields.push_back("parent_var_binding_count=" + std::to_string(bindingIndex));
         {
           std::vector<std::string> kernelFields;
-          kernelFields.push_back("source_unit=u" + std::to_string(mainParentUnit->number()));
           std::string sourceClause;
           if (clauseSexprForKernel(mainParent, sourceClause)) {
-            kernelFields.push_back("source_clause=" + sourceClause);
-            kernelFields.push_back("parent_0_clause=" + sourceClause);
+            avatarSplit.hasSourceClause = true;
+            avatarSplit.sourceClause = MegalodonKernelSyntax::clause(sourceClause);
           }
           if (u->isClause()) {
             std::string resultClause;
             if (clauseSexprForKernel(u->asClause(), resultClause)) {
-              kernelFields.push_back("result_clause=" + resultClause);
+              avatarSplit.hasResultClause = true;
+              avatarSplit.resultClause = MegalodonKernelSyntax::clause(resultClause);
             }
           } else if (!targetText.empty()) {
-            kernelFields.push_back("result_formula=" + targetText);
+            avatarSplit.hasResultFormula = true;
+            avatarSplit.resultFormula = MegalodonKernelSyntax::formula(targetText);
           }
-          kernelFields.insert(kernelFields.end(), fields.begin(), fields.end());
-          emitKernelV1("avatar_split", kernelFields);
+          emitKernelV1(
+            "avatar_split",
+            kernelFields,
+            false,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            &avatarSplit);
         }
         emit("avatar_split", fields);
       }
