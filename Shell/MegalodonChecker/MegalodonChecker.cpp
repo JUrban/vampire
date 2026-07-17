@@ -14534,6 +14534,10 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           && primitiveExpansion.find("(unit_resulting_resolution ") == std::string::npos
           && primitiveExpansion.find("(resolve \"" + unitPrefix + "_resolve") != std::string::npos;
         if (hasResolvePrimitiveExpansion) {
+          addPrimitiveExpansionChainFields(
+            kernelFields,
+            primitiveExpansion,
+            "unit_resulting_resolution");
           emitKernelV1(
             "unit_resulting_resolution",
             kernelFields,
