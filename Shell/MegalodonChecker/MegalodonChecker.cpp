@@ -499,9 +499,7 @@ bool MegalodonChecker::certificateInstantiationKernelMetadataSexpr(
   std::vector<std::string> fields;
   fields.push_back("schema=" + MegalodonKernelSyntax::schema());
   fields.push_back("rule=instantiation");
-  fields.push_back("primitive_expansion=prefix");
-  fields.push_back("primitive_expansion_prefix=" + id);
-  fields.push_back("primitive_expansion_requires=substitute");
+  MegalodonKernelSyntax::appendPrimitiveExpansion(fields, id, "substitute");
   fields.push_back("conclusion_unit=" + id);
   fields.push_back("result_clause=" + resultClause);
   fields.push_back("conclusion_clause=" + resultClause);
@@ -12173,14 +12171,15 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     };
   auto emitKernelV1 = [&](const std::string& kernelRule, std::vector<std::string> fields) {
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
-      fields.push_back("primitive_expansion=prefix");
-      fields.push_back("primitive_expansion_prefix=u" + std::to_string(u->number()));
-      fields.push_back("primitive_expansion_requires=" + primitiveRule);
+      MegalodonKernelSyntax::appendPrimitiveExpansion(
+        fields,
+        "u" + std::to_string(u->number()),
+        primitiveRule);
     };
-    const std::vector<std::string> requiredPrimitives =
-      MegalodonKernelSyntax::requiredPrimitivesForRule(kernelRule);
-    if (requiredPrimitives.size() == 1) {
-      addPrimitiveExpansion(requiredPrimitives[0]);
+    if (MegalodonKernelSyntax::appendFixedPrimitiveExpansionForRule(
+          fields,
+          "u" + std::to_string(u->number()),
+          kernelRule)) {
     } else if (kernelRule == "cnf_clause") {
       std::string primitiveStep;
       if (certificateCnfLiteralStepSexpr(u, primitiveStep)) {
