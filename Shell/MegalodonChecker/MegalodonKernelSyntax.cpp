@@ -204,6 +204,14 @@ void setCnfClause(
   step.cnfClause = cnfClause;
 }
 
+void setDefinitionFold(
+  MegalodonKernelStep& step,
+  const RenderedKernelDefinitionFold& definitionFold)
+{
+  step.hasDefinitionFold = true;
+  step.definitionFold = definitionFold;
+}
+
 void setConclusion(
   MegalodonKernelStep& step,
   const RenderedKernelConclusion& conclusion)
@@ -585,6 +593,30 @@ void appendCnfClauseFields(
   }
 }
 
+void appendDefinitionFoldFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelDefinitionFold& definitionFold)
+{
+  fields.push_back("source_unit=" + definitionFold.sourceUnit.value);
+  if (definitionFold.hasSourceFormula) {
+    fields.push_back("source_formula=" + definitionFold.sourceFormula.sexpr);
+  }
+  fields.push_back("definition_count=" + std::to_string(definitionFold.definitions.size()));
+  for (const RenderedKernelDefinitionParent& definition : definitionFold.definitions) {
+    const std::string prefix = "definition_" + std::to_string(definition.index);
+    fields.push_back(prefix + "_unit=" + definition.unit.value);
+    if (definition.hasFormula) {
+      fields.push_back(prefix + "_formula=" + definition.formula.sexpr);
+    }
+    if (definition.hasSymbol) {
+      fields.push_back(prefix + "_symbol=" + definition.symbol);
+    }
+  }
+  if (definitionFold.hasResultFormula) {
+    fields.push_back("result_formula=" + definitionFold.resultFormula.sexpr);
+  }
+}
+
 }
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
@@ -611,6 +643,9 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
   }
   if (step.hasCnfClause) {
     appendCnfClauseFields(fields, step.cnfClause);
+  }
+  if (step.hasDefinitionFold) {
+    appendDefinitionFoldFields(fields, step.definitionFold);
   }
   if (step.hasConclusion) {
     appendConclusionFields(fields, step.conclusion);

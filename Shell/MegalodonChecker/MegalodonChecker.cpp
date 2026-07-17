@@ -12198,7 +12198,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemIntroducedSymbol>* skolemIntroducedSymbols = nullptr,
         const MegalodonKernelSyntax::RenderedKernelSourceFormulaTransform* sourceFormulaTransform = nullptr,
         const MegalodonKernelSyntax::RenderedKernelRectifyRenamings* rectifyRenamings = nullptr,
-        const MegalodonKernelSyntax::RenderedKernelCnfClause* cnfClause = nullptr) {
+        const MegalodonKernelSyntax::RenderedKernelCnfClause* cnfClause = nullptr,
+        const MegalodonKernelSyntax::RenderedKernelDefinitionFold* definitionFold = nullptr) {
     MegalodonKernelSyntax::MegalodonKernelStep step =
       MegalodonKernelSyntax::kernelStep(
         "u" + std::to_string(u->number()),
@@ -12223,6 +12224,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     if (cnfClause != nullptr) {
       MegalodonKernelSyntax::setCnfClause(step, *cnfClause);
+    }
+    if (definitionFold != nullptr) {
+      MegalodonKernelSyntax::setDefinitionFold(step, *definitionFold);
     }
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
       MegalodonKernelSyntax::addPrimitiveExpansion(
@@ -13695,35 +13699,50 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       }
       if (sourceParent != nullptr && !definitionParents.empty()) {
         std::vector<std::string> kernelFields;
-        kernelFields.push_back("source_unit=u" + std::to_string(sourceParent->number()));
+        MegalodonKernelSyntax::RenderedKernelDefinitionFold definitionFold;
+        definitionFold.sourceUnit =
+          MegalodonKernelSyntax::unitRef("u" + std::to_string(sourceParent->number()));
         std::string sourceFormula;
         if (certificateFormulaTermSexpr(sourceParent->getFormula(), sourceFormula)) {
-          kernelFields.push_back("source_formula=" + sourceFormula);
+          definitionFold.hasSourceFormula = true;
+          definitionFold.sourceFormula = MegalodonKernelSyntax::formula(sourceFormula);
         }
         std::reverse(definitionParents.begin(), definitionParents.end());
-        kernelFields.push_back("definition_count=" + std::to_string(definitionParents.size()));
         for (std::size_t definitionIndex = 0; definitionIndex < definitionParents.size(); ++definitionIndex) {
           Kernel::Unit* definitionParent = definitionParents[definitionIndex];
-          std::string prefix = "definition_" + std::to_string(definitionIndex);
-          kernelFields.push_back(prefix + "_unit=u" + std::to_string(definitionParent->number()));
+          MegalodonKernelSyntax::RenderedKernelDefinitionParent definition;
+          definition.index = definitionIndex;
+          definition.unit =
+            MegalodonKernelSyntax::unitRef("u" + std::to_string(definitionParent->number()));
           std::string definitionFormula;
           if (certificateFormulaTermSexpr(definitionParent->getFormula(), definitionFormula)) {
-            kernelFields.push_back(prefix + "_formula=" + definitionFormula);
+            definition.hasFormula = true;
+            definition.formula = MegalodonKernelSyntax::formula(definitionFormula);
           }
           std::string symbolName;
           if (certificatePredicateDefinitionSymbol(definitionParent->getFormula(), symbolName)) {
-            kernelFields.push_back(prefix + "_symbol=" + symbolName);
+            definition.hasSymbol = true;
+            definition.symbol = symbolName;
           }
+          definitionFold.definitions.push_back(definition);
         }
         std::string resultFormula;
         if (certificateFormulaTermSexpr(u->getFormula(), resultFormula)) {
-          kernelFields.push_back("result_formula=" + resultFormula);
+          definitionFold.hasResultFormula = true;
+          definitionFold.resultFormula = MegalodonKernelSyntax::formula(resultFormula);
         }
         emitKernelV1(
           definitionParents.size() == 1
             ? "predicate_definition_fold"
             : "predicate_definition_fold_chain",
-          kernelFields);
+          kernelFields,
+          false,
+          nullptr,
+          nullptr,
+          nullptr,
+          nullptr,
+          nullptr,
+          &definitionFold);
       }
     }
     emit("definition_rewrite", fields);

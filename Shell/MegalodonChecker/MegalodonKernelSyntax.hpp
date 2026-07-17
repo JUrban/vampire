@@ -242,6 +242,24 @@ struct RenderedKernelCnfClause {
   std::size_t clauseCount = 0;
 };
 
+struct RenderedKernelDefinitionParent {
+  std::size_t index = 0;
+  RenderedKernelUnitRef unit;
+  bool hasFormula = false;
+  RenderedKernelFormula formula;
+  bool hasSymbol = false;
+  std::string symbol;
+};
+
+struct RenderedKernelDefinitionFold {
+  RenderedKernelUnitRef sourceUnit;
+  bool hasSourceFormula = false;
+  RenderedKernelFormula sourceFormula;
+  std::vector<RenderedKernelDefinitionParent> definitions;
+  bool hasResultFormula = false;
+  RenderedKernelFormula resultFormula;
+};
+
 struct MegalodonKernelStep {
   std::string id;
   std::string rule;
@@ -257,6 +275,8 @@ struct MegalodonKernelStep {
   RenderedKernelRectifyRenamings rectifyRenamings;
   bool hasCnfClause = false;
   RenderedKernelCnfClause cnfClause;
+  bool hasDefinitionFold = false;
+  RenderedKernelDefinitionFold definitionFold;
   bool hasConclusion = false;
   RenderedKernelConclusion conclusion;
   bool hasParents = false;
@@ -328,6 +348,10 @@ void setRectifyRenamings(
 void setCnfClause(
   MegalodonKernelStep& step,
   const RenderedKernelCnfClause& cnfClause);
+
+void setDefinitionFold(
+  MegalodonKernelStep& step,
+  const RenderedKernelDefinitionFold& definitionFold);
 
 void setConclusion(
   MegalodonKernelStep& step,
