@@ -11871,14 +11871,19 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       fields.push_back(name + "=" + rendered);
     }
   };
-  auto addKernelPrimitiveParentSubstitutionFields = [&](std::vector<std::string>& fields) {
+  auto addKernelPrimitiveParentSubstitutions =
+    [&](MegalodonKernelSyntax::MegalodonKernelStep& step) {
     if (info == nullptr || info->premises.size() != info->substitutionForBanksSub.size()) {
       return;
     }
     for (std::size_t parentIndex = 0; parentIndex < info->substitutionForBanksSub.size(); ++parentIndex) {
       std::string subst;
       if (substitutionSexprForKernel(info->substitutionForBanksSub[parentIndex], subst)) {
-        fields.push_back("primitive_parent_" + std::to_string(parentIndex) + "_substitution=" + subst);
+        MegalodonKernelSyntax::addPrimitiveParentSubstitution(
+          step,
+          MegalodonKernelSyntax::primitiveParentSubstitution(
+            parentIndex,
+            MegalodonKernelSyntax::substitution(subst)));
       }
     }
   };
@@ -12185,12 +12190,18 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           "primitive_expansion_requires_" + std::to_string(i) + "=" + requiredRules[i]);
       }
     };
-  auto emitKernelV1 = [&](const std::string& kernelRule, std::vector<std::string> fields) {
+  auto emitKernelV1 =
+    [&](const std::string& kernelRule,
+        std::vector<std::string> fields,
+        bool includePrimitiveParentSubstitutions = false) {
     MegalodonKernelSyntax::MegalodonKernelStep step =
       MegalodonKernelSyntax::kernelStep(
         "u" + std::to_string(u->number()),
         kernelRule);
     MegalodonKernelSyntax::addFields(step, fields);
+    if (includePrimitiveParentSubstitutions) {
+      addKernelPrimitiveParentSubstitutions(step);
+    }
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
       MegalodonKernelSyntax::addPrimitiveExpansion(
         step,
@@ -14282,12 +14293,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             rewrite->selected.selectedLiteral.selectedLiteral,
             rewrite->selected.otherLiteral);
         }
-        addKernelPrimitiveParentSubstitutionFields(kernelFields);
         emitKernelV1(
           u->inference().rule() == Kernel::InferenceRule::SUPERPOSITION
             ? "superposition"
             : "equality_factoring",
-          kernelFields);
+          kernelFields,
+          true);
       }
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(rewrite->selected.selectedLiteral.selectedLiteral));
@@ -14349,10 +14360,10 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         if (selected->synthesisExtra.elseLit != nullptr) {
           addKernelLiteralFields(kernelFields, "else", selected->synthesisExtra.elseLit);
         }
-        addKernelPrimitiveParentSubstitutionFields(kernelFields);
         emitKernelV1(
           u->inference().rule() == Kernel::InferenceRule::RESOLUTION ? "resolution" : "factoring",
-          kernelFields);
+          kernelFields,
+          true);
       }
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(selected->selectedLiteral.selectedLiteral));

@@ -119,11 +119,17 @@ struct RenderedKernelUrrTraceStep {
   RenderedKernelClause remainingAfter;
 };
 
+struct RenderedKernelPrimitiveParentSubstitution {
+  std::size_t parentIndex = 0;
+  RenderedKernelSubstitution substitution;
+};
+
 struct MegalodonKernelStep {
   std::string id;
   std::string rule;
   std::vector<PrimitiveExpansion> primitiveExpansions;
   std::vector<MigrationField> migrationFields;
+  std::vector<RenderedKernelPrimitiveParentSubstitution> primitiveParentSubstitutions;
   bool hasConclusion = false;
   RenderedKernelConclusion conclusion;
   bool hasParents = false;
@@ -143,6 +149,9 @@ RenderedKernelSubstitution substitution(const std::string& sexpr);
 RenderedKernelPosition position(const std::string& sexpr);
 std::vector<RenderedKernelLiteral> literals(const std::vector<std::string>& sexprs);
 MigrationField migrationField(const std::string& rendered);
+RenderedKernelPrimitiveParentSubstitution primitiveParentSubstitution(
+  std::size_t parentIndex,
+  const RenderedKernelSubstitution& substitution);
 
 PrimitiveExpansion primitiveExpansion(
   const std::string& prefix,
@@ -167,6 +176,10 @@ void addFields(
 void addPrimitiveExpansion(
   MegalodonKernelStep& step,
   const PrimitiveExpansion& expansion);
+
+void addPrimitiveParentSubstitution(
+  MegalodonKernelStep& step,
+  const RenderedKernelPrimitiveParentSubstitution& substitution);
 
 void setConclusion(
   MegalodonKernelStep& step,

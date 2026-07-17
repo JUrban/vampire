@@ -97,6 +97,13 @@ MigrationField migrationField(const std::string& rendered)
   return {rendered};
 }
 
+RenderedKernelPrimitiveParentSubstitution primitiveParentSubstitution(
+  std::size_t parentIndex,
+  const RenderedKernelSubstitution& substitution)
+{
+  return {parentIndex, substitution};
+}
+
 PrimitiveExpansion primitiveExpansion(
   const std::string& prefix,
   const std::string& primitiveRule)
@@ -144,6 +151,13 @@ void addPrimitiveExpansion(
   const PrimitiveExpansion& expansion)
 {
   step.primitiveExpansions.push_back(expansion);
+}
+
+void addPrimitiveParentSubstitution(
+  MegalodonKernelStep& step,
+  const RenderedKernelPrimitiveParentSubstitution& substitution)
+{
+  step.primitiveParentSubstitutions.push_back(substitution);
 }
 
 void setConclusion(
@@ -323,6 +337,17 @@ void appendParentFields(
   }
 }
 
+void appendPrimitiveParentSubstitutionFields(
+  std::vector<std::string>& fields,
+  const std::vector<RenderedKernelPrimitiveParentSubstitution>& substitutions)
+{
+  for (const RenderedKernelPrimitiveParentSubstitution& substitution : substitutions) {
+    fields.push_back(
+      "primitive_parent_" + std::to_string(substitution.parentIndex)
+      + "_substitution=" + substitution.substitution.sexpr);
+  }
+}
+
 }
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
@@ -336,6 +361,7 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
   for (const MigrationField& field : step.migrationFields) {
     fields.push_back(field.rendered);
   }
+  appendPrimitiveParentSubstitutionFields(fields, step.primitiveParentSubstitutions);
   if (step.hasConclusion) {
     appendConclusionFields(fields, step.conclusion);
   }
