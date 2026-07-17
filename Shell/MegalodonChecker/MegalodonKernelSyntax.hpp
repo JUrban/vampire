@@ -474,6 +474,11 @@ bool appendPrimitiveExpansionChainFields(
   const std::string& finalRule,
   const std::string& expectedFinalId = "");
 
+bool appendPrimitiveExpansionChainFields(
+  std::vector<std::string>& fields,
+  const std::vector<std::pair<std::string, std::string>>& primitiveSteps,
+  const std::string& expectedFinalId = "");
+
 MegalodonKernelStep kernelStep(
   const std::string& id,
   const std::string& rule);

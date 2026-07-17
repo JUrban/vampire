@@ -251,6 +251,48 @@ bool appendPrimitiveExpansionChainFields(
   return true;
 }
 
+bool appendPrimitiveExpansionChainFields(
+  std::vector<std::string>& fields,
+  const std::vector<std::pair<std::string, std::string>>& primitiveSteps,
+  const std::string& expectedFinalId)
+{
+  if (primitiveSteps.empty()) {
+    return false;
+  }
+  if (!expectedFinalId.empty()
+    && primitiveSteps.back().second != expectedFinalId) {
+    return false;
+  }
+  std::vector<std::string> requiredRules;
+  for (const auto& step : primitiveSteps) {
+    if (step.first.empty() || step.second.empty()) {
+      return false;
+    }
+    if (std::find(requiredRules.begin(), requiredRules.end(), step.first)
+      == requiredRules.end()) {
+      requiredRules.push_back(step.first);
+    }
+  }
+  fields.push_back("primitive_expansion=prefix");
+  fields.push_back("primitive_expansion_prefix=" + expectedFinalId);
+  if (!requiredRules.empty()) {
+    fields.push_back("primitive_expansion_requires=" + requiredRules.front());
+  }
+  fields.push_back("primitive_expansion_step_count=" + std::to_string(primitiveSteps.size()));
+  for (std::size_t i = 0; i < primitiveSteps.size(); ++i) {
+    fields.push_back(
+      "primitive_expansion_step_" + std::to_string(i) + "_rule=" + primitiveSteps[i].first);
+    fields.push_back(
+      "primitive_expansion_step_" + std::to_string(i) + "_id=" + primitiveSteps[i].second);
+  }
+  fields.push_back("primitive_expansion_requires_count=" + std::to_string(requiredRules.size()));
+  for (std::size_t i = 0; i < requiredRules.size(); ++i) {
+    fields.push_back(
+      "primitive_expansion_requires_" + std::to_string(i) + "=" + requiredRules[i]);
+  }
+  return true;
+}
+
 MegalodonKernelStep kernelStep(
   const std::string& id,
   const std::string& rule)
