@@ -499,7 +499,9 @@ bool MegalodonChecker::certificateInstantiationKernelMetadataSexpr(
   std::vector<std::string> fields;
   fields.push_back("schema=" + MegalodonKernelSyntax::schema());
   fields.push_back("rule=instantiation");
-  MegalodonKernelSyntax::appendPrimitiveExpansion(fields, id, "substitute");
+  MegalodonKernelSyntax::appendPrimitiveExpansion(
+    fields,
+    MegalodonKernelSyntax::primitiveExpansion(id, "substitute"));
   fields.push_back("conclusion_unit=" + id);
   fields.push_back("result_clause=" + resultClause);
   fields.push_back("conclusion_clause=" + resultClause);
@@ -12173,8 +12175,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
       MegalodonKernelSyntax::appendPrimitiveExpansion(
         fields,
-        "u" + std::to_string(u->number()),
-        primitiveRule);
+        MegalodonKernelSyntax::primitiveExpansion(
+          "u" + std::to_string(u->number()),
+          primitiveRule));
     };
     if (MegalodonKernelSyntax::appendFixedPrimitiveExpansionForRule(
           fields,

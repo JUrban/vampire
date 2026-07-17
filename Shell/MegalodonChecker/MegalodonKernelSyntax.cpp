@@ -46,14 +46,20 @@ std::vector<std::string> requiredPrimitivesForRule(const std::string& rule)
   return {};
 }
 
-void appendPrimitiveExpansion(
-  std::vector<std::string>& fields,
+PrimitiveExpansion primitiveExpansion(
   const std::string& prefix,
   const std::string& primitiveRule)
 {
+  return {prefix, primitiveRule};
+}
+
+void appendPrimitiveExpansion(
+  std::vector<std::string>& fields,
+  const PrimitiveExpansion& expansion)
+{
   fields.push_back("primitive_expansion=prefix");
-  fields.push_back("primitive_expansion_prefix=" + prefix);
-  fields.push_back("primitive_expansion_requires=" + primitiveRule);
+  fields.push_back("primitive_expansion_prefix=" + expansion.prefix);
+  fields.push_back("primitive_expansion_requires=" + expansion.requiredRule);
 }
 
 bool appendFixedPrimitiveExpansionForRule(
@@ -65,7 +71,7 @@ bool appendFixedPrimitiveExpansionForRule(
   if (required.size() != 1) {
     return false;
   }
-  appendPrimitiveExpansion(fields, prefix, required[0]);
+  appendPrimitiveExpansion(fields, primitiveExpansion(prefix, required[0]));
   return true;
 }
 
