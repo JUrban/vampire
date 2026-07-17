@@ -12196,7 +12196,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         bool includePrimitiveParentSubstitutions = false,
         const MegalodonKernelSyntax::RenderedKernelSubsumptionResolutionPivot* subsumptionPivot = nullptr,
         const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemIntroducedSymbol>* skolemIntroducedSymbols = nullptr,
-        const MegalodonKernelSyntax::RenderedKernelSourceFormulaTransform* sourceFormulaTransform = nullptr) {
+        const MegalodonKernelSyntax::RenderedKernelSourceFormulaTransform* sourceFormulaTransform = nullptr,
+        const MegalodonKernelSyntax::RenderedKernelRectifyRenamings* rectifyRenamings = nullptr) {
     MegalodonKernelSyntax::MegalodonKernelStep step =
       MegalodonKernelSyntax::kernelStep(
         "u" + std::to_string(u->number()),
@@ -12215,6 +12216,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     if (sourceFormulaTransform != nullptr) {
       MegalodonKernelSyntax::setSourceFormulaTransform(step, *sourceFormulaTransform);
+    }
+    if (rectifyRenamings != nullptr) {
+      MegalodonKernelSyntax::setRectifyRenamings(step, *rectifyRenamings);
     }
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
       MegalodonKernelSyntax::addPrimitiveExpansion(
@@ -13374,53 +13378,84 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     const auto* rectifyInfo = static_cast<const InferenceRecorder::RectifyInferenceExtra*>(genericInfo);
     if (rectifyInfo != nullptr) {
       std::vector<std::string> kernelFields;
+      MegalodonKernelSyntax::RenderedKernelSourceFormulaTransform sourceTransform;
+      bool hasSourceTransform = false;
       UnitIterator kernelParentIterator = u->getParents();
       unsigned kernelParentCount = 0;
       if (kernelParentIterator.hasNext()) {
         Kernel::Unit* parent = kernelParentIterator.next();
-        kernelFields.push_back("source_unit=u" + std::to_string(parent->number()));
-        kernelFields.push_back("parent_0_unit=u" + std::to_string(parent->number()));
+        const std::string parentUnit = "u" + std::to_string(parent->number());
         ++kernelParentCount;
         if (!parent->isClause()) {
           std::string sourceFormula;
+          std::string resultFormula;
           if (certificateFormulaTermSexpr(parent->getFormula(), sourceFormula)) {
-            kernelFields.push_back("source_formula=" + sourceFormula);
-            kernelFields.push_back("parent_0_formula=" + sourceFormula);
+            if (certificateFormulaTermSexpr(u->getFormula(), resultFormula)) {
+              sourceTransform.sourceUnit = MegalodonKernelSyntax::unitRef(parentUnit);
+              sourceTransform.sourceFormula = MegalodonKernelSyntax::formula(sourceFormula);
+              sourceTransform.resultFormula = MegalodonKernelSyntax::formula(resultFormula);
+              sourceTransform.proofParentCount = 1;
+              hasSourceTransform = true;
+            } else {
+              kernelFields.push_back("source_unit=" + parentUnit);
+              kernelFields.push_back("parent_0_unit=" + parentUnit);
+              kernelFields.push_back("source_formula=" + sourceFormula);
+              kernelFields.push_back("parent_0_formula=" + sourceFormula);
+            }
+          } else {
+            kernelFields.push_back("source_unit=" + parentUnit);
+            kernelFields.push_back("parent_0_unit=" + parentUnit);
           }
+        } else {
+          kernelFields.push_back("source_unit=" + parentUnit);
+          kernelFields.push_back("parent_0_unit=" + parentUnit);
         }
       }
-      kernelFields.push_back("proof_parent_count=" + std::to_string(kernelParentCount));
-      std::string resultFormula;
-      if (certificateFormulaTermSexpr(u->getFormula(), resultFormula)) {
-        kernelFields.push_back("result_formula=" + resultFormula);
+      if (!hasSourceTransform) {
+        kernelFields.push_back("proof_parent_count=" + std::to_string(kernelParentCount));
+        std::string resultFormula;
+        if (certificateFormulaTermSexpr(u->getFormula(), resultFormula)) {
+          kernelFields.push_back("result_formula=" + resultFormula);
+        }
       }
-      kernelFields.push_back("renaming_count=" + std::to_string(rectifyInfo->renamings.size()));
+      MegalodonKernelSyntax::RenderedKernelRectifyRenamings rectifyRenamings;
+      rectifyRenamings.reportedCount = rectifyInfo->renamings.size();
       unsigned kernelRenamingIndex = 0;
       const unsigned kernelRenamingLimit = 64;
       for (auto [newFormula, formulaAndSubst] : rectifyInfo->renamings) {
         if (kernelRenamingIndex >= kernelRenamingLimit) {
-          kernelFields.push_back("renaming_truncated=1");
+          rectifyRenamings.truncated = true;
           break;
         }
         auto [formula, substitution] = formulaAndSubst;
+        MegalodonKernelSyntax::RenderedKernelRectifyRenaming renaming;
+        renaming.index = kernelRenamingIndex;
         std::string renamingSource;
         if (certificateFormulaTermSexpr(formula, renamingSource)) {
-          kernelFields.push_back(
-            "renaming_" + std::to_string(kernelRenamingIndex) + "_source=" + renamingSource);
+          renaming.hasSource = true;
+          renaming.source = MegalodonKernelSyntax::formula(renamingSource);
         }
         std::string renamingTarget;
         if (certificateFormulaTermSexpr(newFormula, renamingTarget)) {
-          kernelFields.push_back(
-            "renaming_" + std::to_string(kernelRenamingIndex) + "_target=" + renamingTarget);
+          renaming.hasTarget = true;
+          renaming.target = MegalodonKernelSyntax::formula(renamingTarget);
         }
         std::string renamingSubstitution;
         if (substitutionSexprForKernel(substitution, renamingSubstitution)) {
-          kernelFields.push_back(
-            "renaming_" + std::to_string(kernelRenamingIndex) + "_substitution=" + renamingSubstitution);
+          renaming.hasSubstitution = true;
+          renaming.substitution = MegalodonKernelSyntax::substitution(renamingSubstitution);
         }
+        rectifyRenamings.renamings.push_back(renaming);
         ++kernelRenamingIndex;
       }
-      emitKernelV1("rectify_formula", kernelFields);
+      emitKernelV1(
+        "rectify_formula",
+        kernelFields,
+        false,
+        nullptr,
+        nullptr,
+        hasSourceTransform ? &sourceTransform : nullptr,
+        &rectifyRenamings);
 
       std::vector<std::string> fields;
       fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));

@@ -188,6 +188,14 @@ void setSourceFormulaTransform(
   step.sourceFormulaTransform = transform;
 }
 
+void setRectifyRenamings(
+  MegalodonKernelStep& step,
+  const RenderedKernelRectifyRenamings& renamings)
+{
+  step.hasRectifyRenamings = true;
+  step.rectifyRenamings = renamings;
+}
+
 void setConclusion(
   MegalodonKernelStep& step,
   const RenderedKernelConclusion& conclusion)
@@ -514,6 +522,28 @@ void appendSourceFormulaTransformFields(
   }
 }
 
+void appendRectifyRenamingFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelRectifyRenamings& renamings)
+{
+  fields.push_back("renaming_count=" + std::to_string(renamings.reportedCount));
+  for (const RenderedKernelRectifyRenaming& renaming : renamings.renamings) {
+    const std::string prefix = "renaming_" + std::to_string(renaming.index);
+    if (renaming.hasSource) {
+      fields.push_back(prefix + "_source=" + renaming.source.sexpr);
+    }
+    if (renaming.hasTarget) {
+      fields.push_back(prefix + "_target=" + renaming.target.sexpr);
+    }
+    if (renaming.hasSubstitution) {
+      fields.push_back(prefix + "_substitution=" + renaming.substitution.sexpr);
+    }
+  }
+  if (renamings.truncated) {
+    fields.push_back("renaming_truncated=1");
+  }
+}
+
 }
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
@@ -534,6 +564,9 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
   appendSkolemIntroducedSymbolFields(fields, step.skolemIntroducedSymbols);
   if (step.hasSourceFormulaTransform) {
     appendSourceFormulaTransformFields(fields, step.sourceFormulaTransform);
+  }
+  if (step.hasRectifyRenamings) {
+    appendRectifyRenamingFields(fields, step.rectifyRenamings);
   }
   if (step.hasConclusion) {
     appendConclusionFields(fields, step.conclusion);

@@ -206,6 +206,22 @@ struct RenderedKernelSourceFormulaTransform {
   std::vector<RenderedKernelTransformationPair> transformationPairs;
 };
 
+struct RenderedKernelRectifyRenaming {
+  std::size_t index = 0;
+  bool hasSource = false;
+  RenderedKernelFormula source;
+  bool hasTarget = false;
+  RenderedKernelFormula target;
+  bool hasSubstitution = false;
+  RenderedKernelSubstitution substitution;
+};
+
+struct RenderedKernelRectifyRenamings {
+  std::size_t reportedCount = 0;
+  std::vector<RenderedKernelRectifyRenaming> renamings;
+  bool truncated = false;
+};
+
 struct MegalodonKernelStep {
   std::string id;
   std::string rule;
@@ -217,6 +233,8 @@ struct MegalodonKernelStep {
   std::vector<RenderedKernelSkolemIntroducedSymbol> skolemIntroducedSymbols;
   bool hasSourceFormulaTransform = false;
   RenderedKernelSourceFormulaTransform sourceFormulaTransform;
+  bool hasRectifyRenamings = false;
+  RenderedKernelRectifyRenamings rectifyRenamings;
   bool hasConclusion = false;
   RenderedKernelConclusion conclusion;
   bool hasParents = false;
@@ -280,6 +298,10 @@ void addSkolemIntroducedSymbol(
 void setSourceFormulaTransform(
   MegalodonKernelStep& step,
   const RenderedKernelSourceFormulaTransform& transform);
+
+void setRectifyRenamings(
+  MegalodonKernelStep& step,
+  const RenderedKernelRectifyRenamings& renamings);
 
 void setConclusion(
   MegalodonKernelStep& step,
