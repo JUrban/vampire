@@ -2321,6 +2321,197 @@ bool MegalodonChecker::certificateEnnfFormulaStepSexpr(Kernel::Unit* unit, std::
   return true;
 }
 
+bool MegalodonChecker::termHasHeadFunctor(Kernel::TermList term, unsigned functor) const
+{
+  while (term.isApplication()) {
+    term = term.lhs();
+  }
+  return term.isTerm() && !term.term()->isSpecial() && term.term()->functor() == functor;
+}
+
+bool MegalodonChecker::findTermWithHeadFunctor(Kernel::TermList term, unsigned functor, Kernel::TermList& found) const
+{
+  if (term.isVar()) {
+    return false;
+  }
+  if (term.isApplication()) {
+    if (termHasHeadFunctor(term, functor)) {
+      found = term;
+      return true;
+    }
+    return findTermWithHeadFunctor(term.lhs(), functor, found)
+      || findTermWithHeadFunctor(term.rhs(), functor, found);
+  }
+  Kernel::Term* t = term.term();
+  if (t->functor() == functor) {
+    found = term;
+    return true;
+  }
+  for (unsigned i = 0; i < t->arity(); ++i) {
+    if (findTermWithHeadFunctor(*t->nthArgument(i), functor, found)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool MegalodonChecker::findFormulaTermWithHeadFunctor(Kernel::Formula* formula, unsigned functor, Kernel::TermList& found) const
+{
+  switch (formula->connective()) {
+  case Kernel::LITERAL: {
+    Kernel::Literal* literal = formula->literal();
+    for (unsigned i = 0; i < literal->arity(); ++i) {
+      if (findTermWithHeadFunctor(*literal->nthArgument(i), functor, found)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  case Kernel::BOOL_TERM:
+    return findTermWithHeadFunctor(formula->getBooleanTerm(), functor, found);
+  case Kernel::NOT:
+    return findFormulaTermWithHeadFunctor(formula->uarg(), functor, found);
+  case Kernel::IMP:
+  case Kernel::IFF:
+  case Kernel::XOR:
+    return findFormulaTermWithHeadFunctor(formula->left(), functor, found)
+      || findFormulaTermWithHeadFunctor(formula->right(), functor, found);
+  case Kernel::AND:
+  case Kernel::OR: {
+    auto iterator = formula->args()->iter();
+    while (iterator.hasNext()) {
+      if (findFormulaTermWithHeadFunctor(iterator.next(), functor, found)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  case Kernel::FORALL:
+  case Kernel::EXISTS:
+    return findFormulaTermWithHeadFunctor(formula->qarg(), functor, found);
+  default:
+    return false;
+  }
+}
+
+bool MegalodonChecker::variableApplicationCount(Kernel::TermList term, unsigned var, unsigned& count) const
+{
+  unsigned applications = 0;
+  Kernel::TermList head = term;
+  while (head.isApplication()) {
+    ++applications;
+    head = head.lhs();
+  }
+  if (head.isVar() && head.var() == var) {
+    count = applications;
+    return true;
+  }
+  return false;
+}
+
+bool MegalodonChecker::findTermVariableApplicationCount(Kernel::TermList term, unsigned var, unsigned& count) const
+{
+  if (variableApplicationCount(term, var, count)) {
+    return true;
+  }
+  if (term.isVar()) {
+    return false;
+  }
+  if (term.isApplication()) {
+    return findTermVariableApplicationCount(term.lhs(), var, count)
+      || findTermVariableApplicationCount(term.rhs(), var, count);
+  }
+  Kernel::Term* t = term.term();
+  for (unsigned i = 0; i < t->arity(); ++i) {
+    if (findTermVariableApplicationCount(*t->nthArgument(i), var, count)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool MegalodonChecker::findFormulaVariableApplicationCount(Kernel::Formula* formula, unsigned var, unsigned& count) const
+{
+  switch (formula->connective()) {
+  case Kernel::LITERAL: {
+    Kernel::Literal* literal = formula->literal();
+    for (unsigned i = 0; i < literal->arity(); ++i) {
+      if (findTermVariableApplicationCount(*literal->nthArgument(i), var, count)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  case Kernel::BOOL_TERM:
+    return findTermVariableApplicationCount(formula->getBooleanTerm(), var, count);
+  case Kernel::NOT:
+    return findFormulaVariableApplicationCount(formula->uarg(), var, count);
+  case Kernel::IMP:
+  case Kernel::IFF:
+  case Kernel::XOR:
+    return findFormulaVariableApplicationCount(formula->left(), var, count)
+      || findFormulaVariableApplicationCount(formula->right(), var, count);
+  case Kernel::AND:
+  case Kernel::OR: {
+    auto iterator = formula->args()->iter();
+    while (iterator.hasNext()) {
+      if (findFormulaVariableApplicationCount(iterator.next(), var, count)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  case Kernel::FORALL:
+  case Kernel::EXISTS:
+    return findFormulaVariableApplicationCount(formula->qarg(), var, count);
+  default:
+    return false;
+  }
+}
+
+bool MegalodonChecker::trimTrailingApplications(Kernel::TermList term, unsigned count, Kernel::TermList& trimmed) const
+{
+  while (count > 0) {
+    if (!term.isApplication()) {
+      return false;
+    }
+    term = term.lhs();
+    --count;
+  }
+  trimmed = term;
+  return true;
+}
+
+bool MegalodonChecker::skolemWitnessTerm(
+  Kernel::Formula* parent,
+  Kernel::Formula* result,
+  unsigned skolemFunctor,
+  unsigned replacedVar,
+  Kernel::TermList& witness,
+  unsigned& parentApplicationCount) const
+{
+  Kernel::TermList skolemTerm;
+  if (!findFormulaTermWithHeadFunctor(result, skolemFunctor, skolemTerm)) {
+    return false;
+  }
+  if (!findFormulaVariableApplicationCount(parent, replacedVar, parentApplicationCount)) {
+    return false;
+  }
+  return trimTrailingApplications(skolemTerm, parentApplicationCount, witness);
+}
+
+bool MegalodonChecker::decomposeApplicationSpine(Kernel::TermList term, Kernel::TermList& head, std::vector<Kernel::TermList>& args) const
+{
+  args.clear();
+  while (term.isApplication()) {
+    args.push_back(term.rhs());
+    term = term.lhs();
+  }
+  head = term;
+  std::reverse(args.begin(), args.end());
+  return true;
+}
+
 bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std::string& result)
 {
   if (unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::SKOLEMIZE) {
@@ -2335,156 +2526,6 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std
     return false;
   }
 
-  auto hasHeadFunctor = [&](Kernel::TermList term, unsigned skolemFunctor) {
-    while (term.isApplication()) {
-      term = term.lhs();
-    }
-    return term.isTerm() && !term.term()->isSpecial() && term.term()->functor() == skolemFunctor;
-  };
-
-  auto findTerm = [&](auto& self, Kernel::TermList term, unsigned skolemFunctor, Kernel::TermList& found) -> bool {
-    if (term.isVar()) {
-      return false;
-    }
-    if (term.isApplication()) {
-      if (hasHeadFunctor(term, skolemFunctor)) {
-        found = term;
-        return true;
-      }
-      return self(self, term.lhs(), skolemFunctor, found) || self(self, term.rhs(), skolemFunctor, found);
-    }
-    Kernel::Term* t = term.term();
-    if (t->functor() == skolemFunctor) {
-      found = term;
-      return true;
-    }
-    for (unsigned i = 0; i < t->arity(); ++i) {
-      if (self(self, *t->nthArgument(i), skolemFunctor, found)) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  auto findFormulaTerm = [&](auto& self, Kernel::Formula* formula, unsigned skolemFunctor, Kernel::TermList& found) -> bool {
-    switch (formula->connective()) {
-    case Kernel::LITERAL: {
-      Kernel::Literal* literal = formula->literal();
-      for (unsigned i = 0; i < literal->arity(); ++i) {
-        if (findTerm(findTerm, *literal->nthArgument(i), skolemFunctor, found)) {
-          return true;
-        }
-      }
-      return false;
-    }
-    case Kernel::BOOL_TERM:
-      return findTerm(findTerm, formula->getBooleanTerm(), skolemFunctor, found);
-    case Kernel::NOT:
-      return self(self, formula->uarg(), skolemFunctor, found);
-    case Kernel::IMP:
-    case Kernel::IFF:
-    case Kernel::XOR:
-      return self(self, formula->left(), skolemFunctor, found) || self(self, formula->right(), skolemFunctor, found);
-    case Kernel::AND:
-    case Kernel::OR: {
-      auto iterator = formula->args()->iter();
-      while (iterator.hasNext()) {
-        if (self(self, iterator.next(), skolemFunctor, found)) {
-          return true;
-        }
-      }
-      return false;
-    }
-    case Kernel::FORALL:
-    case Kernel::EXISTS:
-      return self(self, formula->qarg(), skolemFunctor, found);
-    default:
-      return false;
-    }
-  };
-
-  auto trimTrailingApplications = [](Kernel::TermList term, unsigned count, Kernel::TermList& trimmed) {
-    while (count > 0) {
-      if (!term.isApplication()) {
-        return false;
-      }
-      term = term.lhs();
-      --count;
-    }
-    trimmed = term;
-    return true;
-  };
-
-  auto variableApplicationCount = [](Kernel::TermList term, unsigned var, unsigned& count) {
-    unsigned applications = 0;
-    Kernel::TermList head = term;
-    while (head.isApplication()) {
-      ++applications;
-      head = head.lhs();
-    }
-    if (head.isVar() && head.var() == var) {
-      count = applications;
-      return true;
-    }
-    return false;
-  };
-
-  auto findTermVariableApplicationCount = [&](auto& self, Kernel::TermList term, unsigned var, unsigned& count) -> bool {
-    if (variableApplicationCount(term, var, count)) {
-      return true;
-    }
-    if (term.isVar()) {
-      return false;
-    }
-    if (term.isApplication()) {
-      return self(self, term.lhs(), var, count) || self(self, term.rhs(), var, count);
-    }
-    Kernel::Term* t = term.term();
-    for (unsigned i = 0; i < t->arity(); ++i) {
-      if (self(self, *t->nthArgument(i), var, count)) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  auto findFormulaVariableApplicationCount = [&](auto& self, Kernel::Formula* formula, unsigned var, unsigned& count) -> bool {
-    switch (formula->connective()) {
-    case Kernel::LITERAL: {
-      Kernel::Literal* literal = formula->literal();
-      for (unsigned i = 0; i < literal->arity(); ++i) {
-        if (findTermVariableApplicationCount(findTermVariableApplicationCount, *literal->nthArgument(i), var, count)) {
-          return true;
-        }
-      }
-      return false;
-    }
-    case Kernel::BOOL_TERM:
-      return findTermVariableApplicationCount(findTermVariableApplicationCount, formula->getBooleanTerm(), var, count);
-    case Kernel::NOT:
-      return self(self, formula->uarg(), var, count);
-    case Kernel::IMP:
-    case Kernel::IFF:
-    case Kernel::XOR:
-      return self(self, formula->left(), var, count) || self(self, formula->right(), var, count);
-    case Kernel::AND:
-    case Kernel::OR: {
-      auto iterator = formula->args()->iter();
-      while (iterator.hasNext()) {
-        if (self(self, iterator.next(), var, count)) {
-          return true;
-        }
-      }
-      return false;
-    }
-    case Kernel::FORALL:
-    case Kernel::EXISTS:
-      return self(self, formula->qarg(), var, count);
-    default:
-      return false;
-    }
-  };
-
   std::vector<std::pair<unsigned, std::string>> bindings;
   std::vector<std::string> introductions;
   for (auto symbol : iterTraits(Kernel::InferenceStore::SymbolStack::ConstIterator(_is->getIntroducedSymbols(unit)))) {
@@ -2497,15 +2538,11 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std
     }
     Kernel::TermList skolemTerm;
     std::string skolemTermSexpr;
-    if (!findFormulaTerm(findFormulaTerm, static_cast<Kernel::FormulaUnit*>(unit)->formula(), symbol.second, skolemTerm)) {
+    if (!findFormulaTermWithHeadFunctor(static_cast<Kernel::FormulaUnit*>(unit)->formula(), symbol.second, skolemTerm)) {
       skolemTermSexpr = "(TMH " + sexprQuote(functionName(symbol.second)) + ")";
     } else {
       unsigned parentApplicationCount = 0;
-      if (!findFormulaVariableApplicationCount(
-          findFormulaVariableApplicationCount,
-          static_cast<Kernel::FormulaUnit*>(parent)->formula(),
-          static_cast<unsigned>(var),
-          parentApplicationCount)) {
+      if (!findFormulaVariableApplicationCount(static_cast<Kernel::FormulaUnit*>(parent)->formula(), static_cast<unsigned>(var), parentApplicationCount)) {
         return false;
       }
       Kernel::TermList trimmedSkolemTerm;
@@ -13723,6 +13760,25 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       if (_is->hasIntroducedSymbols(u)) {
         auto& symbols = _is->getIntroducedSymbols(u);
         kernelFields.push_back("introduced_count=" + std::to_string(symbols.size()));
+        Kernel::Formula* sourceFormulaForSkolem = nullptr;
+        for (Kernel::Unit* parent : iterTraits(u->getParents())) {
+          if (!parent->isClause()) {
+            sourceFormulaForSkolem = parent->getFormula();
+          }
+          break;
+        }
+        std::map<unsigned, Kernel::TermList> sourceVariableSorts;
+        if (sourceFormulaForSkolem != nullptr) {
+          Lib::DHMap<unsigned, Kernel::TermList> collectedSorts;
+          Kernel::SortHelper::collectVariableSorts(sourceFormulaForSkolem, collectedSorts);
+          Lib::DHMap<unsigned, Kernel::TermList>::Iterator sortIterator(collectedSorts);
+          while (sortIterator.hasNext()) {
+            unsigned var;
+            Kernel::TermList sort;
+            sortIterator.next(var, sort);
+            sourceVariableSorts[var] = sort;
+          }
+        }
         unsigned symbolIndex = 0;
         for (auto symbol : iterTraits(Kernel::InferenceStore::SymbolStack::ConstIterator(symbols))) {
           const std::string prefix = "introduced_" + std::to_string(symbolIndex);
@@ -13738,6 +13794,86 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             std::string declaration = functionDeclaration(symbol.second, name);
             if (!declaration.empty()) {
               kernelFields.push_back(prefix + "_declaration=" + declaration);
+            }
+            if (replacedVar >= 0 && sourceFormulaForSkolem != nullptr) {
+              auto replacedSort = sourceVariableSorts.find(static_cast<unsigned>(replacedVar));
+              if (replacedSort != sourceVariableSorts.end()) {
+                std::string replacedSortText;
+                std::string replacedSortSexpr;
+                if (sortToMegalodon(replacedSort->second, replacedSortText)) {
+                  kernelFields.push_back(prefix + "_replaced_var_sort=" + replacedSortText);
+                }
+                if (certificateTypeSexpr(replacedSort->second, replacedSortSexpr)) {
+                  kernelFields.push_back(prefix + "_replaced_var_sort_sexpr=" + replacedSortSexpr);
+                }
+              }
+              Kernel::TermList witness;
+              unsigned parentApplicationCount = 0;
+              if (skolemWitnessTerm(
+                  sourceFormulaForSkolem,
+                  u->getFormula(),
+                  symbol.second,
+                  static_cast<unsigned>(replacedVar),
+                  witness,
+                  parentApplicationCount)) {
+                std::string witnessSexpr;
+                if (certificateTermSexpr(witness, witnessSexpr)) {
+                  kernelFields.push_back(prefix + "_witness_term=" + witnessSexpr);
+                }
+                Kernel::TermList witnessSort;
+                if (Kernel::SortHelper::tryGetResultSort(witness, witnessSort)) {
+                  std::string witnessSortText;
+                  std::string witnessSortSexpr;
+                  if (sortToMegalodon(witnessSort, witnessSortText)) {
+                    kernelFields.push_back(prefix + "_witness_sort=" + witnessSortText);
+                  }
+                  if (certificateTypeSexpr(witnessSort, witnessSortSexpr)) {
+                    kernelFields.push_back(prefix + "_witness_sort_sexpr=" + witnessSortSexpr);
+                  }
+                }
+                kernelFields.push_back(prefix + "_source_variable_application_count=" + std::to_string(parentApplicationCount));
+                Kernel::TermList witnessHead;
+                std::vector<Kernel::TermList> dependencies;
+                decomposeApplicationSpine(witness, witnessHead, dependencies);
+                if (termHasHeadFunctor(witnessHead, symbol.second)) {
+                  kernelFields.push_back(prefix + "_dependency_count=" + std::to_string(dependencies.size()));
+                  for (std::size_t dependencyIndex = 0; dependencyIndex < dependencies.size(); ++dependencyIndex) {
+                    const std::string dependencyPrefix = prefix + "_dependency_" + std::to_string(dependencyIndex);
+                    std::string dependencySexpr;
+                    if (certificateTermSexpr(dependencies[dependencyIndex], dependencySexpr)) {
+                      kernelFields.push_back(dependencyPrefix + "_term=" + dependencySexpr);
+                    }
+                    if (dependencies[dependencyIndex].isVar()) {
+                      unsigned dependencyVar = dependencies[dependencyIndex].var();
+                      kernelFields.push_back(dependencyPrefix + "_var=" + variableName(dependencyVar));
+                      auto dependencySort = sourceVariableSorts.find(dependencyVar);
+                      if (dependencySort != sourceVariableSorts.end()) {
+                        std::string dependencySortText;
+                        std::string dependencySortSexpr;
+                        if (sortToMegalodon(dependencySort->second, dependencySortText)) {
+                          kernelFields.push_back(dependencyPrefix + "_sort=" + dependencySortText);
+                        }
+                        if (certificateTypeSexpr(dependencySort->second, dependencySortSexpr)) {
+                          kernelFields.push_back(dependencyPrefix + "_sort_sexpr=" + dependencySortSexpr);
+                        }
+                      }
+                    } else {
+                      Kernel::TermList dependencySort;
+                      if (Kernel::SortHelper::tryGetResultSort(dependencies[dependencyIndex], dependencySort)) {
+                        std::string dependencySortText;
+                        std::string dependencySortSexpr;
+                        if (sortToMegalodon(dependencySort, dependencySortText)) {
+                          kernelFields.push_back(dependencyPrefix + "_sort=" + dependencySortText);
+                        }
+                        if (certificateTypeSexpr(dependencySort, dependencySortSexpr)) {
+                          kernelFields.push_back(dependencyPrefix + "_sort_sexpr=" + dependencySortSexpr);
+                        }
+                      }
+                    }
+                  }
+                }
+                kernelFields.push_back(prefix + "_choice_principle=classical_choice");
+              }
             }
           } else if (symbol.first == SymbolType::PRED) {
             std::string name = predicateName(symbol.second);

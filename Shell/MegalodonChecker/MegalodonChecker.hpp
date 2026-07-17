@@ -182,6 +182,15 @@ private:
   bool certificateFoolFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateEnnfFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool termHasHeadFunctor(Kernel::TermList term, unsigned functor) const;
+  bool findTermWithHeadFunctor(Kernel::TermList term, unsigned functor, Kernel::TermList& found) const;
+  bool findFormulaTermWithHeadFunctor(Kernel::Formula* formula, unsigned functor, Kernel::TermList& found) const;
+  bool variableApplicationCount(Kernel::TermList term, unsigned var, unsigned& count) const;
+  bool findTermVariableApplicationCount(Kernel::TermList term, unsigned var, unsigned& count) const;
+  bool findFormulaVariableApplicationCount(Kernel::Formula* formula, unsigned var, unsigned& count) const;
+  bool trimTrailingApplications(Kernel::TermList term, unsigned count, Kernel::TermList& trimmed) const;
+  bool skolemWitnessTerm(Kernel::Formula* parent, Kernel::Formula* result, unsigned skolemFunctor, unsigned replacedVar, Kernel::TermList& witness, unsigned& parentApplicationCount) const;
+  bool decomposeApplicationSpine(Kernel::TermList term, Kernel::TermList& head, std::vector<Kernel::TermList>& args) const;
   bool certificateCnfLiteralStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateCnfFormulaClauseStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificatePredicateDefinitionStepSexpr(Kernel::Unit* unit, std::string& result);
