@@ -220,6 +220,14 @@ void setUrrTrace(
   step.urrTrace = urrTrace;
 }
 
+void setAvatarComponent(
+  MegalodonKernelStep& step,
+  const RenderedKernelAvatarComponent& avatarComponent)
+{
+  step.hasAvatarComponent = true;
+  step.avatarComponent = avatarComponent;
+}
+
 void setConclusion(
   MegalodonKernelStep& step,
   const RenderedKernelConclusion& conclusion)
@@ -641,6 +649,27 @@ void appendUrrTraceFields(
   }
 }
 
+void appendAvatarComponentFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelAvatarComponent& component)
+{
+  if (component.hasResultClause) {
+    fields.push_back("result_clause=" + component.resultClause.sexpr);
+  }
+  fields.push_back("literal_count=" + std::to_string(component.literalCount));
+  for (std::size_t literalIndex = 0; literalIndex < component.literals.size(); ++literalIndex) {
+    fields.push_back(
+      "literal_" + std::to_string(literalIndex) + "=" + component.literals[literalIndex].sexpr);
+  }
+  fields.push_back("split_count=" + std::to_string(component.splitCount));
+  for (const RenderedKernelAvatarSplit& split : component.splits) {
+    const std::string prefix = "split_" + std::to_string(split.index);
+    fields.push_back(prefix + "_level=" + std::to_string(split.level));
+    fields.push_back(prefix + "_var=" + std::to_string(split.variable));
+    fields.push_back(prefix + "_positive=" + std::string(split.positive ? "1" : "0"));
+  }
+}
+
 }
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
@@ -673,6 +702,9 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
   }
   if (step.hasUrrTrace) {
     appendUrrTraceFields(fields, step.urrTrace);
+  }
+  if (step.hasAvatarComponent) {
+    appendAvatarComponentFields(fields, step.avatarComponent);
   }
   if (step.hasConclusion) {
     appendConclusionFields(fields, step.conclusion);
