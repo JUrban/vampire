@@ -220,7 +220,11 @@ private:
     std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   bool certificateNativeStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateResolveStepSexpr(Kernel::Unit* unit, std::string& result);
-  bool certificateSubstitutedResolutionStepsSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
+  bool certificateSubstitutedResolutionStepsSexpr(
+    Kernel::Unit* unit,
+    const InferenceRecorder::InferenceInformation* replayInfo,
+    std::string& result,
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   bool certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFactorStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateTrivialInequalityRemovalStepsSexpr(Kernel::Unit* unit, std::string& result);
