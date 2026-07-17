@@ -468,6 +468,11 @@ void appendPrimitiveExpansion(
   std::vector<std::string>& fields,
   const PrimitiveExpansion& expansion);
 
+bool appendPrimitiveExpansionChainFields(
+  std::vector<std::string>& fields,
+  const std::string& expansion,
+  const std::string& finalRule);
+
 MegalodonKernelStep kernelStep(
   const std::string& id,
   const std::string& rule);

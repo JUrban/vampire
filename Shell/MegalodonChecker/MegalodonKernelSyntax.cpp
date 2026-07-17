@@ -1,5 +1,6 @@
 #include "Shell/MegalodonChecker/MegalodonKernelSyntax.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <utility>
 
@@ -174,6 +175,75 @@ void appendPrimitiveExpansion(
   fields.push_back("primitive_expansion=prefix");
   fields.push_back("primitive_expansion_prefix=" + expansion.prefix);
   fields.push_back("primitive_expansion_requires=" + expansion.requiredRule);
+}
+
+bool appendPrimitiveExpansionChainFields(
+  std::vector<std::string>& fields,
+  const std::string& expansion,
+  const std::string& finalRule)
+{
+  std::vector<std::pair<std::string, std::string>> primitiveSteps;
+  std::vector<std::string> requiredRules;
+  unsigned depth = 0;
+  for (std::size_t pos = 0; pos < expansion.size(); ++pos) {
+    if (expansion[pos] == '(') {
+      if (depth == 0) {
+        std::size_t cursor = pos + 1;
+        while (cursor < expansion.size() && expansion[cursor] == ' ') {
+          ++cursor;
+        }
+        std::size_t ruleStart = cursor;
+        while (cursor < expansion.size()
+          && expansion[cursor] != ' '
+          && expansion[cursor] != '\n'
+          && expansion[cursor] != '\t'
+          && expansion[cursor] != ')') {
+          ++cursor;
+        }
+        if (ruleStart != cursor) {
+          std::string rule = expansion.substr(ruleStart, cursor - ruleStart);
+          if (rule != finalRule
+            && rule != "step_variable_sorts"
+            && rule != "step_extra") {
+            std::size_t quoteStart = expansion.find('"', cursor);
+            if (quoteStart != std::string::npos) {
+              std::size_t quoteEnd = expansion.find('"', quoteStart + 1);
+              if (quoteEnd != std::string::npos) {
+                std::string id =
+                  expansion.substr(quoteStart + 1, quoteEnd - quoteStart - 1);
+                primitiveSteps.push_back({rule, id});
+                if (std::find(requiredRules.begin(), requiredRules.end(), rule)
+                  == requiredRules.end()) {
+                  requiredRules.push_back(rule);
+                }
+              }
+            }
+          }
+        }
+      }
+      ++depth;
+      continue;
+    }
+    if (expansion[pos] == ')' && depth > 0) {
+      --depth;
+    }
+  }
+  if (primitiveSteps.empty()) {
+    return false;
+  }
+  fields.push_back("primitive_expansion_step_count=" + std::to_string(primitiveSteps.size()));
+  for (std::size_t i = 0; i < primitiveSteps.size(); ++i) {
+    fields.push_back(
+      "primitive_expansion_step_" + std::to_string(i) + "_rule=" + primitiveSteps[i].first);
+    fields.push_back(
+      "primitive_expansion_step_" + std::to_string(i) + "_id=" + primitiveSteps[i].second);
+  }
+  fields.push_back("primitive_expansion_requires_count=" + std::to_string(requiredRules.size()));
+  for (std::size_t i = 0; i < requiredRules.size(); ++i) {
+    fields.push_back(
+      "primitive_expansion_requires_" + std::to_string(i) + "=" + requiredRules[i]);
+  }
+  return true;
 }
 
 MegalodonKernelStep kernelStep(
