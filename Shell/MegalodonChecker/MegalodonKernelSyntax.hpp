@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Shell {
@@ -20,6 +21,7 @@ struct PrimitiveStep {
   std::vector<std::string> parentIds;
   bool hasResultClause = false;
   std::string resultClause;
+  std::vector<std::pair<std::string, std::string>> fields;
 };
 
 struct RenderedKernelUnitRef {
@@ -483,6 +485,7 @@ PrimitiveStep primitiveClauseStep(
   const std::string& id,
   const std::vector<std::string>& parentIds,
   const std::string& resultClause,
+  const std::vector<std::pair<std::string, std::string>>& fields,
   const std::string& rendered);
 
 void appendPrimitiveExpansion(

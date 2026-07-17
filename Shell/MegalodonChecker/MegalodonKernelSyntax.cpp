@@ -181,12 +181,14 @@ PrimitiveStep primitiveClauseStep(
   const std::string& id,
   const std::vector<std::string>& parentIds,
   const std::string& resultClause,
+  const std::vector<std::pair<std::string, std::string>>& fields,
   const std::string& rendered)
 {
   PrimitiveStep step = primitiveStep(rule, id, rendered);
   step.parentIds = parentIds;
   step.hasResultClause = true;
   step.resultClause = resultClause;
+  step.fields = fields;
   return step;
 }
 
@@ -326,6 +328,14 @@ bool appendPrimitiveExpansionChainFields(
       fields.push_back(
         "primitive_expansion_step_" + std::to_string(i)
         + "_result_clause=" + primitiveSteps[i].resultClause);
+    }
+    for (const auto& field : primitiveSteps[i].fields) {
+      if (field.first.empty() || field.second.empty()) {
+        return false;
+      }
+      fields.push_back(
+        "primitive_expansion_step_" + std::to_string(i)
+        + "_" + field.first + "=" + field.second);
     }
   }
   fields.push_back("primitive_expansion_requires_count=" + std::to_string(requiredRules.size()));

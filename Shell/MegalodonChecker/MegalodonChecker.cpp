@@ -4524,6 +4524,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         const std::string& stepId,
         const std::vector<std::string>& parentIds,
         const std::string& resultClause,
+        const std::vector<std::pair<std::string, std::string>>& fields,
         const std::string& rendered) {
       localPrimitiveSteps.push_back(
         MegalodonKernelSyntax::primitiveClauseStep(
@@ -4531,6 +4532,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
           stepId,
           parentIds,
           resultClause,
+          fields,
           rendered));
     };
   std::string previousTraceSelectedLiteralSexpr;
@@ -4658,6 +4660,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         substituteId,
         {currentParentId},
         substituteResultClause,
+        {{"substitution", subst}},
         "(substitute " + sexprQuote(substituteId)
         + " (parent " + sexprQuote(currentParentId) + ") "
         + subst
@@ -4696,6 +4699,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         symmetryId,
         {currentParentId},
         symmetryResultClause,
+        {{"literal", std::to_string(selectedIndex)}},
         "(equality_symmetry " + sexprQuote(symmetryId)
         + " (parent " + sexprQuote(currentParentId) + ")"
         + " (literal " + std::to_string(selectedIndex) + ")"
@@ -4749,6 +4753,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         substituteId,
         {unitParentId},
         certificateClauseSexprFromRenderedLiterals(unitRendered),
+        {{"substitution", subst}},
         substituteStep);
       addSyntheticVariableSorts(substituteId, unitLiterals);
       unitParentId = substituteId;
@@ -4780,6 +4785,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
           symmetryId,
           {currentParentId},
           symmetryResultClause,
+          {{"literal", std::to_string(selectedIndex)}},
           "(equality_symmetry " + sexprQuote(symmetryId)
           + " (parent " + sexprQuote(currentParentId) + ")"
           + " (literal " + std::to_string(selectedIndex) + ")"
@@ -4810,6 +4816,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         symmetryId,
         {unitParentId},
         symmetryResultClause,
+        {{"literal", "0"}},
         "(equality_symmetry " + sexprQuote(symmetryId)
         + " (parent " + sexprQuote(unitParentId) + ")"
         + " (literal 0)"
@@ -4833,6 +4840,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
       resolveId,
       {currentParentId, unitParentId},
       resolveResultClause,
+      {{"pivot_left", std::to_string(selectedIndex)}, {"pivot_right", "0"}},
       "(resolve " + sexprQuote(resolveId)
       + " (parents " + sexprQuote(currentParentId) + " " + sexprQuote(unitParentId) + ")"
       + " (pivot " + std::to_string(selectedIndex) + " 0)"
@@ -4897,6 +4905,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
           renameId,
           {currentParentId},
           renameResultClause,
+          {{"substitution", finalRenameSubst}},
           "(substitute " + sexprQuote(renameId)
           + " (parent " + sexprQuote(currentParentId) + ") "
           + finalRenameSubst
@@ -4933,6 +4942,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
           factorId,
           {currentParentId},
           factorResultClause,
+          {{"literal_left", std::to_string(left)}, {"literal_right", std::to_string(right)}},
           "(factor " + sexprQuote(factorId)
           + " (parent " + sexprQuote(currentParentId) + ")"
           + " (literals " + std::to_string(left) + " " + std::to_string(right) + ")"
@@ -4969,6 +4979,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
           symmetryId,
           {currentParentId},
           symmetryResultClause,
+          {{"literal", std::to_string(i)}},
           "(equality_symmetry " + sexprQuote(symmetryId)
           + " (parent " + sexprQuote(currentParentId) + ")"
           + " (literal " + std::to_string(i) + ")"
@@ -5009,6 +5020,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
       unitId,
       {currentParentId},
       clause,
+      {{"substitution", "(subst)"}},
       "(substitute " + sexprQuote(unitId)
       + " (parent " + sexprQuote(currentParentId) + ")"
       + " (subst)"
