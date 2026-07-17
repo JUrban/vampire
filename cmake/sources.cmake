@@ -692,6 +692,8 @@ set(SOURCES
     Shell/LeanChecker/VariablePrenexOrderingTree.hpp
     Shell/MegalodonChecker/MegalodonChecker.cpp
     Shell/MegalodonChecker/MegalodonChecker.hpp
+    Shell/MegalodonChecker/MegalodonKernelSyntax.cpp
+    Shell/MegalodonChecker/MegalodonKernelSyntax.hpp
     Shell/Lexer.cpp
     Shell/Lexer.hpp
     Shell/LispLexer.cpp

@@ -26,6 +26,7 @@
 #include "Saturation/Splitter.hpp"
 #include "Shell/InferenceRecorder.hpp"
 #include "Shell/Options.hpp"
+#include "Shell/MegalodonChecker/MegalodonKernelSyntax.hpp"
 #include "Shell/TPTPPrinter.hpp"
 #include "Shell/TweeGoalTransformation.hpp"
 
@@ -496,7 +497,7 @@ bool MegalodonChecker::certificateInstantiationKernelMetadataSexpr(
   const std::string resultClause = certificateClauseSexprFromRenderedLiterals(resultLiterals);
 
   std::vector<std::string> fields;
-  fields.push_back("schema=prover9-small-kernel-v1");
+  fields.push_back("schema=" + MegalodonKernelSyntax::schema());
   fields.push_back("rule=instantiation");
   fields.push_back("primitive_expansion=prefix");
   fields.push_back("primitive_expansion_prefix=" + id);
@@ -12176,14 +12177,10 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       fields.push_back("primitive_expansion_prefix=u" + std::to_string(u->number()));
       fields.push_back("primitive_expansion_requires=" + primitiveRule);
     };
-    if (kernelRule == "superposition" || kernelRule == "rewrite") {
-      addPrimitiveExpansion("paramodulate");
-    } else if (kernelRule == "fool_formula") {
-      addPrimitiveExpansion("fool_atom_lift");
-    } else if (kernelRule == "formula_normalize") {
-      addPrimitiveExpansion("ennf_formula");
-    } else if (kernelRule == "skolemize") {
-      addPrimitiveExpansion("skolem_formula");
+    const std::vector<std::string> requiredPrimitives =
+      MegalodonKernelSyntax::requiredPrimitivesForRule(kernelRule);
+    if (requiredPrimitives.size() == 1) {
+      addPrimitiveExpansion(requiredPrimitives[0]);
     } else if (kernelRule == "cnf_clause") {
       std::string primitiveStep;
       if (certificateCnfLiteralStepSexpr(u, primitiveStep)) {
@@ -12220,25 +12217,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             ? "equality_factoring_constraints"
             : "equality_factoring");
       }
-    } else if (kernelRule == "avatar_component") {
-      addPrimitiveExpansion("avatar_component");
-    } else if (kernelRule == "avatar_split") {
-      addPrimitiveExpansion("avatar_split");
-    } else if (kernelRule == "avatar_refutation") {
-      addPrimitiveExpansion("avatar_refutation");
-    } else if (kernelRule == "avatar_definition") {
-      addPrimitiveExpansion("avatar_definition");
-    } else if (kernelRule == "split_dependency") {
-      addPrimitiveExpansion("split_dependency");
-    } else if (kernelRule == "subsumption_resolution"
-      || kernelRule == "unit_resulting_resolution"
-      || kernelRule == "resolution") {
-      addPrimitiveExpansion("resolve");
-    } else if (kernelRule == "factoring") {
-      addPrimitiveExpansion("factor");
     }
     fields.insert(fields.begin(), "rule=" + kernelRule);
-    fields.insert(fields.begin(), "schema=prover9-small-kernel-v1");
+    fields.insert(fields.begin(), "schema=" + MegalodonKernelSyntax::schema());
     addKernelConclusionFields(fields);
     addKernelParentFields(fields);
     emit("kernel_v1", fields);
