@@ -12031,6 +12031,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       || info->premises.size() != info->substitutionForBanksSub.size()) {
       return;
     }
+    MegalodonKernelSyntax::RenderedKernelRewrite rewrite;
     bool addedEquality = false;
     for (std::size_t parentIndex = 0; parentIndex < info->premises.size() && !addedEquality; ++parentIndex) {
       Kernel::Clause* premise = info->premises[parentIndex];
@@ -12058,16 +12059,25 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         }
         std::string rendered;
         if (literalSexprForKernel(substituted, rendered)) {
-          fields.push_back("equality_substituted=" + rendered);
+          rewrite.hasEqualitySubstituted = true;
+          rewrite.equalitySubstituted = rendered;
         }
-        fields.push_back("equality_parent_index=" + std::to_string(parentIndex));
-        fields.push_back("equality_literal_index=" + std::to_string(literalIndex));
+        rewrite.hasEqualityLocation = true;
+        rewrite.equalityParentIndex = static_cast<int>(parentIndex);
+        rewrite.equalityLiteralIndex = static_cast<int>(literalIndex);
         addedEquality = true;
         break;
       }
     }
-    addKernelTermField(fields, "from", info->demodulationRedex);
-    addKernelTermField(fields, "to", info->demodulationReplacement);
+    std::string rendered;
+    if (termSexprForKernel(info->demodulationRedex, rendered)) {
+      rewrite.hasFrom = true;
+      rewrite.from = rendered;
+    }
+    if (termSexprForKernel(info->demodulationReplacement, rendered)) {
+      rewrite.hasTo = true;
+      rewrite.to = rendered;
+    }
     for (std::size_t parentIndex = 0; parentIndex < info->premises.size(); ++parentIndex) {
       Kernel::Clause* premise = info->premises[parentIndex];
       for (unsigned literalIndex = 0; literalIndex < premise->length(); ++literalIndex) {
@@ -12084,16 +12094,20 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               rewrittenTarget)) {
           continue;
         }
-        std::string rendered;
-        fields.push_back("target_parent_index=" + std::to_string(parentIndex));
-        fields.push_back("target_literal_index=" + std::to_string(literalIndex));
-        fields.push_back("rewrite_position=" + certificatePositionSexpr(position));
+        rewrite.hasTargetLocation = true;
+        rewrite.targetParentIndex = static_cast<int>(parentIndex);
+        rewrite.targetLiteralIndex = static_cast<int>(literalIndex);
+        rewrite.hasPosition = true;
+        rewrite.position = certificatePositionSexpr(position);
         if (literalSexprForKernel(substituted, rendered)) {
-          fields.push_back("target_substituted=" + rendered);
+          rewrite.hasTargetSubstituted = true;
+          rewrite.targetSubstituted = rendered;
         }
         if (literalSexprForKernel(rewrittenTarget, rendered)) {
-          fields.push_back("rewritten_target=" + rendered);
+          rewrite.hasRewrittenTarget = true;
+          rewrite.rewrittenTarget = rendered;
         }
+        MegalodonKernelSyntax::appendRewrite(fields, rewrite);
         return;
       }
     }
