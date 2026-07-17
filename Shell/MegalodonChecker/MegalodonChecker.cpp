@@ -12202,7 +12202,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const MegalodonKernelSyntax::RenderedKernelDefinitionFold* definitionFold = nullptr,
         const MegalodonKernelSyntax::RenderedKernelUrrTrace* urrTrace = nullptr,
         const MegalodonKernelSyntax::RenderedKernelAvatarComponent* avatarComponent = nullptr,
-        const MegalodonKernelSyntax::RenderedKernelAvatarDefinition* avatarDefinition = nullptr) {
+        const MegalodonKernelSyntax::RenderedKernelAvatarDefinition* avatarDefinition = nullptr,
+        const MegalodonKernelSyntax::RenderedKernelSplitDependency* splitDependency = nullptr) {
     MegalodonKernelSyntax::MegalodonKernelStep step =
       MegalodonKernelSyntax::kernelStep(
         "u" + std::to_string(u->number()),
@@ -12239,6 +12240,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     if (avatarDefinition != nullptr) {
       MegalodonKernelSyntax::setAvatarDefinition(step, *avatarDefinition);
+    }
+    if (splitDependency != nullptr) {
+      MegalodonKernelSyntax::setSplitDependency(step, *splitDependency);
     }
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
       MegalodonKernelSyntax::addPrimitiveExpansion(
@@ -12730,9 +12734,15 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
   if (u->isClause() && u->asClause()->splits() && !u->asClause()->splits()->isEmpty()) {
     std::vector<std::string> fields;
     std::vector<std::string> nativeDependencies;
+    MegalodonKernelSyntax::RenderedKernelSplitDependency splitDependency;
     unsigned dependencyIndex = 0;
     for (unsigned split : iterTraits(u->asClause()->splits()->iter())) {
       SATLiteral splitLiteral = Splitter::getLiteralFromName(split);
+      MegalodonKernelSyntax::RenderedKernelSplitDependencyItem dependency;
+      dependency.index = dependencyIndex;
+      dependency.split.level = split;
+      dependency.split.variable = splitLiteral.var();
+      dependency.split.positive = splitLiteral.positive();
       std::string prefix = "dependency_" + std::to_string(dependencyIndex);
       fields.push_back(prefix + "_split_level=" + std::to_string(split));
       fields.push_back(prefix + "_split_var=" + std::to_string(splitLiteral.var()));
@@ -12742,50 +12752,53 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         std::string componentText;
         if (renderClauseForExtra(component->second, componentText)) {
           fields.push_back(prefix + "_component_clause=" + componentText);
+          dependency.hasComponentClause = true;
+          dependency.componentClause = componentText;
         }
         std::string componentClause;
         if (clauseSexprForKernel(component->second, componentClause)) {
           fields.push_back(prefix + "_component_clause_sexpr=" + componentClause);
-          std::ostringstream dependency;
-          dependency << "(dependency " << splitLiteral.var() << ' '
-                     << (splitLiteral.positive() ? "true" : "false")
-                     << " (component " << componentClause << "))";
-          nativeDependencies.push_back(dependency.str());
+          dependency.hasComponentClauseSexpr = true;
+          dependency.componentClauseSexpr = MegalodonKernelSyntax::clause(componentClause);
+          std::ostringstream nativeDependency;
+          nativeDependency << "(dependency " << splitLiteral.var() << ' '
+                           << (splitLiteral.positive() ? "true" : "false")
+                           << " (component " << componentClause << "))";
+          nativeDependencies.push_back(nativeDependency.str());
         }
+        dependency.componentClauseVariableSorts = collectClauseVariableSorts(component->second);
+        dependency.componentClauseDbSorts = collectClauseDbIndexSorts(component->second);
         addClauseVariableSortFields(fields, prefix + "_component_clause", component->second);
         addClauseDbIndexSortFields(fields, prefix + "_component_clause", component->second);
-        addLambdaSubtermFields(fields, prefix + "_component_clause", component->second, nullptr);
-        std::vector<std::string> scopedDbSorts;
-        for (const std::string& field : fields) {
-          std::string dbPrefix = prefix + "_component_clause_db_sort_";
-          if (field.rfind(dbPrefix, 0) != 0) {
-            continue;
-          }
-          if (field.size() <= dbPrefix.size() || !std::isdigit(static_cast<unsigned char>(field[dbPrefix.size()]))) {
-            continue;
-          }
-          std::size_t equals = field.find('=');
-          if (equals != std::string::npos) {
-            scopedDbSorts.push_back(field.substr(equals + 1));
+        std::vector<std::string> extraFields;
+        addLambdaSubtermFields(extraFields, prefix + "_component_clause", component->second, nullptr);
+        if (!dependency.componentClauseDbSorts.empty()) {
+          extraFields.push_back(prefix + "_scoped_split_certificate=component_contains_de_bruijn");
+          extraFields.push_back(
+            prefix + "_scoped_split_certificate_db_sort_count="
+            + std::to_string(dependency.componentClauseDbSorts.size()));
+          for (std::size_t sortIndex = 0; sortIndex < dependency.componentClauseDbSorts.size(); ++sortIndex) {
+            extraFields.push_back(
+              prefix + "_scoped_split_certificate_db_sort_" + std::to_string(sortIndex)
+              + "=" + dependency.componentClauseDbSorts[sortIndex]);
           }
         }
-        if (!scopedDbSorts.empty()) {
-          fields.push_back(prefix + "_scoped_split_certificate=component_contains_de_bruijn");
-          fields.push_back(prefix + "_scoped_split_certificate_db_sort_count=" + std::to_string(scopedDbSorts.size()));
-          for (std::size_t sortIndex = 0; sortIndex < scopedDbSorts.size(); ++sortIndex) {
-            fields.push_back(
-              prefix + "_scoped_split_certificate_db_sort_" + std::to_string(sortIndex) + "=" + scopedDbSorts[sortIndex]);
-          }
+        for (const std::string& extraField : extraFields) {
+          fields.push_back(extraField);
+          dependency.componentClauseExtraFields.push_back(
+            MegalodonKernelSyntax::migrationField(extraField));
         }
       }
+      splitDependency.dependencies.push_back(dependency);
       ++dependencyIndex;
     }
     fields.push_back("dependency_count=" + std::to_string(dependencyIndex));
     {
-      std::vector<std::string> kernelFields = fields;
+      std::vector<std::string> kernelFields;
       std::string resultClause;
       if (clauseSexprForKernel(u->asClause(), resultClause)) {
-        kernelFields.push_back("result_clause=" + resultClause);
+        splitDependency.hasResultClause = true;
+        splitDependency.resultClause = MegalodonKernelSyntax::clause(resultClause);
         std::ostringstream native;
         native << "(split_dependency "
                << sexprQuote("u" + std::to_string(u->number()) + "_split_dependency")
@@ -12797,7 +12810,20 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         native << ") (result " << resultClause << "))";
         _certificateNativeSteps.push_back(native.str());
       }
-      emitKernelV1("split_dependency", kernelFields);
+      emitKernelV1(
+        "split_dependency",
+        kernelFields,
+        false,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        &splitDependency);
     }
     emit("split_dependency", fields);
   }

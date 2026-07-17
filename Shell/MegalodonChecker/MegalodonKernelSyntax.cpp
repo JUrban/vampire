@@ -236,6 +236,14 @@ void setAvatarDefinition(
   step.avatarDefinition = avatarDefinition;
 }
 
+void setSplitDependency(
+  MegalodonKernelStep& step,
+  const RenderedKernelSplitDependency& splitDependency)
+{
+  step.hasSplitDependency = true;
+  step.splitDependency = splitDependency;
+}
+
 void setConclusion(
   MegalodonKernelStep& step,
   const RenderedKernelConclusion& conclusion)
@@ -714,6 +722,57 @@ void appendAvatarDefinitionFields(
   }
 }
 
+void appendSplitDependencyItemFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelSplitDependencyItem& dependency)
+{
+  const std::string prefix = "dependency_" + std::to_string(dependency.index);
+  fields.push_back(prefix + "_split_level=" + std::to_string(dependency.split.level));
+  fields.push_back(prefix + "_split_var=" + std::to_string(dependency.split.variable));
+  fields.push_back(
+    prefix + "_split_positive="
+    + std::string(dependency.split.positive ? "1" : "0"));
+  if (dependency.hasComponentClause) {
+    fields.push_back(prefix + "_component_clause=" + dependency.componentClause);
+  }
+  if (dependency.hasComponentClauseSexpr) {
+    fields.push_back(
+      prefix + "_component_clause_sexpr=" + dependency.componentClauseSexpr.sexpr);
+  }
+  fields.push_back(
+    prefix + "_component_clause_variable_sort_count="
+    + std::to_string(dependency.componentClauseVariableSorts.size()));
+  for (std::size_t sortIndex = 0; sortIndex < dependency.componentClauseVariableSorts.size(); ++sortIndex) {
+    fields.push_back(
+      prefix + "_component_clause_variable_sort_" + std::to_string(sortIndex)
+      + "=" + dependency.componentClauseVariableSorts[sortIndex]);
+  }
+  fields.push_back(
+    prefix + "_component_clause_db_sort_count="
+    + std::to_string(dependency.componentClauseDbSorts.size()));
+  for (std::size_t sortIndex = 0; sortIndex < dependency.componentClauseDbSorts.size(); ++sortIndex) {
+    fields.push_back(
+      prefix + "_component_clause_db_sort_" + std::to_string(sortIndex)
+      + "=" + dependency.componentClauseDbSorts[sortIndex]);
+  }
+  for (const MigrationField& field : dependency.componentClauseExtraFields) {
+    fields.push_back(field.rendered);
+  }
+}
+
+void appendSplitDependencyFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelSplitDependency& splitDependency)
+{
+  for (const RenderedKernelSplitDependencyItem& dependency : splitDependency.dependencies) {
+    appendSplitDependencyItemFields(fields, dependency);
+  }
+  fields.push_back("dependency_count=" + std::to_string(splitDependency.dependencies.size()));
+  if (splitDependency.hasResultClause) {
+    fields.push_back("result_clause=" + splitDependency.resultClause.sexpr);
+  }
+}
+
 }
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
@@ -752,6 +811,9 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
   }
   if (step.hasAvatarDefinition) {
     appendAvatarDefinitionFields(fields, step.avatarDefinition);
+  }
+  if (step.hasSplitDependency) {
+    appendSplitDependencyFields(fields, step.splitDependency);
   }
   if (step.hasConclusion) {
     appendConclusionFields(fields, step.conclusion);

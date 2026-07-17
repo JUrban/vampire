@@ -159,6 +159,24 @@ struct RenderedKernelAvatarDefinition {
   RenderedKernelClause resultClause;
 };
 
+struct RenderedKernelSplitDependencyItem {
+  std::size_t index = 0;
+  RenderedKernelAvatarSplit split;
+  bool hasComponentClause = false;
+  std::string componentClause;
+  bool hasComponentClauseSexpr = false;
+  RenderedKernelClause componentClauseSexpr;
+  std::vector<std::string> componentClauseVariableSorts;
+  std::vector<std::string> componentClauseDbSorts;
+  std::vector<MigrationField> componentClauseExtraFields;
+};
+
+struct RenderedKernelSplitDependency {
+  std::vector<RenderedKernelSplitDependencyItem> dependencies;
+  bool hasResultClause = false;
+  RenderedKernelClause resultClause;
+};
+
 struct RenderedKernelPrimitiveParentSubstitution {
   std::size_t parentIndex = 0;
   RenderedKernelSubstitution substitution;
@@ -319,6 +337,8 @@ struct MegalodonKernelStep {
   RenderedKernelAvatarComponent avatarComponent;
   bool hasAvatarDefinition = false;
   RenderedKernelAvatarDefinition avatarDefinition;
+  bool hasSplitDependency = false;
+  RenderedKernelSplitDependency splitDependency;
   bool hasConclusion = false;
   RenderedKernelConclusion conclusion;
   bool hasParents = false;
@@ -406,6 +426,10 @@ void setAvatarComponent(
 void setAvatarDefinition(
   MegalodonKernelStep& step,
   const RenderedKernelAvatarDefinition& avatarDefinition);
+
+void setSplitDependency(
+  MegalodonKernelStep& step,
+  const RenderedKernelSplitDependency& splitDependency);
 
 void setConclusion(
   MegalodonKernelStep& step,
