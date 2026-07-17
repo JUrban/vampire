@@ -123,6 +123,14 @@ struct RenderedKernelUrrTraceStep {
   RenderedKernelClause remainingAfter;
 };
 
+struct RenderedKernelUrrTrace {
+  bool hasMainParent = false;
+  RenderedKernelUnitRef mainParent;
+  std::vector<RenderedKernelUrrTraceStep> steps;
+  bool hasRemaining = false;
+  RenderedKernelClause remaining;
+};
+
 struct RenderedKernelPrimitiveParentSubstitution {
   std::size_t parentIndex = 0;
   RenderedKernelSubstitution substitution;
@@ -277,6 +285,8 @@ struct MegalodonKernelStep {
   RenderedKernelCnfClause cnfClause;
   bool hasDefinitionFold = false;
   RenderedKernelDefinitionFold definitionFold;
+  bool hasUrrTrace = false;
+  RenderedKernelUrrTrace urrTrace;
   bool hasConclusion = false;
   RenderedKernelConclusion conclusion;
   bool hasParents = false;
@@ -352,6 +362,10 @@ void setCnfClause(
 void setDefinitionFold(
   MegalodonKernelStep& step,
   const RenderedKernelDefinitionFold& definitionFold);
+
+void setUrrTrace(
+  MegalodonKernelStep& step,
+  const RenderedKernelUrrTrace& urrTrace);
 
 void setConclusion(
   MegalodonKernelStep& step,

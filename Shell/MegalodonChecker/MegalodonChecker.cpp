@@ -12199,7 +12199,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const MegalodonKernelSyntax::RenderedKernelSourceFormulaTransform* sourceFormulaTransform = nullptr,
         const MegalodonKernelSyntax::RenderedKernelRectifyRenamings* rectifyRenamings = nullptr,
         const MegalodonKernelSyntax::RenderedKernelCnfClause* cnfClause = nullptr,
-        const MegalodonKernelSyntax::RenderedKernelDefinitionFold* definitionFold = nullptr) {
+        const MegalodonKernelSyntax::RenderedKernelDefinitionFold* definitionFold = nullptr,
+        const MegalodonKernelSyntax::RenderedKernelUrrTrace* urrTrace = nullptr) {
     MegalodonKernelSyntax::MegalodonKernelStep step =
       MegalodonKernelSyntax::kernelStep(
         "u" + std::to_string(u->number()),
@@ -12227,6 +12228,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     if (definitionFold != nullptr) {
       MegalodonKernelSyntax::setDefinitionFold(step, *definitionFold);
+    }
+    if (urrTrace != nullptr) {
+      MegalodonKernelSyntax::setUrrTrace(step, *urrTrace);
     }
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
       MegalodonKernelSyntax::addPrimitiveExpansion(
@@ -14287,10 +14291,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       const auto* urr = static_cast<const Inferences::UnitResultingResolutionExtra*>(extra);
       {
         std::vector<std::string> kernelFields;
+        MegalodonKernelSyntax::RenderedKernelUrrTrace urrTrace;
         if (urr->mainParent != nullptr) {
-          kernelFields.push_back("trace_main_parent_unit=u" + std::to_string(urr->mainParent->number()));
+          urrTrace.hasMainParent = true;
+          urrTrace.mainParent =
+            MegalodonKernelSyntax::unitRef("u" + std::to_string(urr->mainParent->number()));
         }
-        kernelFields.push_back("trace_step_count=" + std::to_string(urr->steps.size()));
         for (std::size_t traceIndex = 0; traceIndex < urr->steps.size(); ++traceIndex) {
           const auto& trace = urr->steps[traceIndex];
           MegalodonKernelSyntax::RenderedKernelUrrTraceStep traceStep;
@@ -14322,11 +14328,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             traceStep.hasRemainingAfter = true;
             traceStep.remainingAfter = MegalodonKernelSyntax::clause(rendered);
           }
-          MegalodonKernelSyntax::appendUrrTraceStep(kernelFields, traceStep);
+          urrTrace.steps.push_back(traceStep);
         }
         std::string remaining;
         if (literalVectorClauseSexprForKernel(urr->remaining, remaining)) {
-          kernelFields.push_back("trace_remaining=" + remaining);
+          urrTrace.hasRemaining = true;
+          urrTrace.remaining = MegalodonKernelSyntax::clause(remaining);
         }
         std::string primitiveExpansion;
         const std::string unitPrefix = "u" + std::to_string(u->number());
@@ -14335,7 +14342,17 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           && primitiveExpansion.find("(unit_resulting_resolution ") == std::string::npos
           && primitiveExpansion.find("(resolve \"" + unitPrefix + "_resolve") != std::string::npos;
         if (hasResolvePrimitiveExpansion) {
-          emitKernelV1("unit_resulting_resolution", kernelFields);
+          emitKernelV1(
+            "unit_resulting_resolution",
+            kernelFields,
+            false,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            &urrTrace);
         }
       }
       fields.push_back("trace_main_parent_unit=" + std::to_string(urr->mainParent->number()));

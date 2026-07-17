@@ -212,6 +212,14 @@ void setDefinitionFold(
   step.definitionFold = definitionFold;
 }
 
+void setUrrTrace(
+  MegalodonKernelStep& step,
+  const RenderedKernelUrrTrace& urrTrace)
+{
+  step.hasUrrTrace = true;
+  step.urrTrace = urrTrace;
+}
+
 void setConclusion(
   MegalodonKernelStep& step,
   const RenderedKernelConclusion& conclusion)
@@ -617,6 +625,22 @@ void appendDefinitionFoldFields(
   }
 }
 
+void appendUrrTraceFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelUrrTrace& trace)
+{
+  if (trace.hasMainParent) {
+    fields.push_back("trace_main_parent_unit=" + trace.mainParent.value);
+  }
+  fields.push_back("trace_step_count=" + std::to_string(trace.steps.size()));
+  for (const RenderedKernelUrrTraceStep& step : trace.steps) {
+    appendUrrTraceStep(fields, step);
+  }
+  if (trace.hasRemaining) {
+    fields.push_back("trace_remaining=" + trace.remaining.sexpr);
+  }
+}
+
 }
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
@@ -646,6 +670,9 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
   }
   if (step.hasDefinitionFold) {
     appendDefinitionFoldFields(fields, step.definitionFold);
+  }
+  if (step.hasUrrTrace) {
+    appendUrrTraceFields(fields, step.urrTrace);
   }
   if (step.hasConclusion) {
     appendConclusionFields(fields, step.conclusion);
