@@ -501,7 +501,7 @@ bool MegalodonChecker::certificateInstantiationKernelMetadataSexpr(
   MegalodonKernelSyntax::addPrimitiveExpansion(
     step,
     MegalodonKernelSyntax::primitiveExpansion(id, "substitute"));
-  std::vector<std::string>& stepFields = step.fields;
+  std::vector<std::string> stepFields;
   stepFields.push_back("conclusion_unit=" + id);
   stepFields.push_back("result_clause=" + resultClause);
   stepFields.push_back("conclusion_clause=" + resultClause);
@@ -522,6 +522,7 @@ bool MegalodonChecker::certificateInstantiationKernelMetadataSexpr(
   for (std::size_t i = 0; i < resultLiterals.size(); ++i) {
     stepFields.push_back("parent_0_substituted_literal_" + std::to_string(i) + "=" + resultLiterals[i]);
   }
+  MegalodonKernelSyntax::addFields(step, stepFields);
 
   const std::vector<std::string> fields = MegalodonKernelSyntax::kernelStepFields(step);
   std::ostringstream out;

@@ -92,6 +92,11 @@ std::vector<RenderedKernelLiteral> literals(const std::vector<std::string>& sexp
   return rendered;
 }
 
+MigrationField migrationField(const std::string& rendered)
+{
+  return {rendered};
+}
+
 PrimitiveExpansion primitiveExpansion(
   const std::string& prefix,
   const std::string& primitiveRule)
@@ -122,14 +127,16 @@ void addField(
   MegalodonKernelStep& step,
   const std::string& field)
 {
-  step.fields.push_back(field);
+  step.migrationFields.push_back(migrationField(field));
 }
 
 void addFields(
   MegalodonKernelStep& step,
   const std::vector<std::string>& fields)
 {
-  step.fields.insert(step.fields.end(), fields.begin(), fields.end());
+  for (const std::string& field : fields) {
+    addField(step, field);
+  }
 }
 
 void addPrimitiveExpansion(
@@ -326,7 +333,9 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
   for (const PrimitiveExpansion& expansion : step.primitiveExpansions) {
     appendPrimitiveExpansion(fields, expansion);
   }
-  fields.insert(fields.end(), step.fields.begin(), step.fields.end());
+  for (const MigrationField& field : step.migrationFields) {
+    fields.push_back(field.rendered);
+  }
   if (step.hasConclusion) {
     appendConclusionFields(fields, step.conclusion);
   }

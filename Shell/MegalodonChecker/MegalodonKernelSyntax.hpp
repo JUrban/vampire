@@ -41,6 +41,10 @@ struct RenderedKernelPosition {
   std::string sexpr;
 };
 
+struct MigrationField {
+  std::string rendered;
+};
+
 struct RenderedKernelConclusion {
   RenderedKernelUnitRef unit;
   std::string vampireRule;
@@ -119,7 +123,7 @@ struct MegalodonKernelStep {
   std::string id;
   std::string rule;
   std::vector<PrimitiveExpansion> primitiveExpansions;
-  std::vector<std::string> fields;
+  std::vector<MigrationField> migrationFields;
   bool hasConclusion = false;
   RenderedKernelConclusion conclusion;
   bool hasParents = false;
@@ -138,6 +142,7 @@ RenderedKernelClause clause(const std::string& sexpr);
 RenderedKernelSubstitution substitution(const std::string& sexpr);
 RenderedKernelPosition position(const std::string& sexpr);
 std::vector<RenderedKernelLiteral> literals(const std::vector<std::string>& sexprs);
+MigrationField migrationField(const std::string& rendered);
 
 PrimitiveExpansion primitiveExpansion(
   const std::string& prefix,
