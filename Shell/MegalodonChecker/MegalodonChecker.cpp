@@ -12197,7 +12197,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const MegalodonKernelSyntax::RenderedKernelSubsumptionResolutionPivot* subsumptionPivot = nullptr,
         const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemIntroducedSymbol>* skolemIntroducedSymbols = nullptr,
         const MegalodonKernelSyntax::RenderedKernelSourceFormulaTransform* sourceFormulaTransform = nullptr,
-        const MegalodonKernelSyntax::RenderedKernelRectifyRenamings* rectifyRenamings = nullptr) {
+        const MegalodonKernelSyntax::RenderedKernelRectifyRenamings* rectifyRenamings = nullptr,
+        const MegalodonKernelSyntax::RenderedKernelCnfClause* cnfClause = nullptr) {
     MegalodonKernelSyntax::MegalodonKernelStep step =
       MegalodonKernelSyntax::kernelStep(
         "u" + std::to_string(u->number()),
@@ -12219,6 +12220,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     if (rectifyRenamings != nullptr) {
       MegalodonKernelSyntax::setRectifyRenamings(step, *rectifyRenamings);
+    }
+    if (cnfClause != nullptr) {
+      MegalodonKernelSyntax::setCnfClause(step, *cnfClause);
     }
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
       MegalodonKernelSyntax::addPrimitiveExpansion(
@@ -13732,39 +13736,52 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       std::vector<std::string> fields;
       {
         std::vector<std::string> kernelFields;
-        kernelFields.push_back("source_unit=u" + std::to_string(parent->number()));
-        kernelFields.push_back("parent_0_unit=u" + std::to_string(parent->number()));
-        kernelFields.push_back("proof_parent_count=1");
-        kernelFields.push_back(std::string("source_kind=") + (parent->isClause() ? "clause" : "formula"));
+        MegalodonKernelSyntax::RenderedKernelCnfClause cnfClause;
+        cnfClause.sourceUnit = MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number()));
+        cnfClause.sourceKind = parent->isClause() ? "clause" : "formula";
         if (parent->isClause()) {
           std::string sourceClause;
           if (clauseSexprForKernel(parent->asClause(), sourceClause)) {
-            kernelFields.push_back("source_clause=" + sourceClause);
-            kernelFields.push_back("parent_0_clause=" + sourceClause);
+            cnfClause.hasSourceClause = true;
+            cnfClause.sourceClause = MegalodonKernelSyntax::clause(sourceClause);
           }
         } else {
           std::string sourceFormula;
           if (certificateFormulaTermSexpr(parent->getFormula(), sourceFormula)) {
-            kernelFields.push_back("source_formula=" + sourceFormula);
-            kernelFields.push_back("parent_0_formula=" + sourceFormula);
+            cnfClause.hasSourceFormula = true;
+            cnfClause.sourceFormula = MegalodonKernelSyntax::formula(sourceFormula);
           }
         }
         std::string resultClause;
         if (clauseSexprForKernel(u->asClause(), resultClause)) {
-          kernelFields.push_back("result_clause=" + resultClause);
+          cnfClause.hasResultClause = true;
+          cnfClause.resultClause = MegalodonKernelSyntax::clause(resultClause);
         }
         const auto* parentExtra = env.proofExtra.find(parent);
         if (parentExtra != nullptr) {
           const auto* cnfExtra = static_cast<const Inferences::CNFTransformationInferenceExtra*>(parentExtra);
-          kernelFields.push_back("parent_clause_count=" + std::to_string(cnfExtra->number));
+          cnfClause.hasParentClauseCount = true;
+          cnfClause.parentClauseCount = cnfExtra->number;
         }
         if (extra != nullptr) {
           const auto* clauseExtra = static_cast<const Inferences::CNFClauseInferenceExtra*>(extra);
-          kernelFields.push_back("clause_parent_unit=u" + std::to_string(clauseExtra->parentNumber));
-          kernelFields.push_back("clause_index=" + std::to_string(clauseExtra->index));
-          kernelFields.push_back("clause_count=" + std::to_string(clauseExtra->count));
+          cnfClause.hasClauseParentUnit = true;
+          cnfClause.clauseParentUnit =
+            MegalodonKernelSyntax::unitRef("u" + std::to_string(clauseExtra->parentNumber));
+          cnfClause.hasClauseIndex = true;
+          cnfClause.clauseIndex = clauseExtra->index;
+          cnfClause.hasClauseCount = true;
+          cnfClause.clauseCount = clauseExtra->count;
         }
-        emitKernelV1("cnf_clause", kernelFields);
+        emitKernelV1(
+          "cnf_clause",
+          kernelFields,
+          false,
+          nullptr,
+          nullptr,
+          nullptr,
+          nullptr,
+          &cnfClause);
       }
       fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));
       fields.push_back("parent_unit=" + std::to_string(parent->number()));

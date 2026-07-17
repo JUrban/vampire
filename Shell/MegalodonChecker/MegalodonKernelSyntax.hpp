@@ -222,6 +222,26 @@ struct RenderedKernelRectifyRenamings {
   bool truncated = false;
 };
 
+struct RenderedKernelCnfClause {
+  RenderedKernelUnitRef sourceUnit;
+  std::string sourceKind;
+  std::size_t proofParentCount = 1;
+  bool hasSourceClause = false;
+  RenderedKernelClause sourceClause;
+  bool hasSourceFormula = false;
+  RenderedKernelFormula sourceFormula;
+  bool hasResultClause = false;
+  RenderedKernelClause resultClause;
+  bool hasParentClauseCount = false;
+  std::size_t parentClauseCount = 0;
+  bool hasClauseParentUnit = false;
+  RenderedKernelUnitRef clauseParentUnit;
+  bool hasClauseIndex = false;
+  std::size_t clauseIndex = 0;
+  bool hasClauseCount = false;
+  std::size_t clauseCount = 0;
+};
+
 struct MegalodonKernelStep {
   std::string id;
   std::string rule;
@@ -235,6 +255,8 @@ struct MegalodonKernelStep {
   RenderedKernelSourceFormulaTransform sourceFormulaTransform;
   bool hasRectifyRenamings = false;
   RenderedKernelRectifyRenamings rectifyRenamings;
+  bool hasCnfClause = false;
+  RenderedKernelCnfClause cnfClause;
   bool hasConclusion = false;
   RenderedKernelConclusion conclusion;
   bool hasParents = false;
@@ -302,6 +324,10 @@ void setSourceFormulaTransform(
 void setRectifyRenamings(
   MegalodonKernelStep& step,
   const RenderedKernelRectifyRenamings& renamings);
+
+void setCnfClause(
+  MegalodonKernelStep& step,
+  const RenderedKernelCnfClause& cnfClause);
 
 void setConclusion(
   MegalodonKernelStep& step,

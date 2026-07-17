@@ -196,6 +196,14 @@ void setRectifyRenamings(
   step.rectifyRenamings = renamings;
 }
 
+void setCnfClause(
+  MegalodonKernelStep& step,
+  const RenderedKernelCnfClause& cnfClause)
+{
+  step.hasCnfClause = true;
+  step.cnfClause = cnfClause;
+}
+
 void setConclusion(
   MegalodonKernelStep& step,
   const RenderedKernelConclusion& conclusion)
@@ -544,6 +552,39 @@ void appendRectifyRenamingFields(
   }
 }
 
+void appendCnfClauseFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelCnfClause& cnfClause)
+{
+  fields.push_back("source_unit=" + cnfClause.sourceUnit.value);
+  fields.push_back("parent_0_unit=" + cnfClause.sourceUnit.value);
+  fields.push_back("proof_parent_count=" + std::to_string(cnfClause.proofParentCount));
+  fields.push_back("source_kind=" + cnfClause.sourceKind);
+  if (cnfClause.hasSourceClause) {
+    fields.push_back("source_clause=" + cnfClause.sourceClause.sexpr);
+    fields.push_back("parent_0_clause=" + cnfClause.sourceClause.sexpr);
+  }
+  if (cnfClause.hasSourceFormula) {
+    fields.push_back("source_formula=" + cnfClause.sourceFormula.sexpr);
+    fields.push_back("parent_0_formula=" + cnfClause.sourceFormula.sexpr);
+  }
+  if (cnfClause.hasResultClause) {
+    fields.push_back("result_clause=" + cnfClause.resultClause.sexpr);
+  }
+  if (cnfClause.hasParentClauseCount) {
+    fields.push_back("parent_clause_count=" + std::to_string(cnfClause.parentClauseCount));
+  }
+  if (cnfClause.hasClauseParentUnit) {
+    fields.push_back("clause_parent_unit=" + cnfClause.clauseParentUnit.value);
+  }
+  if (cnfClause.hasClauseIndex) {
+    fields.push_back("clause_index=" + std::to_string(cnfClause.clauseIndex));
+  }
+  if (cnfClause.hasClauseCount) {
+    fields.push_back("clause_count=" + std::to_string(cnfClause.clauseCount));
+  }
+}
+
 }
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
@@ -567,6 +608,9 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
   }
   if (step.hasRectifyRenamings) {
     appendRectifyRenamingFields(fields, step.rectifyRenamings);
+  }
+  if (step.hasCnfClause) {
+    appendCnfClauseFields(fields, step.cnfClause);
   }
   if (step.hasConclusion) {
     appendConclusionFields(fields, step.conclusion);
