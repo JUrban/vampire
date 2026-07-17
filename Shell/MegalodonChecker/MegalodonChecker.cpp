@@ -4055,7 +4055,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
   Kernel::Unit* unit,
   std::string& result,
   bool recordSyntheticMetadata,
-  std::vector<std::pair<std::string, std::string>>* primitiveSteps)
+  std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps)
 {
   auto fail = [&](const char* reason) {
     if (std::getenv("MEGALODON_CERT_DEBUG") && std::string(reason) != "not urr clause") {
@@ -4518,12 +4518,11 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
     return false;
   }
   std::string currentParentId = "u" + std::to_string(urr->mainParent->number());
-  std::vector<std::string> steps;
-  std::vector<std::pair<std::string, std::string>> localPrimitiveSteps;
+  std::vector<MegalodonKernelSyntax::PrimitiveStep> localPrimitiveSteps;
   auto addPrimitiveStep =
     [&](const std::string& rule, const std::string& stepId, const std::string& rendered) {
-      steps.push_back(rendered);
-      localPrimitiveSteps.push_back({rule, stepId});
+      localPrimitiveSteps.push_back(
+        MegalodonKernelSyntax::primitiveStep(rule, stepId, rendered));
     };
   std::string previousTraceSelectedLiteralSexpr;
 
@@ -4969,11 +4968,11 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
   }
 
   std::ostringstream out;
-  for (std::size_t i = 0; i < steps.size(); ++i) {
+  for (std::size_t i = 0; i < localPrimitiveSteps.size(); ++i) {
     if (i != 0) {
       out << "\n  ";
     }
-    out << steps[i];
+    out << localPrimitiveSteps[i].rendered;
   }
   result = out.str();
   if (primitiveSteps != nullptr) {
@@ -14489,7 +14488,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           urrTrace.remaining = MegalodonKernelSyntax::clause(remaining);
         }
         std::string primitiveExpansion;
-        std::vector<std::pair<std::string, std::string>> primitiveSteps;
+        std::vector<MegalodonKernelSyntax::PrimitiveStep> primitiveSteps;
         const std::string unitPrefix = "u" + std::to_string(u->number());
         const bool hasResolvePrimitiveExpansion =
           certificateUnitResultingResolutionStepsSexpr(

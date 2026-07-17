@@ -13,6 +13,12 @@ struct PrimitiveExpansion {
   std::string requiredRule;
 };
 
+struct PrimitiveStep {
+  std::string rule;
+  std::string id;
+  std::string rendered;
+};
+
 struct RenderedKernelUnitRef {
   std::string value;
 };
@@ -464,6 +470,11 @@ PrimitiveExpansion primitiveExpansion(
   const std::string& prefix,
   const std::string& primitiveRule);
 
+PrimitiveStep primitiveStep(
+  const std::string& rule,
+  const std::string& id,
+  const std::string& rendered);
+
 void appendPrimitiveExpansion(
   std::vector<std::string>& fields,
   const PrimitiveExpansion& expansion);
@@ -476,7 +487,7 @@ bool appendPrimitiveExpansionChainFields(
 
 bool appendPrimitiveExpansionChainFields(
   std::vector<std::string>& fields,
-  const std::vector<std::pair<std::string, std::string>>& primitiveSteps,
+  const std::vector<PrimitiveStep>& primitiveSteps,
   const std::string& expectedFinalId = "");
 
 MegalodonKernelStep kernelStep(

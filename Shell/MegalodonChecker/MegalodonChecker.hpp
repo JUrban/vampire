@@ -14,6 +14,10 @@
 
 namespace Shell {
 
+namespace MegalodonKernelSyntax {
+struct PrimitiveStep;
+}
+
 class MegalodonChecker : public Kernel::InferenceStore::AbstractProofPrinter {
 public:
   MegalodonChecker(std::ostream& out, Kernel::InferenceStore* is);
@@ -213,7 +217,7 @@ private:
     Kernel::Unit* unit,
     std::string& result,
     bool recordSyntheticMetadata = false,
-    std::vector<std::pair<std::string, std::string>>* primitiveSteps = nullptr);
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   bool certificateNativeStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateResolveStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateSubstitutedResolutionStepsSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);

@@ -168,6 +168,14 @@ PrimitiveExpansion primitiveExpansion(
   return {prefix, primitiveRule};
 }
 
+PrimitiveStep primitiveStep(
+  const std::string& rule,
+  const std::string& id,
+  const std::string& rendered)
+{
+  return {rule, id, rendered};
+}
+
 void appendPrimitiveExpansion(
   std::vector<std::string>& fields,
   const PrimitiveExpansion& expansion)
@@ -253,24 +261,24 @@ bool appendPrimitiveExpansionChainFields(
 
 bool appendPrimitiveExpansionChainFields(
   std::vector<std::string>& fields,
-  const std::vector<std::pair<std::string, std::string>>& primitiveSteps,
+  const std::vector<PrimitiveStep>& primitiveSteps,
   const std::string& expectedFinalId)
 {
   if (primitiveSteps.empty()) {
     return false;
   }
   if (!expectedFinalId.empty()
-    && primitiveSteps.back().second != expectedFinalId) {
+    && primitiveSteps.back().id != expectedFinalId) {
     return false;
   }
   std::vector<std::string> requiredRules;
   for (const auto& step : primitiveSteps) {
-    if (step.first.empty() || step.second.empty()) {
+    if (step.rule.empty() || step.id.empty() || step.rendered.empty()) {
       return false;
     }
-    if (std::find(requiredRules.begin(), requiredRules.end(), step.first)
+    if (std::find(requiredRules.begin(), requiredRules.end(), step.rule)
       == requiredRules.end()) {
-      requiredRules.push_back(step.first);
+      requiredRules.push_back(step.rule);
     }
   }
   fields.push_back("primitive_expansion=prefix");
@@ -281,9 +289,9 @@ bool appendPrimitiveExpansionChainFields(
   fields.push_back("primitive_expansion_step_count=" + std::to_string(primitiveSteps.size()));
   for (std::size_t i = 0; i < primitiveSteps.size(); ++i) {
     fields.push_back(
-      "primitive_expansion_step_" + std::to_string(i) + "_rule=" + primitiveSteps[i].first);
+      "primitive_expansion_step_" + std::to_string(i) + "_rule=" + primitiveSteps[i].rule);
     fields.push_back(
-      "primitive_expansion_step_" + std::to_string(i) + "_id=" + primitiveSteps[i].second);
+      "primitive_expansion_step_" + std::to_string(i) + "_id=" + primitiveSteps[i].id);
   }
   fields.push_back("primitive_expansion_requires_count=" + std::to_string(requiredRules.size()));
   for (std::size_t i = 0; i < requiredRules.size(); ++i) {
