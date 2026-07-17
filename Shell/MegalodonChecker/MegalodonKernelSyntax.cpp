@@ -180,6 +180,14 @@ void addSkolemIntroducedSymbol(
   step.skolemIntroducedSymbols.push_back(introduced);
 }
 
+void setSourceFormulaTransform(
+  MegalodonKernelStep& step,
+  const RenderedKernelSourceFormulaTransform& transform)
+{
+  step.hasSourceFormulaTransform = true;
+  step.sourceFormulaTransform = transform;
+}
+
 void setConclusion(
   MegalodonKernelStep& step,
   const RenderedKernelConclusion& conclusion)
@@ -474,6 +482,38 @@ void appendSkolemIntroducedSymbolFields(
   }
 }
 
+void appendSourceFormulaTransformFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelSourceFormulaTransform& transform)
+{
+  fields.push_back("source_unit=" + transform.sourceUnit.value);
+  fields.push_back("parent_0_unit=" + transform.sourceUnit.value);
+  fields.push_back("source_formula=" + transform.sourceFormula.sexpr);
+  fields.push_back("parent_0_formula=" + transform.sourceFormula.sexpr);
+  fields.push_back("proof_parent_count=" + std::to_string(transform.proofParentCount));
+  fields.push_back("result_formula=" + transform.resultFormula.sexpr);
+  if (transform.hasCopyKind) {
+    fields.push_back("copy_kind=" + transform.copyKind);
+  }
+  if (transform.hasNormalFormRule) {
+    fields.push_back("normal_form_rule=" + transform.normalFormRule);
+  }
+  if (!transform.transformationPairs.empty()) {
+    fields.push_back("transformation_pair_count=" + std::to_string(transform.transformationPairs.size()));
+    for (const RenderedKernelTransformationPair& pair : transform.transformationPairs) {
+      const std::string prefix = "pair_" + std::to_string(pair.index);
+      fields.push_back(prefix + "_source=" + pair.source.sexpr);
+      fields.push_back(prefix + "_target=" + pair.target.sexpr);
+      if (pair.hasPath) {
+        fields.push_back(prefix + "_path=" + pair.path);
+      }
+      if (pair.hasKind) {
+        fields.push_back(prefix + "_kind=" + pair.kind);
+      }
+    }
+  }
+}
+
 }
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
@@ -492,6 +532,9 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
     appendSubsumptionResolutionPivotFields(fields, step.subsumptionResolutionPivot);
   }
   appendSkolemIntroducedSymbolFields(fields, step.skolemIntroducedSymbols);
+  if (step.hasSourceFormulaTransform) {
+    appendSourceFormulaTransformFields(fields, step.sourceFormulaTransform);
+  }
   if (step.hasConclusion) {
     appendConclusionFields(fields, step.conclusion);
   }

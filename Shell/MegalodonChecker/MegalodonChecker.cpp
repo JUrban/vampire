@@ -12195,7 +12195,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         std::vector<std::string> fields,
         bool includePrimitiveParentSubstitutions = false,
         const MegalodonKernelSyntax::RenderedKernelSubsumptionResolutionPivot* subsumptionPivot = nullptr,
-        const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemIntroducedSymbol>* skolemIntroducedSymbols = nullptr) {
+        const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemIntroducedSymbol>* skolemIntroducedSymbols = nullptr,
+        const MegalodonKernelSyntax::RenderedKernelSourceFormulaTransform* sourceFormulaTransform = nullptr) {
     MegalodonKernelSyntax::MegalodonKernelStep step =
       MegalodonKernelSyntax::kernelStep(
         "u" + std::to_string(u->number()),
@@ -12211,6 +12212,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       for (const auto& introduced : *skolemIntroducedSymbols) {
         MegalodonKernelSyntax::addSkolemIntroducedSymbol(step, introduced);
       }
+    }
+    if (sourceFormulaTransform != nullptr) {
+      MegalodonKernelSyntax::setSourceFormulaTransform(step, *sourceFormulaTransform);
     }
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
       MegalodonKernelSyntax::addPrimitiveExpansion(
@@ -13016,14 +13020,19 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           && certificateFormulaTermSexpr(target, resultFormula)
           && sourceFormula == resultFormula) {
           std::vector<std::string> kernelFields;
-          kernelFields.push_back("source_unit=u" + std::to_string(parent->number()));
-          kernelFields.push_back("parent_0_unit=u" + std::to_string(parent->number()));
-          kernelFields.push_back("source_formula=" + sourceFormula);
-          kernelFields.push_back("parent_0_formula=" + sourceFormula);
-          kernelFields.push_back("proof_parent_count=1");
-          kernelFields.push_back("result_formula=" + resultFormula);
-          kernelFields.push_back("copy_kind=formula_term_identity");
-          emitKernelV1("formula_copy", kernelFields);
+          MegalodonKernelSyntax::RenderedKernelSourceFormulaTransform transform;
+          transform.sourceUnit = MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number()));
+          transform.sourceFormula = MegalodonKernelSyntax::formula(sourceFormula);
+          transform.resultFormula = MegalodonKernelSyntax::formula(resultFormula);
+          transform.hasCopyKind = true;
+          transform.copyKind = "formula_term_identity";
+          emitKernelV1(
+            "formula_copy",
+            kernelFields,
+            false,
+            nullptr,
+            nullptr,
+            &transform);
         }
 
         unsigned pairCount = 0;
@@ -13283,22 +13292,31 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           && sourceFormula != resultFormula
           && !transformationPairs.empty()) {
           std::vector<std::string> kernelFields;
-          kernelFields.push_back("source_unit=u" + std::to_string(parent->number()));
-          kernelFields.push_back("parent_0_unit=u" + std::to_string(parent->number()));
-          kernelFields.push_back("source_formula=" + sourceFormula);
-          kernelFields.push_back("parent_0_formula=" + sourceFormula);
-          kernelFields.push_back("proof_parent_count=1");
-          kernelFields.push_back("result_formula=" + resultFormula);
-          kernelFields.push_back("normal_form_rule=" + std::string(Kernel::ruleName(u->inference().rule())));
-          kernelFields.push_back("transformation_pair_count=" + std::to_string(transformationPairs.size()));
+          MegalodonKernelSyntax::RenderedKernelSourceFormulaTransform transform;
+          transform.sourceUnit = MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number()));
+          transform.sourceFormula = MegalodonKernelSyntax::formula(sourceFormula);
+          transform.resultFormula = MegalodonKernelSyntax::formula(resultFormula);
+          transform.hasNormalFormRule = true;
+          transform.normalFormRule = std::string(Kernel::ruleName(u->inference().rule()));
           for (std::size_t index = 0; index < transformationPairs.size(); ++index) {
             const auto& [leftText, rightText, path, kind] = transformationPairs[index];
-            kernelFields.push_back("pair_" + std::to_string(index) + "_source=" + leftText);
-            kernelFields.push_back("pair_" + std::to_string(index) + "_target=" + rightText);
-            kernelFields.push_back("pair_" + std::to_string(index) + "_path=" + path);
-            kernelFields.push_back("pair_" + std::to_string(index) + "_kind=" + kind);
+            MegalodonKernelSyntax::RenderedKernelTransformationPair pair;
+            pair.index = index;
+            pair.source = MegalodonKernelSyntax::formula(leftText);
+            pair.target = MegalodonKernelSyntax::formula(rightText);
+            pair.hasPath = true;
+            pair.path = path;
+            pair.hasKind = true;
+            pair.kind = kind;
+            transform.transformationPairs.push_back(pair);
           }
-          emitKernelV1("formula_normalize", kernelFields);
+          emitKernelV1(
+            "formula_normalize",
+            kernelFields,
+            false,
+            nullptr,
+            nullptr,
+            &transform);
         }
         emit("normal_form", fields);
       }
@@ -13541,20 +13559,27 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           && sourceFormula != resultFormula
           && !foolPairs.empty()) {
           std::vector<std::string> kernelFields;
-          kernelFields.push_back("source_unit=u" + std::to_string(parent->number()));
-          kernelFields.push_back("parent_0_unit=u" + std::to_string(parent->number()));
-          kernelFields.push_back("source_formula=" + sourceFormula);
-          kernelFields.push_back("parent_0_formula=" + sourceFormula);
-          kernelFields.push_back("proof_parent_count=1");
-          kernelFields.push_back("result_formula=" + resultFormula);
-          kernelFields.push_back("transformation_pair_count=" + std::to_string(foolPairs.size()));
+          MegalodonKernelSyntax::RenderedKernelSourceFormulaTransform transform;
+          transform.sourceUnit = MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number()));
+          transform.sourceFormula = MegalodonKernelSyntax::formula(sourceFormula);
+          transform.resultFormula = MegalodonKernelSyntax::formula(resultFormula);
           for (std::size_t index = 0; index < foolPairs.size(); ++index) {
             const auto& [leftText, rightText, path] = foolPairs[index];
-            kernelFields.push_back("pair_" + std::to_string(index) + "_source=" + leftText);
-            kernelFields.push_back("pair_" + std::to_string(index) + "_target=" + rightText);
-            kernelFields.push_back("pair_" + std::to_string(index) + "_path=" + path);
+            MegalodonKernelSyntax::RenderedKernelTransformationPair pair;
+            pair.index = index;
+            pair.source = MegalodonKernelSyntax::formula(leftText);
+            pair.target = MegalodonKernelSyntax::formula(rightText);
+            pair.hasPath = true;
+            pair.path = path;
+            transform.transformationPairs.push_back(pair);
           }
-          emitKernelV1("fool_formula", kernelFields);
+          emitKernelV1(
+            "fool_formula",
+            kernelFields,
+            false,
+            nullptr,
+            nullptr,
+            &transform);
         }
         emit("fool", fields);
       }

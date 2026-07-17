@@ -184,6 +184,28 @@ struct RenderedKernelSkolemIntroducedSymbol {
   std::string choicePrinciple;
 };
 
+struct RenderedKernelTransformationPair {
+  std::size_t index = 0;
+  RenderedKernelFormula source;
+  RenderedKernelFormula target;
+  bool hasPath = false;
+  std::string path;
+  bool hasKind = false;
+  std::string kind;
+};
+
+struct RenderedKernelSourceFormulaTransform {
+  RenderedKernelUnitRef sourceUnit;
+  RenderedKernelFormula sourceFormula;
+  RenderedKernelFormula resultFormula;
+  std::size_t proofParentCount = 1;
+  bool hasCopyKind = false;
+  std::string copyKind;
+  bool hasNormalFormRule = false;
+  std::string normalFormRule;
+  std::vector<RenderedKernelTransformationPair> transformationPairs;
+};
+
 struct MegalodonKernelStep {
   std::string id;
   std::string rule;
@@ -193,6 +215,8 @@ struct MegalodonKernelStep {
   bool hasSubsumptionResolutionPivot = false;
   RenderedKernelSubsumptionResolutionPivot subsumptionResolutionPivot;
   std::vector<RenderedKernelSkolemIntroducedSymbol> skolemIntroducedSymbols;
+  bool hasSourceFormulaTransform = false;
+  RenderedKernelSourceFormulaTransform sourceFormulaTransform;
   bool hasConclusion = false;
   RenderedKernelConclusion conclusion;
   bool hasParents = false;
@@ -252,6 +276,10 @@ void setSubsumptionResolutionPivot(
 void addSkolemIntroducedSymbol(
   MegalodonKernelStep& step,
   const RenderedKernelSkolemIntroducedSymbol& introduced);
+
+void setSourceFormulaTransform(
+  MegalodonKernelStep& step,
+  const RenderedKernelSourceFormulaTransform& transform);
 
 void setConclusion(
   MegalodonKernelStep& step,
