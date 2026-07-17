@@ -228,6 +228,14 @@ void setAvatarComponent(
   step.avatarComponent = avatarComponent;
 }
 
+void setAvatarDefinition(
+  MegalodonKernelStep& step,
+  const RenderedKernelAvatarDefinition& avatarDefinition)
+{
+  step.hasAvatarDefinition = true;
+  step.avatarDefinition = avatarDefinition;
+}
+
 void setConclusion(
   MegalodonKernelStep& step,
   const RenderedKernelConclusion& conclusion)
@@ -670,6 +678,42 @@ void appendAvatarComponentFields(
   }
 }
 
+void appendAvatarDefinitionFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelAvatarDefinition& definition)
+{
+  fields.push_back("component_split_level=" + std::to_string(definition.componentSplit.level));
+  fields.push_back("component_split_var=" + std::to_string(definition.componentSplit.variable));
+  fields.push_back(
+    "component_split_positive="
+    + std::string(definition.componentSplit.positive ? "1" : "0"));
+  if (definition.hasComponentClause) {
+    fields.push_back("component_clause=" + definition.componentClause);
+  }
+  if (definition.hasComponentClauseSexpr) {
+    fields.push_back("component_clause_sexpr=" + definition.componentClauseSexpr.sexpr);
+  }
+  fields.push_back(
+    "component_clause_variable_sort_count="
+    + std::to_string(definition.componentClauseVariableSorts.size()));
+  for (std::size_t sortIndex = 0; sortIndex < definition.componentClauseVariableSorts.size(); ++sortIndex) {
+    fields.push_back(
+      "component_clause_variable_sort_" + std::to_string(sortIndex) + "="
+      + definition.componentClauseVariableSorts[sortIndex]);
+  }
+  fields.push_back(
+    "component_clause_db_sort_count="
+    + std::to_string(definition.componentClauseDbSorts.size()));
+  for (std::size_t sortIndex = 0; sortIndex < definition.componentClauseDbSorts.size(); ++sortIndex) {
+    fields.push_back(
+      "component_clause_db_sort_" + std::to_string(sortIndex) + "="
+      + definition.componentClauseDbSorts[sortIndex]);
+  }
+  if (definition.hasResultClause) {
+    fields.push_back("result_clause=" + definition.resultClause.sexpr);
+  }
+}
+
 }
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
@@ -705,6 +749,9 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
   }
   if (step.hasAvatarComponent) {
     appendAvatarComponentFields(fields, step.avatarComponent);
+  }
+  if (step.hasAvatarDefinition) {
+    appendAvatarDefinitionFields(fields, step.avatarDefinition);
   }
   if (step.hasConclusion) {
     appendConclusionFields(fields, step.conclusion);

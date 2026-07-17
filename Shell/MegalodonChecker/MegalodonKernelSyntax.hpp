@@ -147,6 +147,18 @@ struct RenderedKernelAvatarComponent {
   std::vector<RenderedKernelAvatarSplit> splits;
 };
 
+struct RenderedKernelAvatarDefinition {
+  RenderedKernelAvatarSplit componentSplit;
+  bool hasComponentClause = false;
+  std::string componentClause;
+  bool hasComponentClauseSexpr = false;
+  RenderedKernelClause componentClauseSexpr;
+  std::vector<std::string> componentClauseVariableSorts;
+  std::vector<std::string> componentClauseDbSorts;
+  bool hasResultClause = false;
+  RenderedKernelClause resultClause;
+};
+
 struct RenderedKernelPrimitiveParentSubstitution {
   std::size_t parentIndex = 0;
   RenderedKernelSubstitution substitution;
@@ -305,6 +317,8 @@ struct MegalodonKernelStep {
   RenderedKernelUrrTrace urrTrace;
   bool hasAvatarComponent = false;
   RenderedKernelAvatarComponent avatarComponent;
+  bool hasAvatarDefinition = false;
+  RenderedKernelAvatarDefinition avatarDefinition;
   bool hasConclusion = false;
   RenderedKernelConclusion conclusion;
   bool hasParents = false;
@@ -388,6 +402,10 @@ void setUrrTrace(
 void setAvatarComponent(
   MegalodonKernelStep& step,
   const RenderedKernelAvatarComponent& avatarComponent);
+
+void setAvatarDefinition(
+  MegalodonKernelStep& step,
+  const RenderedKernelAvatarDefinition& avatarDefinition);
 
 void setConclusion(
   MegalodonKernelStep& step,

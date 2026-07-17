@@ -12201,7 +12201,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const MegalodonKernelSyntax::RenderedKernelCnfClause* cnfClause = nullptr,
         const MegalodonKernelSyntax::RenderedKernelDefinitionFold* definitionFold = nullptr,
         const MegalodonKernelSyntax::RenderedKernelUrrTrace* urrTrace = nullptr,
-        const MegalodonKernelSyntax::RenderedKernelAvatarComponent* avatarComponent = nullptr) {
+        const MegalodonKernelSyntax::RenderedKernelAvatarComponent* avatarComponent = nullptr,
+        const MegalodonKernelSyntax::RenderedKernelAvatarDefinition* avatarDefinition = nullptr) {
     MegalodonKernelSyntax::MegalodonKernelStep step =
       MegalodonKernelSyntax::kernelStep(
         "u" + std::to_string(u->number()),
@@ -12235,6 +12236,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     if (avatarComponent != nullptr) {
       MegalodonKernelSyntax::setAvatarComponent(step, *avatarComponent);
+    }
+    if (avatarDefinition != nullptr) {
+      MegalodonKernelSyntax::setAvatarDefinition(step, *avatarDefinition);
     }
     auto addPrimitiveExpansion = [&](const std::string& primitiveRule) {
       MegalodonKernelSyntax::addPrimitiveExpansion(
@@ -12575,7 +12579,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     return renderFormulaForExtra(unit->getFormula(), text);
   };
-  auto addClauseVariableSortFields = [&](std::vector<std::string>& fields, const std::string& prefix, Kernel::Clause* clause) {
+  auto collectClauseVariableSorts = [&](Kernel::Clause* clause) {
     Lib::DHMap<unsigned, Kernel::TermList> varSorts;
     Kernel::SortHelper::collectVariableSorts(clause, varSorts);
     std::vector<std::pair<unsigned, std::string>> rendered;
@@ -12592,12 +12596,21 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     std::sort(rendered.begin(), rendered.end(), [](const auto& left, const auto& right) {
       return left.first < right.first;
     });
+    std::vector<std::string> fields;
+    fields.reserve(rendered.size());
+    for (const auto& item : rendered) {
+      fields.push_back(item.second);
+    }
+    return fields;
+  };
+  auto addClauseVariableSortFields = [&](std::vector<std::string>& fields, const std::string& prefix, Kernel::Clause* clause) {
+    std::vector<std::string> rendered = collectClauseVariableSorts(clause);
     fields.push_back(prefix + "_variable_sort_count=" + std::to_string(rendered.size()));
     for (std::size_t i = 0; i < rendered.size(); ++i) {
-      fields.push_back(prefix + "_variable_sort_" + std::to_string(i) + "=" + rendered[i].second);
+      fields.push_back(prefix + "_variable_sort_" + std::to_string(i) + "=" + rendered[i]);
     }
   };
-  auto addClauseDbIndexSortFields = [&](std::vector<std::string>& fields, const std::string& prefix, Kernel::Clause* clause) {
+  auto collectClauseDbIndexSorts = [&](Kernel::Clause* clause) {
     std::map<unsigned, std::string> rendered;
     std::function<void(Kernel::TermList)> visitTerm = [&](Kernel::TermList term) {
       auto dbIndex = term.deBruijnIndex();
@@ -12633,11 +12646,18 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         visitTerm(*literal->nthArgument(i));
       }
     }
-    fields.push_back(prefix + "_db_sort_count=" + std::to_string(rendered.size()));
-    unsigned index = 0;
+    std::vector<std::string> fields;
+    fields.reserve(rendered.size());
     for (const auto& entry : rendered) {
-      fields.push_back(prefix + "_db_sort_" + std::to_string(index) + "=" + entry.second);
-      ++index;
+      fields.push_back(entry.second);
+    }
+    return fields;
+  };
+  auto addClauseDbIndexSortFields = [&](std::vector<std::string>& fields, const std::string& prefix, Kernel::Clause* clause) {
+    std::vector<std::string> rendered = collectClauseDbIndexSorts(clause);
+    fields.push_back(prefix + "_db_sort_count=" + std::to_string(rendered.size()));
+    for (std::size_t i = 0; i < rendered.size(); ++i) {
+      fields.push_back(prefix + "_db_sort_" + std::to_string(i) + "=" + rendered[i]);
     }
   };
 
@@ -12649,6 +12669,10 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         unsigned componentLevel = splitExtra->component->splits()->sval();
         SATLiteral componentLiteral = Splitter::getLiteralFromName(componentLevel);
         _avatarComponentBySatVar[componentLiteral.var()] = splitExtra->component;
+        MegalodonKernelSyntax::RenderedKernelAvatarDefinition avatarDefinition;
+        avatarDefinition.componentSplit.level = componentLevel;
+        avatarDefinition.componentSplit.variable = componentLiteral.var();
+        avatarDefinition.componentSplit.positive = componentLiteral.positive();
         std::vector<std::string> fields;
         fields.push_back("component_split_level=" + std::to_string(componentLevel));
         fields.push_back("component_split_var=" + std::to_string(componentLiteral.var()));
@@ -12656,11 +12680,17 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         std::string componentText;
         if (renderClauseForExtra(splitExtra->component, componentText)) {
           fields.push_back("component_clause=" + componentText);
+          avatarDefinition.hasComponentClause = true;
+          avatarDefinition.componentClause = componentText;
         }
         std::string componentClause;
         if (clauseSexprForKernel(splitExtra->component, componentClause)) {
           fields.push_back("component_clause_sexpr=" + componentClause);
+          avatarDefinition.hasComponentClauseSexpr = true;
+          avatarDefinition.componentClauseSexpr = MegalodonKernelSyntax::clause(componentClause);
         }
+        avatarDefinition.componentClauseVariableSorts = collectClauseVariableSorts(splitExtra->component);
+        avatarDefinition.componentClauseDbSorts = collectClauseDbIndexSorts(splitExtra->component);
         addClauseVariableSortFields(fields, "component_clause", splitExtra->component);
         addClauseDbIndexSortFields(fields, "component_clause", splitExtra->component);
         if (!componentClause.empty()
@@ -12673,11 +12703,24 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           _certificateNativeSteps.push_back(native.str());
         }
         {
-          std::vector<std::string> kernelFields = fields;
+          std::vector<std::string> kernelFields;
           if (!componentClause.empty()) {
-            kernelFields.push_back("result_clause=" + componentClause);
+            avatarDefinition.hasResultClause = true;
+            avatarDefinition.resultClause = MegalodonKernelSyntax::clause(componentClause);
           }
-          emitKernelV1("avatar_definition", kernelFields);
+          emitKernelV1(
+            "avatar_definition",
+            kernelFields,
+            false,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            &avatarDefinition);
         }
         emit("avatar_definition", fields);
       }
