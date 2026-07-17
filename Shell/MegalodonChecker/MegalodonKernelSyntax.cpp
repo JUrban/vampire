@@ -47,6 +47,51 @@ std::vector<std::string> requiredPrimitivesForRule(const std::string& rule)
   return {};
 }
 
+RenderedKernelUnitRef unitRef(const std::string& value)
+{
+  return {value};
+}
+
+RenderedKernelTerm term(const std::string& sexpr)
+{
+  return {sexpr};
+}
+
+RenderedKernelFormula formula(const std::string& sexpr)
+{
+  return {sexpr};
+}
+
+RenderedKernelLiteral literal(const std::string& sexpr)
+{
+  return {sexpr};
+}
+
+RenderedKernelClause clause(const std::string& sexpr)
+{
+  return {sexpr};
+}
+
+RenderedKernelSubstitution substitution(const std::string& sexpr)
+{
+  return {sexpr};
+}
+
+RenderedKernelPosition position(const std::string& sexpr)
+{
+  return {sexpr};
+}
+
+std::vector<RenderedKernelLiteral> literals(const std::vector<std::string>& sexprs)
+{
+  std::vector<RenderedKernelLiteral> rendered;
+  rendered.reserve(sexprs.size());
+  for (const std::string& sexpr : sexprs) {
+    rendered.push_back(literal(sexpr));
+  }
+  return rendered;
+}
+
 PrimitiveExpansion primitiveExpansion(
   const std::string& prefix,
   const std::string& primitiveRule)
@@ -121,16 +166,16 @@ void appendLiteralSelection(
   const RenderedKernelLiteralSelection& selection)
 {
   if (selection.hasLiteral) {
-    fields.push_back(selection.prefix + "=" + selection.literal);
+    fields.push_back(selection.prefix + "=" + selection.literal.sexpr);
   }
   if (!selection.hasParent) {
     return;
   }
   fields.push_back(selection.prefix + "_parent_index=" + std::to_string(selection.parentIndex));
   fields.push_back(selection.prefix + "_literal_index=" + std::to_string(selection.literalIndex));
-  fields.push_back(selection.prefix + "_parent_unit=" + selection.parentUnit);
+  fields.push_back(selection.prefix + "_parent_unit=" + selection.parentUnit.value);
   if (selection.hasSubstituted) {
-    fields.push_back(selection.prefix + "_substituted=" + selection.substituted);
+    fields.push_back(selection.prefix + "_substituted=" + selection.substituted.sexpr);
   }
 }
 
@@ -139,10 +184,10 @@ void appendRewrite(
   const RenderedKernelRewrite& rewrite)
 {
   if (rewrite.hasTargetSubstituted) {
-    fields.push_back("target_substituted=" + rewrite.targetSubstituted);
+    fields.push_back("target_substituted=" + rewrite.targetSubstituted.sexpr);
   }
   if (rewrite.hasEqualitySubstituted) {
-    fields.push_back("equality_substituted=" + rewrite.equalitySubstituted);
+    fields.push_back("equality_substituted=" + rewrite.equalitySubstituted.sexpr);
   }
   if (rewrite.hasTargetLocation) {
     fields.push_back("target_parent_index=" + std::to_string(rewrite.targetParentIndex));
@@ -156,16 +201,16 @@ void appendRewrite(
     fields.push_back("rewrite_direction=" + rewrite.direction);
   }
   if (rewrite.hasPosition) {
-    fields.push_back("rewrite_position=" + rewrite.position);
+    fields.push_back("rewrite_position=" + rewrite.position.sexpr);
   }
   if (rewrite.hasFrom) {
-    fields.push_back("from=" + rewrite.from);
+    fields.push_back("from=" + rewrite.from.sexpr);
   }
   if (rewrite.hasTo) {
-    fields.push_back("to=" + rewrite.to);
+    fields.push_back("to=" + rewrite.to.sexpr);
   }
   if (rewrite.hasRewrittenTarget) {
-    fields.push_back("rewritten_target=" + rewrite.rewrittenTarget);
+    fields.push_back("rewritten_target=" + rewrite.rewrittenTarget.sexpr);
   }
 }
 
@@ -175,22 +220,22 @@ void appendUrrTraceStep(
 {
   const std::string prefix = "trace_step_" + std::to_string(step.index);
   if (step.hasUnitParent) {
-    fields.push_back(prefix + "_unit_parent=" + step.unitParent);
+    fields.push_back(prefix + "_unit_parent=" + step.unitParent.value);
   }
   if (step.hasUnitParentClause) {
-    fields.push_back(prefix + "_unit_parent_clause=" + step.unitParentClause);
+    fields.push_back(prefix + "_unit_parent_clause=" + step.unitParentClause.sexpr);
   }
   if (step.hasSelected) {
-    fields.push_back(prefix + "_selected=" + step.selected);
+    fields.push_back(prefix + "_selected=" + step.selected.sexpr);
   }
   if (step.hasSelectedSubstituted) {
-    fields.push_back(prefix + "_selected_substituted=" + step.selectedSubstituted);
+    fields.push_back(prefix + "_selected_substituted=" + step.selectedSubstituted.sexpr);
   }
   if (step.hasUnitSubstituted) {
-    fields.push_back(prefix + "_unit_substituted=" + step.unitSubstituted);
+    fields.push_back(prefix + "_unit_substituted=" + step.unitSubstituted.sexpr);
   }
   if (step.hasRemainingAfter) {
-    fields.push_back(prefix + "_remaining_after=" + step.remainingAfter);
+    fields.push_back(prefix + "_remaining_after=" + step.remainingAfter.sexpr);
   }
 }
 
@@ -212,26 +257,27 @@ void appendConclusionFields(
   std::vector<std::string>& fields,
   const RenderedKernelConclusion& conclusion)
 {
-  fields.push_back("conclusion_unit=" + conclusion.unit);
+  fields.push_back("conclusion_unit=" + conclusion.unit.value);
   fields.push_back("vampire_rule=" + conclusion.vampireRule);
   if (conclusion.hasClause) {
-    fields.push_back("conclusion_clause=" + conclusion.clause);
+    fields.push_back("conclusion_clause=" + conclusion.clause.sexpr);
     if (!hasFieldWithPrefix(fields, "result_clause=")) {
-      fields.push_back("result_clause=" + conclusion.clause);
+      fields.push_back("result_clause=" + conclusion.clause.sexpr);
     }
     if (conclusion.hasResultLiterals) {
       fields.push_back("result_literal_count=" + std::to_string(conclusion.resultLiterals.size()));
       for (std::size_t literalIndex = 0; literalIndex < conclusion.resultLiterals.size(); ++literalIndex) {
         fields.push_back(
-          "result_literal_" + std::to_string(literalIndex) + "=" + conclusion.resultLiterals[literalIndex]);
+          "result_literal_" + std::to_string(literalIndex) + "="
+          + conclusion.resultLiterals[literalIndex].sexpr);
       }
     }
     return;
   }
   if (conclusion.hasFormula) {
-    fields.push_back("conclusion_formula=" + conclusion.formula);
+    fields.push_back("conclusion_formula=" + conclusion.formula.sexpr);
     if (!hasFieldWithPrefix(fields, "result_formula=")) {
-      fields.push_back("result_formula=" + conclusion.formula);
+      fields.push_back("result_formula=" + conclusion.formula.sexpr);
     }
   }
 }
@@ -244,19 +290,19 @@ void appendParentFields(
   for (std::size_t parentIndex = 0; parentIndex < parents.size(); ++parentIndex) {
     const RenderedKernelParent& parent = parents[parentIndex];
     const std::string prefix = "parent_" + std::to_string(parentIndex);
-    fields.push_back(prefix + "_unit=" + parent.unit);
+    fields.push_back(prefix + "_unit=" + parent.unit.value);
     if (parent.hasClause) {
-      fields.push_back(prefix + "_clause=" + parent.clause);
+      fields.push_back(prefix + "_clause=" + parent.clause.sexpr);
     }
     if (parent.hasLiterals) {
       fields.push_back(prefix + "_literal_count=" + std::to_string(parent.literals.size()));
       for (std::size_t literalIndex = 0; literalIndex < parent.literals.size(); ++literalIndex) {
         fields.push_back(
-          prefix + "_literal_" + std::to_string(literalIndex) + "=" + parent.literals[literalIndex]);
+          prefix + "_literal_" + std::to_string(literalIndex) + "=" + parent.literals[literalIndex].sexpr);
       }
     }
     if (parent.hasSubstitution) {
-      fields.push_back(prefix + "_substitution=" + parent.substitution);
+      fields.push_back(prefix + "_substitution=" + parent.substitution.sexpr);
     }
     if (parent.hasSubstitutedLiterals) {
       fields.push_back(
@@ -264,7 +310,7 @@ void appendParentFields(
       for (std::size_t literalIndex = 0; literalIndex < parent.substitutedLiterals.size(); ++literalIndex) {
         fields.push_back(
           prefix + "_substituted_literal_" + std::to_string(literalIndex)
-          + "=" + parent.substitutedLiterals[literalIndex]);
+          + "=" + parent.substitutedLiterals[literalIndex].sexpr);
       }
     }
   }

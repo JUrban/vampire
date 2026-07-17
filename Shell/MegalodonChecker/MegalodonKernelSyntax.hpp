@@ -13,46 +13,74 @@ struct PrimitiveExpansion {
   std::string requiredRule;
 };
 
+struct RenderedKernelUnitRef {
+  std::string value;
+};
+
+struct RenderedKernelTerm {
+  std::string sexpr;
+};
+
+struct RenderedKernelFormula {
+  std::string sexpr;
+};
+
+struct RenderedKernelLiteral {
+  std::string sexpr;
+};
+
+struct RenderedKernelClause {
+  std::string sexpr;
+};
+
+struct RenderedKernelSubstitution {
+  std::string sexpr;
+};
+
+struct RenderedKernelPosition {
+  std::string sexpr;
+};
+
 struct RenderedKernelConclusion {
-  std::string unit;
+  RenderedKernelUnitRef unit;
   std::string vampireRule;
   bool hasClause = false;
-  std::string clause;
+  RenderedKernelClause clause;
   bool hasFormula = false;
-  std::string formula;
+  RenderedKernelFormula formula;
   bool hasResultLiterals = false;
-  std::vector<std::string> resultLiterals;
+  std::vector<RenderedKernelLiteral> resultLiterals;
 };
 
 struct RenderedKernelParent {
-  std::string unit;
+  RenderedKernelUnitRef unit;
   bool hasClause = false;
-  std::string clause;
+  RenderedKernelClause clause;
   bool hasLiterals = false;
-  std::vector<std::string> literals;
+  std::vector<RenderedKernelLiteral> literals;
   bool hasSubstitution = false;
-  std::string substitution;
+  RenderedKernelSubstitution substitution;
   bool hasSubstitutedLiterals = false;
-  std::vector<std::string> substitutedLiterals;
+  std::vector<RenderedKernelLiteral> substitutedLiterals;
 };
 
 struct RenderedKernelLiteralSelection {
   std::string prefix;
   bool hasLiteral = false;
-  std::string literal;
+  RenderedKernelLiteral literal;
   bool hasParent = false;
   int parentIndex = -1;
   int literalIndex = -1;
-  std::string parentUnit;
+  RenderedKernelUnitRef parentUnit;
   bool hasSubstituted = false;
-  std::string substituted;
+  RenderedKernelLiteral substituted;
 };
 
 struct RenderedKernelRewrite {
   bool hasTargetSubstituted = false;
-  std::string targetSubstituted;
+  RenderedKernelLiteral targetSubstituted;
   bool hasEqualitySubstituted = false;
-  std::string equalitySubstituted;
+  RenderedKernelLiteral equalitySubstituted;
   bool hasTargetLocation = false;
   int targetParentIndex = -1;
   int targetLiteralIndex = -1;
@@ -62,29 +90,29 @@ struct RenderedKernelRewrite {
   bool hasDirection = false;
   std::string direction;
   bool hasPosition = false;
-  std::string position;
+  RenderedKernelPosition position;
   bool hasFrom = false;
-  std::string from;
+  RenderedKernelTerm from;
   bool hasTo = false;
-  std::string to;
+  RenderedKernelTerm to;
   bool hasRewrittenTarget = false;
-  std::string rewrittenTarget;
+  RenderedKernelLiteral rewrittenTarget;
 };
 
 struct RenderedKernelUrrTraceStep {
   std::size_t index = 0;
   bool hasUnitParent = false;
-  std::string unitParent;
+  RenderedKernelUnitRef unitParent;
   bool hasUnitParentClause = false;
-  std::string unitParentClause;
+  RenderedKernelClause unitParentClause;
   bool hasSelected = false;
-  std::string selected;
+  RenderedKernelLiteral selected;
   bool hasSelectedSubstituted = false;
-  std::string selectedSubstituted;
+  RenderedKernelLiteral selectedSubstituted;
   bool hasUnitSubstituted = false;
-  std::string unitSubstituted;
+  RenderedKernelLiteral unitSubstituted;
   bool hasRemainingAfter = false;
-  std::string remainingAfter;
+  RenderedKernelClause remainingAfter;
 };
 
 struct MegalodonKernelStep {
@@ -101,6 +129,15 @@ struct MegalodonKernelStep {
 const std::string& schema();
 
 std::vector<std::string> requiredPrimitivesForRule(const std::string& rule);
+
+RenderedKernelUnitRef unitRef(const std::string& value);
+RenderedKernelTerm term(const std::string& sexpr);
+RenderedKernelFormula formula(const std::string& sexpr);
+RenderedKernelLiteral literal(const std::string& sexpr);
+RenderedKernelClause clause(const std::string& sexpr);
+RenderedKernelSubstitution substitution(const std::string& sexpr);
+RenderedKernelPosition position(const std::string& sexpr);
+std::vector<RenderedKernelLiteral> literals(const std::vector<std::string>& sexprs);
 
 PrimitiveExpansion primitiveExpansion(
   const std::string& prefix,

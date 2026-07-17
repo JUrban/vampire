@@ -11764,14 +11764,16 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     for (std::size_t parentIndex = 0; parentIndex < parentClauses.size(); ++parentIndex) {
       Kernel::Clause* parent = parentClauses[parentIndex];
       MegalodonKernelSyntax::RenderedKernelParent renderedParent;
-      renderedParent.unit = "u" + std::to_string(parent->number());
+      renderedParent.unit = MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number()));
       std::string clause;
       if (clauseSexprForKernel(parent, clause)) {
         renderedParent.hasClause = true;
-        renderedParent.clause = clause;
+        renderedParent.clause = MegalodonKernelSyntax::clause(clause);
       }
-      if (appendCertificateClauseLiteralsSexpr(parent, renderedParent.literals)) {
+      std::vector<std::string> literals;
+      if (appendCertificateClauseLiteralsSexpr(parent, literals)) {
         renderedParent.hasLiterals = true;
+        renderedParent.literals = MegalodonKernelSyntax::literals(literals);
       }
       if (
         info != nullptr
@@ -11781,7 +11783,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         std::string subst;
         if (substitutionSexprForKernel(info->substitutionForBanksSub[parentIndex], subst)) {
           renderedParent.hasSubstitution = true;
-          renderedParent.substitution = subst;
+          renderedParent.substitution = MegalodonKernelSyntax::substitution(subst);
         }
         std::vector<std::string> substitutedLiterals;
         for (Kernel::Literal* literal : info->premises[parentIndex]->iterLits()) {
@@ -11794,7 +11796,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         }
         if (appendCertificateSplitLiteralsSexpr(info->premises[parentIndex], substitutedLiterals)) {
           renderedParent.hasSubstitutedLiterals = true;
-          renderedParent.substitutedLiterals = substitutedLiterals;
+          renderedParent.substitutedLiterals = MegalodonKernelSyntax::literals(substitutedLiterals);
         }
       }
       MegalodonKernelSyntax::addParent(step, renderedParent);
@@ -11802,22 +11804,24 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
   };
   auto setKernelConclusion = [&](MegalodonKernelSyntax::MegalodonKernelStep& step) {
     MegalodonKernelSyntax::RenderedKernelConclusion conclusion;
-    conclusion.unit = "u" + std::to_string(u->number());
+    conclusion.unit = MegalodonKernelSyntax::unitRef("u" + std::to_string(u->number()));
     conclusion.vampireRule = std::string(Kernel::ruleName(u->inference().rule()));
     if (u->isClause()) {
       std::string clause;
       if (clauseSexprForKernel(u->asClause(), clause)) {
         conclusion.hasClause = true;
-        conclusion.clause = clause;
+        conclusion.clause = MegalodonKernelSyntax::clause(clause);
       }
-      if (appendCertificateClauseLiteralsSexpr(u->asClause(), conclusion.resultLiterals)) {
+      std::vector<std::string> resultLiterals;
+      if (appendCertificateClauseLiteralsSexpr(u->asClause(), resultLiterals)) {
         conclusion.hasResultLiterals = true;
+        conclusion.resultLiterals = MegalodonKernelSyntax::literals(resultLiterals);
       }
     } else {
       std::string formula;
       if (certificateFormulaTermSexpr(u->getFormula(), formula)) {
         conclusion.hasFormula = true;
-        conclusion.formula = formula;
+        conclusion.formula = MegalodonKernelSyntax::formula(formula);
       }
     }
     MegalodonKernelSyntax::setConclusion(step, conclusion);
@@ -11832,14 +11836,15 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       std::string rendered;
       if (literalSexprForKernel(literal, rendered)) {
         selection.hasLiteral = true;
-        selection.literal = rendered;
+        selection.literal = MegalodonKernelSyntax::literal(rendered);
       }
       auto [parentIndex, literalIndex] = literalPosition(literal, preferredParentIndex);
       if (parentIndex >= 0 && literalIndex >= 0) {
         selection.hasParent = true;
         selection.parentIndex = parentIndex;
         selection.literalIndex = literalIndex;
-        selection.parentUnit = "u" + std::to_string(parentClauses[parentIndex]->number());
+        selection.parentUnit =
+          MegalodonKernelSyntax::unitRef("u" + std::to_string(parentClauses[parentIndex]->number()));
         bool addedSubstituted = false;
         if (info != nullptr
           && static_cast<std::size_t>(parentIndex) < info->premises.size()
@@ -11848,13 +11853,13 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             Kernel::SubstHelper::apply(literal, info->substitutionForBanksSub[parentIndex]);
           if (literalSexprForKernel(substituted, rendered)) {
             selection.hasSubstituted = true;
-            selection.substituted = rendered;
+            selection.substituted = MegalodonKernelSyntax::literal(rendered);
             addedSubstituted = true;
           }
         }
         if (!addedSubstituted && literalSexprForKernel(literal, rendered)) {
           selection.hasSubstituted = true;
-          selection.substituted = rendered;
+          selection.substituted = MegalodonKernelSyntax::literal(rendered);
         }
       }
       MegalodonKernelSyntax::appendLiteralSelection(fields, selection);
@@ -11985,11 +11990,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       std::string rendered;
       if (literalSexprForKernel(targetSubstituted, rendered)) {
         rewrite.hasTargetSubstituted = true;
-        rewrite.targetSubstituted = rendered;
+        rewrite.targetSubstituted = MegalodonKernelSyntax::literal(rendered);
       }
       if (literalSexprForKernel(equalitySubstituted, rendered)) {
         rewrite.hasEqualitySubstituted = true;
-        rewrite.equalitySubstituted = rendered;
+        rewrite.equalitySubstituted = MegalodonKernelSyntax::literal(rendered);
       }
 
       for (unsigned direction = 0; direction < 2; ++direction) {
@@ -12008,18 +12013,18 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         rewrite.hasDirection = true;
         rewrite.direction = direction == 0 ? "forward" : "backward";
         rewrite.hasPosition = true;
-        rewrite.position = certificatePositionSexpr(position);
+        rewrite.position = MegalodonKernelSyntax::position(certificatePositionSexpr(position));
         if (termSexprForKernel(from, rendered)) {
           rewrite.hasFrom = true;
-          rewrite.from = rendered;
+          rewrite.from = MegalodonKernelSyntax::term(rendered);
         }
         if (termSexprForKernel(to, rendered)) {
           rewrite.hasTo = true;
-          rewrite.to = rendered;
+          rewrite.to = MegalodonKernelSyntax::term(rendered);
         }
         if (literalSexprForKernel(rewrittenTarget, rendered)) {
           rewrite.hasRewrittenTarget = true;
-          rewrite.rewrittenTarget = rendered;
+          rewrite.rewrittenTarget = MegalodonKernelSyntax::literal(rendered);
         }
         MegalodonKernelSyntax::appendRewrite(fields, rewrite);
         return;
@@ -12060,7 +12065,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         std::string rendered;
         if (literalSexprForKernel(substituted, rendered)) {
           rewrite.hasEqualitySubstituted = true;
-          rewrite.equalitySubstituted = rendered;
+          rewrite.equalitySubstituted = MegalodonKernelSyntax::literal(rendered);
         }
         rewrite.hasEqualityLocation = true;
         rewrite.equalityParentIndex = static_cast<int>(parentIndex);
@@ -12072,11 +12077,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     std::string rendered;
     if (termSexprForKernel(info->demodulationRedex, rendered)) {
       rewrite.hasFrom = true;
-      rewrite.from = rendered;
+      rewrite.from = MegalodonKernelSyntax::term(rendered);
     }
     if (termSexprForKernel(info->demodulationReplacement, rendered)) {
       rewrite.hasTo = true;
-      rewrite.to = rendered;
+      rewrite.to = MegalodonKernelSyntax::term(rendered);
     }
     for (std::size_t parentIndex = 0; parentIndex < info->premises.size(); ++parentIndex) {
       Kernel::Clause* premise = info->premises[parentIndex];
@@ -12098,14 +12103,14 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         rewrite.targetParentIndex = static_cast<int>(parentIndex);
         rewrite.targetLiteralIndex = static_cast<int>(literalIndex);
         rewrite.hasPosition = true;
-        rewrite.position = certificatePositionSexpr(position);
+        rewrite.position = MegalodonKernelSyntax::position(certificatePositionSexpr(position));
         if (literalSexprForKernel(substituted, rendered)) {
           rewrite.hasTargetSubstituted = true;
-          rewrite.targetSubstituted = rendered;
+          rewrite.targetSubstituted = MegalodonKernelSyntax::literal(rendered);
         }
         if (literalSexprForKernel(rewrittenTarget, rendered)) {
           rewrite.hasRewrittenTarget = true;
-          rewrite.rewrittenTarget = rendered;
+          rewrite.rewrittenTarget = MegalodonKernelSyntax::literal(rendered);
         }
         MegalodonKernelSyntax::appendRewrite(fields, rewrite);
         return;
@@ -14145,29 +14150,30 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           traceStep.index = traceIndex;
           if (trace.unitParent != nullptr) {
             traceStep.hasUnitParent = true;
-            traceStep.unitParent = "u" + std::to_string(trace.unitParent->number());
+            traceStep.unitParent =
+              MegalodonKernelSyntax::unitRef("u" + std::to_string(trace.unitParent->number()));
             std::string clause;
             if (clauseSexprForKernel(trace.unitParent, clause)) {
               traceStep.hasUnitParentClause = true;
-              traceStep.unitParentClause = clause;
+              traceStep.unitParentClause = MegalodonKernelSyntax::clause(clause);
             }
           }
           std::string rendered;
           if (literalSexprForKernel(trace.selected, rendered)) {
             traceStep.hasSelected = true;
-            traceStep.selected = rendered;
+            traceStep.selected = MegalodonKernelSyntax::literal(rendered);
           }
           if (literalSexprForKernel(trace.selectedSubstituted, rendered)) {
             traceStep.hasSelectedSubstituted = true;
-            traceStep.selectedSubstituted = rendered;
+            traceStep.selectedSubstituted = MegalodonKernelSyntax::literal(rendered);
           }
           if (literalSexprForKernel(trace.unitSubstituted, rendered)) {
             traceStep.hasUnitSubstituted = true;
-            traceStep.unitSubstituted = rendered;
+            traceStep.unitSubstituted = MegalodonKernelSyntax::literal(rendered);
           }
           if (literalVectorClauseSexprForKernel(trace.remainingAfter, rendered)) {
             traceStep.hasRemainingAfter = true;
-            traceStep.remainingAfter = rendered;
+            traceStep.remainingAfter = MegalodonKernelSyntax::clause(rendered);
           }
           MegalodonKernelSyntax::appendUrrTraceStep(kernelFields, traceStep);
         }
