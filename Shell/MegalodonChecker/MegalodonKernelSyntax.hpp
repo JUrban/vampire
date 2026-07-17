@@ -17,6 +17,9 @@ struct PrimitiveStep {
   std::string rule;
   std::string id;
   std::string rendered;
+  std::vector<std::string> parentIds;
+  bool hasResultClause = false;
+  std::string resultClause;
 };
 
 struct RenderedKernelUnitRef {
@@ -473,6 +476,13 @@ PrimitiveExpansion primitiveExpansion(
 PrimitiveStep primitiveStep(
   const std::string& rule,
   const std::string& id,
+  const std::string& rendered);
+
+PrimitiveStep primitiveClauseStep(
+  const std::string& rule,
+  const std::string& id,
+  const std::vector<std::string>& parentIds,
+  const std::string& resultClause,
   const std::string& rendered);
 
 void appendPrimitiveExpansion(

@@ -176,6 +176,20 @@ PrimitiveStep primitiveStep(
   return {rule, id, rendered};
 }
 
+PrimitiveStep primitiveClauseStep(
+  const std::string& rule,
+  const std::string& id,
+  const std::vector<std::string>& parentIds,
+  const std::string& resultClause,
+  const std::string& rendered)
+{
+  PrimitiveStep step = primitiveStep(rule, id, rendered);
+  step.parentIds = parentIds;
+  step.hasResultClause = true;
+  step.resultClause = resultClause;
+  return step;
+}
+
 void appendPrimitiveExpansion(
   std::vector<std::string>& fields,
   const PrimitiveExpansion& expansion)
@@ -292,6 +306,22 @@ bool appendPrimitiveExpansionChainFields(
       "primitive_expansion_step_" + std::to_string(i) + "_rule=" + primitiveSteps[i].rule);
     fields.push_back(
       "primitive_expansion_step_" + std::to_string(i) + "_id=" + primitiveSteps[i].id);
+    fields.push_back(
+      "primitive_expansion_step_" + std::to_string(i) + "_parent_count="
+      + std::to_string(primitiveSteps[i].parentIds.size()));
+    for (std::size_t parentIndex = 0;
+         parentIndex < primitiveSteps[i].parentIds.size();
+         ++parentIndex) {
+      fields.push_back(
+        "primitive_expansion_step_" + std::to_string(i)
+        + "_parent_" + std::to_string(parentIndex)
+        + "_id=" + primitiveSteps[i].parentIds[parentIndex]);
+    }
+    if (primitiveSteps[i].hasResultClause) {
+      fields.push_back(
+        "primitive_expansion_step_" + std::to_string(i)
+        + "_result_clause=" + primitiveSteps[i].resultClause);
+    }
   }
   fields.push_back("primitive_expansion_requires_count=" + std::to_string(requiredRules.size()));
   for (std::size_t i = 0; i < requiredRules.size(); ++i) {
