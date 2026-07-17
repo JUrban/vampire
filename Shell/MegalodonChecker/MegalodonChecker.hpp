@@ -225,7 +225,10 @@ private:
     const InferenceRecorder::InferenceInformation* replayInfo,
     std::string& result,
     std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
-  bool certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateSatSubsumptionResolutionStepSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   bool certificateFactorStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateTrivialInequalityRemovalStepsSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateEqualityResolutionStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);

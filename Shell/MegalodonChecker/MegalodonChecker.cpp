@@ -6281,7 +6281,10 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
   return false;
 }
 
-bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit* unit, std::string& result)
+bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
+  Kernel::Unit* unit,
+  std::string& result,
+  std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps)
 {
   const Kernel::InferenceRule& rule = unit->inference().rule();
   if (!unit->isClause()
@@ -6516,6 +6519,7 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
         const std::string stepBase = "u" + std::to_string(unit->number());
         const std::string mainParentId = "u" + std::to_string(mainParent->number());
         const std::string sideParentId = "u" + std::to_string(sideParent->number());
+        std::vector<MegalodonKernelSyntax::PrimitiveStep> localPrimitiveSteps;
         auto clauseFromLiterals = [](const std::vector<std::string>& literals) {
           std::ostringstream out;
           out << "(clause";
@@ -6542,6 +6546,8 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
         }
         std::string primitivePrefix;
         std::string resolveSideParentId = sideParentId;
+        std::string sideSubstituteStep;
+        std::string sideSubstituteId;
         auto applyRenderedSubstitutionToLiterals = [&](std::vector<std::string>& literals) {
           if (sideSubstitutionSexpr == "(subst)") {
             return true;
@@ -6586,8 +6592,8 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
           return true;
         };
         if (sideSubstitutionSexpr != "(subst)") {
-          resolveSideParentId = stepBase + "_side_subst";
-          std::string sideSubstituteStep;
+          sideSubstituteId = stepBase + "_side_subst";
+          resolveSideParentId = sideSubstituteId;
           if (!certificateSubstituteStepSexpr(
                 resolveSideParentId,
                 sideParentId,
@@ -6601,6 +6607,16 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
         }
         if (!applyRenderedSubstitutionToLiterals(sideClauseLiterals)) {
           return false;
+        }
+        if (!sideSubstituteId.empty()) {
+          localPrimitiveSteps.push_back(
+            MegalodonKernelSyntax::primitiveClauseStep(
+              "substitute",
+              sideSubstituteId,
+              {sideParentId},
+              clauseFromLiterals(sideClauseLiterals),
+              {{"substitution", sideSubstitutionSexpr}},
+              sideSubstituteStep));
         }
         std::vector<std::string> actualLiterals;
         if (!appendCertificateClauseLiteralsSexpr(unit->asClause(), actualLiterals)) {
@@ -6622,16 +6638,28 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
           sideClauseLiterals[literalIndex] = swappedSideSexpr;
           rememberVariableSorts(swappedSide);
           const std::string sideSymmetryId = stepBase + "_side_symmetry" + std::to_string(sideSymmetryCount++);
+          const std::string sideSymmetryParentId = resolveSideParentId;
+          const std::string sideSymmetryClause = clauseFromLiterals(sideClauseLiterals);
           std::string metadata = syntheticVariableSortsMetadata(sideSymmetryId, sideClauseLiterals);
           if (!metadata.empty()) {
             primitivePrefix += metadata;
             primitivePrefix += "\n  ";
           }
-          primitivePrefix +=
+          const std::string sideSymmetryStep =
             "(equality_symmetry " + sexprQuote(sideSymmetryId)
-            + " (parent " + sexprQuote(resolveSideParentId) + ")"
+            + " (parent " + sexprQuote(sideSymmetryParentId) + ")"
             + " (literal " + std::to_string(literalIndex) + ")"
-            + " (result " + clauseFromLiterals(sideClauseLiterals) + "))\n  ";
+            + " (result " + sideSymmetryClause + "))";
+          primitivePrefix += sideSymmetryStep;
+          primitivePrefix += "\n  ";
+          localPrimitiveSteps.push_back(
+            MegalodonKernelSyntax::primitiveClauseStep(
+              "equality_symmetry",
+              sideSymmetryId,
+              {sideSymmetryParentId},
+              sideSymmetryClause,
+              {{"literal", std::to_string(literalIndex)}},
+              sideSymmetryStep));
           resolveSideParentId = sideSymmetryId;
           return true;
         };
@@ -6684,13 +6712,24 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
           primitivePrefix += resolveMetadata;
           primitivePrefix += "\n  ";
         }
-        primitivePrefix +=
+        const std::string resolveResultClause = clauseFromLiterals(resolveLiterals);
+        const std::string resolveStep =
           "(resolve " + sexprQuote(resolveId)
           + " (parents " + sexprQuote(mainParentId)
           + " " + sexprQuote(resolveSideParentId) + ")"
           + " (pivot " + std::to_string(selectedIndex) + " "
           + std::to_string(sideLiteralIndex) + ")"
-          + " (result " + clauseFromLiterals(resolveLiterals) + "))\n  ";
+          + " (result " + resolveResultClause + "))";
+        primitivePrefix += resolveStep;
+        primitivePrefix += "\n  ";
+        localPrimitiveSteps.push_back(
+          MegalodonKernelSyntax::primitiveClauseStep(
+            "resolve",
+            resolveId,
+            {mainParentId, resolveSideParentId},
+            resolveResultClause,
+            {{"pivot_left", std::to_string(selectedIndex)}, {"pivot_right", std::to_string(sideLiteralIndex)}},
+            resolveStep));
         std::vector<std::string> currentLiterals = resolveLiterals;
         std::string currentParentId = resolveId;
         unsigned factorCount = 0;
@@ -6712,11 +6751,22 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
                 primitivePrefix += factorMetadata;
                 primitivePrefix += "\n  ";
               }
-              primitivePrefix +=
+              const std::string factorResultClause = clauseFromLiterals(candidate);
+              const std::string factorStep =
                 "(factor " + sexprQuote(factorId)
                 + " (parent " + sexprQuote(currentParentId) + ")"
                 + " (literals " + std::to_string(left) + " " + std::to_string(right) + ")"
-                + " (result " + clauseFromLiterals(candidate) + "))\n  ";
+                + " (result " + factorResultClause + "))";
+              primitivePrefix += factorStep;
+              primitivePrefix += "\n  ";
+              localPrimitiveSteps.push_back(
+                MegalodonKernelSyntax::primitiveClauseStep(
+                  "factor",
+                  factorId,
+                  {currentParentId},
+                  factorResultClause,
+                  {{"literal_left", std::to_string(left)}, {"literal_right", std::to_string(right)}},
+                  factorStep));
               currentLiterals = candidate;
               currentParentId = factorId;
               factored = true;
@@ -6727,12 +6777,23 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(Kernel::Unit
             return false;
           }
         }
-        result =
-          primitivePrefix
-          + "(substitute " + sexprQuote(stepBase)
+        const std::string finalStep =
+          "(substitute " + sexprQuote(stepBase)
           + " (parent " + sexprQuote(currentParentId) + ")"
           + " (subst)"
           + " (result " + resultClauseSexpr + "))";
+        result = primitivePrefix + finalStep;
+        localPrimitiveSteps.push_back(
+          MegalodonKernelSyntax::primitiveClauseStep(
+            "substitute",
+            stepBase,
+            {currentParentId},
+            resultClauseSexpr,
+            {{"substitution", "(subst)"}},
+            finalStep));
+        if (primitiveSteps != nullptr) {
+          *primitiveSteps = localPrimitiveSteps;
+        }
         return true;
       }
     }
@@ -15156,6 +15217,14 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           if (certificateSubstitutedResolutionStepsSexpr(
                 u,
                 info,
+                primitiveExpansion,
+                &primitiveSteps)
+            && MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
+              kernelFields,
+              primitiveSteps,
+              "u" + std::to_string(u->number()))) {
+          } else if (certificateSatSubsumptionResolutionStepSexpr(
+                u,
                 primitiveExpansion,
                 &primitiveSteps)
             && MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
