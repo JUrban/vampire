@@ -11827,15 +11827,19 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const std::string& prefix,
         Kernel::Literal* literal,
         int preferredParentIndex = -1) {
+      MegalodonKernelSyntax::RenderedKernelLiteralSelection selection;
+      selection.prefix = prefix;
       std::string rendered;
       if (literalSexprForKernel(literal, rendered)) {
-        fields.push_back(prefix + "=" + rendered);
+        selection.hasLiteral = true;
+        selection.literal = rendered;
       }
       auto [parentIndex, literalIndex] = literalPosition(literal, preferredParentIndex);
       if (parentIndex >= 0 && literalIndex >= 0) {
-        fields.push_back(prefix + "_parent_index=" + std::to_string(parentIndex));
-        fields.push_back(prefix + "_literal_index=" + std::to_string(literalIndex));
-        fields.push_back(prefix + "_parent_unit=u" + std::to_string(parentClauses[parentIndex]->number()));
+        selection.hasParent = true;
+        selection.parentIndex = parentIndex;
+        selection.literalIndex = literalIndex;
+        selection.parentUnit = "u" + std::to_string(parentClauses[parentIndex]->number());
         bool addedSubstituted = false;
         if (info != nullptr
           && static_cast<std::size_t>(parentIndex) < info->premises.size()
@@ -11843,14 +11847,17 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           Kernel::Literal* substituted =
             Kernel::SubstHelper::apply(literal, info->substitutionForBanksSub[parentIndex]);
           if (literalSexprForKernel(substituted, rendered)) {
-            fields.push_back(prefix + "_substituted=" + rendered);
+            selection.hasSubstituted = true;
+            selection.substituted = rendered;
             addedSubstituted = true;
           }
         }
         if (!addedSubstituted && literalSexprForKernel(literal, rendered)) {
-          fields.push_back(prefix + "_substituted=" + rendered);
+          selection.hasSubstituted = true;
+          selection.substituted = rendered;
         }
       }
+      MegalodonKernelSyntax::appendLiteralSelection(fields, selection);
     };
   auto addKernelTermField = [&](std::vector<std::string>& fields, const std::string& name, Kernel::TermList term) {
     std::string rendered;

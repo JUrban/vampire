@@ -116,6 +116,24 @@ void setParentList(
   step.hasParents = true;
 }
 
+void appendLiteralSelection(
+  std::vector<std::string>& fields,
+  const RenderedKernelLiteralSelection& selection)
+{
+  if (selection.hasLiteral) {
+    fields.push_back(selection.prefix + "=" + selection.literal);
+  }
+  if (!selection.hasParent) {
+    return;
+  }
+  fields.push_back(selection.prefix + "_parent_index=" + std::to_string(selection.parentIndex));
+  fields.push_back(selection.prefix + "_literal_index=" + std::to_string(selection.literalIndex));
+  fields.push_back(selection.prefix + "_parent_unit=" + selection.parentUnit);
+  if (selection.hasSubstituted) {
+    fields.push_back(selection.prefix + "_substituted=" + selection.substituted);
+  }
+}
+
 namespace {
 
 bool hasFieldWithPrefix(

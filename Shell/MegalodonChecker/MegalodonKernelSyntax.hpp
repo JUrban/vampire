@@ -35,6 +35,18 @@ struct RenderedKernelParent {
   std::vector<std::string> substitutedLiterals;
 };
 
+struct RenderedKernelLiteralSelection {
+  std::string prefix;
+  bool hasLiteral = false;
+  std::string literal;
+  bool hasParent = false;
+  int parentIndex = -1;
+  int literalIndex = -1;
+  std::string parentUnit;
+  bool hasSubstituted = false;
+  std::string substituted;
+};
+
 struct MegalodonKernelStep {
   std::string id;
   std::string rule;
@@ -84,6 +96,10 @@ void addParent(
 
 void setParentList(
   MegalodonKernelStep& step);
+
+void appendLiteralSelection(
+  std::vector<std::string>& fields,
+  const RenderedKernelLiteralSelection& selection);
 
 std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step);
 
