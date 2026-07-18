@@ -975,11 +975,26 @@ void appendSkolemProofContractFields(
   std::vector<std::string>& fields,
   const RenderedKernelSkolemProofContract& contract)
 {
+  auto appendFormulaChildFields =
+    [&](const std::string& prefix, const std::vector<RenderedKernelFormulaChild>& children) {
+      fields.push_back(prefix + "_child_count=" + std::to_string(children.size()));
+      for (const RenderedKernelFormulaChild& child : children) {
+        const std::string childPrefix = prefix + "_child_" + std::to_string(child.index);
+        fields.push_back(childPrefix + "_role=" + child.role);
+        fields.push_back(childPrefix + "_formula=" + child.formula.sexpr);
+      }
+    };
   fields.push_back("skolem_contract=" + contract.version);
   fields.push_back("skolem_contract_primitive_rule=" + contract.primitiveRule);
   fields.push_back("skolem_contract_source_unit=" + contract.sourceUnit.value);
   fields.push_back("skolem_contract_source_formula=" + contract.sourceFormula.sexpr);
+  appendFormulaChildFields(
+    "skolem_contract_source_formula",
+    contract.sourceFormulaChildren);
   fields.push_back("skolem_contract_result_formula=" + contract.resultFormula.sexpr);
+  appendFormulaChildFields(
+    "skolem_contract_result_formula",
+    contract.resultFormulaChildren);
   fields.push_back(
     "skolem_contract_proof_parent_count=" + std::to_string(contract.proofParentCount));
   fields.push_back(

@@ -15060,8 +15060,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           MegalodonKernelSyntax::unitRef(skolemSourceUnitValue);
         skolemProofContract.sourceFormula =
           MegalodonKernelSyntax::formula(skolemSourceFormula);
+        skolemProofContract.sourceFormulaChildren =
+          immediateRenderedFormulaChildren(skolemSourceFormula);
         skolemProofContract.resultFormula =
           MegalodonKernelSyntax::formula(resultFormula);
+        skolemProofContract.resultFormulaChildren =
+          immediateRenderedFormulaChildren(resultFormula);
         skolemProofContract.proofParentCount = kernelParentIndex;
         skolemProofContract.introducedCount = skolemIntroducedSymbols.size();
         skolemProofContract.macroEdgeCount = skolemMacroEdges.size();

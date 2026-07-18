@@ -407,6 +407,8 @@ struct RenderedKernelSkolemProofContract {
   RenderedKernelUnitRef sourceUnit;
   RenderedKernelFormula sourceFormula;
   RenderedKernelFormula resultFormula;
+  std::vector<RenderedKernelFormulaChild> sourceFormulaChildren;
+  std::vector<RenderedKernelFormulaChild> resultFormulaChildren;
   std::size_t proofParentCount = 0;
   std::size_t introducedCount = 0;
   std::size_t macroEdgeCount = 0;
