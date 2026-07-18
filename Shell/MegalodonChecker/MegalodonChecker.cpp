@@ -14618,6 +14618,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               Kernel::Formula* edgeBody = parent->getFormula();
               setSkolemMacroEdgeFormulaShape(edge, edgeBody);
               edge.formulaQuantifiedVariables = quantifiedVariables(edgeBody);
+              edge.formulaFreeVariables = freeVariables(edgeBody);
               while (edgeBody->connective() == Kernel::FORALL) {
                 std::vector<std::pair<unsigned, Kernel::TermList>> vars;
                 Kernel::VSList::Iterator varIterator(edgeBody->vars());
@@ -14643,12 +14644,14 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                   edge.source = MegalodonKernelSyntax::formula(edgeSource);
                   setSkolemMacroEdgeSourceShape(edge, edgeBody->left());
                   edge.sourceQuantifiedVariables = quantifiedVariables(edgeBody->left());
+                  edge.sourceFreeVariables = freeVariables(edgeBody->left());
                 }
                 if (certificateFormulaTermSexpr(edgeBody->right(), edgeTarget)) {
                   edge.hasTarget = true;
                   edge.target = MegalodonKernelSyntax::formula(edgeTarget);
                   setSkolemMacroEdgeTargetShape(edge, edgeBody->right());
                   edge.targetQuantifiedVariables = quantifiedVariables(edgeBody->right());
+                  edge.targetFreeVariables = freeVariables(edgeBody->right());
                 }
               }
               skolemMacroEdges.push_back(edge);

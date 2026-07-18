@@ -874,6 +874,8 @@ void appendSkolemMacroEdgeFields(
     }
     appendQuantifiedVariableFields(
       fields, prefix + "_formula", edge.formulaQuantifiedVariables);
+    appendTypedVariableFields(
+      fields, prefix + "_formula", "free_variable", edge.formulaFreeVariables);
     if (edge.hasFormulaShape) {
       fields.push_back(prefix + "_formula_connective=" + edge.formulaConnective);
       fields.push_back(prefix + "_formula_exists_count=" + std::to_string(edge.formulaExistsCount));
@@ -887,6 +889,8 @@ void appendSkolemMacroEdgeFields(
     }
     appendQuantifiedVariableFields(
       fields, prefix + "_source", edge.sourceQuantifiedVariables);
+    appendTypedVariableFields(
+      fields, prefix + "_source", "free_variable", edge.sourceFreeVariables);
     if (edge.hasSourceShape) {
       fields.push_back(prefix + "_source_connective=" + edge.sourceConnective);
       fields.push_back(prefix + "_source_exists_count=" + std::to_string(edge.sourceExistsCount));
@@ -900,6 +904,8 @@ void appendSkolemMacroEdgeFields(
     }
     appendQuantifiedVariableFields(
       fields, prefix + "_target", edge.targetQuantifiedVariables);
+    appendTypedVariableFields(
+      fields, prefix + "_target", "free_variable", edge.targetFreeVariables);
     if (edge.hasTargetShape) {
       fields.push_back(prefix + "_target_connective=" + edge.targetConnective);
       fields.push_back(prefix + "_target_exists_count=" + std::to_string(edge.targetExistsCount));

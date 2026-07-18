@@ -356,8 +356,11 @@ struct RenderedKernelSkolemMacroEdge {
   RenderedKernelUnitRef unit;
   std::vector<std::pair<std::string, RenderedKernelType>> binders;
   std::vector<RenderedKernelQuantifiedVariable> formulaQuantifiedVariables;
+  std::vector<RenderedKernelTypedVariable> formulaFreeVariables;
   std::vector<RenderedKernelQuantifiedVariable> sourceQuantifiedVariables;
+  std::vector<RenderedKernelTypedVariable> sourceFreeVariables;
   std::vector<RenderedKernelQuantifiedVariable> targetQuantifiedVariables;
+  std::vector<RenderedKernelTypedVariable> targetFreeVariables;
   bool hasFormulaShape = false;
   std::string formulaConnective;
   std::size_t formulaExistsCount = 0;
