@@ -343,6 +343,7 @@ struct RenderedKernelSkolemMacroEdge {
   std::size_t index = 0;
   std::size_t parentIndex = 0;
   RenderedKernelUnitRef unit;
+  std::vector<std::pair<std::string, RenderedKernelType>> binders;
   bool hasFormula = false;
   RenderedKernelFormula formula;
   bool hasSource = false;

@@ -14343,6 +14343,20 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               edge.formula = MegalodonKernelSyntax::formula(parentFormula);
               Kernel::Formula* edgeBody = parent->getFormula();
               while (edgeBody->connective() == Kernel::FORALL) {
+                std::vector<std::pair<unsigned, Kernel::TermList>> vars;
+                Kernel::VSList::Iterator varIterator(edgeBody->vars());
+                while (varIterator.hasNext()) {
+                  vars.push_back(varIterator.next());
+                }
+                for (const auto& var : vars) {
+                  std::string varType;
+                  if (certificateTypeSexpr(var.second, varType)) {
+                    edge.binders.push_back(
+                      std::make_pair(
+                        variableName(var.first),
+                        MegalodonKernelSyntax::type(varType)));
+                  }
+                }
                 edgeBody = edgeBody->qarg();
               }
               if (edgeBody->connective() == Kernel::IMP) {

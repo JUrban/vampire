@@ -801,6 +801,12 @@ void appendSkolemMacroEdgeFields(
     const std::string prefix = "skolem_macro_edge_" + std::to_string(edge.index);
     fields.push_back(prefix + "_parent_index=" + std::to_string(edge.parentIndex));
     fields.push_back(prefix + "_unit=" + edge.unit.value);
+    fields.push_back(prefix + "_binder_count=" + std::to_string(edge.binders.size()));
+    for (std::size_t binderIndex = 0; binderIndex < edge.binders.size(); ++binderIndex) {
+      const std::string binderPrefix = prefix + "_binder_" + std::to_string(binderIndex);
+      fields.push_back(binderPrefix + "_var=" + edge.binders[binderIndex].first);
+      fields.push_back(binderPrefix + "_type=" + edge.binders[binderIndex].second.sexpr);
+    }
     if (edge.hasFormula) {
       fields.push_back(prefix + "_formula=" + edge.formula.sexpr);
     }
