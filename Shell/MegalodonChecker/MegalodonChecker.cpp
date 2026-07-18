@@ -12523,7 +12523,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const MegalodonKernelSyntax::RenderedKernelPredicateDefinition* predicateDefinition = nullptr,
         const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemMacroEdge>* skolemMacroEdges = nullptr,
         const std::vector<MegalodonKernelSyntax::RenderedKernelQuantifiedVariable>* skolemSourceFormulaQuantifiedVariables = nullptr,
-        const std::vector<MegalodonKernelSyntax::RenderedKernelQuantifiedVariable>* skolemResultFormulaQuantifiedVariables = nullptr) {
+        const std::vector<MegalodonKernelSyntax::RenderedKernelQuantifiedVariable>* skolemResultFormulaQuantifiedVariables = nullptr,
+        const std::vector<MegalodonKernelSyntax::RenderedKernelTypedVariable>* skolemSourceFormulaFreeVariables = nullptr,
+        const std::vector<MegalodonKernelSyntax::RenderedKernelTypedVariable>* skolemResultFormulaFreeVariables = nullptr) {
     if (!MegalodonKernelSyntax::isSupportedRule(kernelRule)) {
       INVALID_OPERATION("unsupported Megalodon kernel_v1 rule: " + kernelRule);
     }
@@ -12558,6 +12560,16 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       MegalodonKernelSyntax::setSkolemResultFormulaQuantifiedVariables(
         step,
         *skolemResultFormulaQuantifiedVariables);
+    }
+    if (skolemSourceFormulaFreeVariables != nullptr) {
+      MegalodonKernelSyntax::setSkolemSourceFormulaFreeVariables(
+        step,
+        *skolemSourceFormulaFreeVariables);
+    }
+    if (skolemResultFormulaFreeVariables != nullptr) {
+      MegalodonKernelSyntax::setSkolemResultFormulaFreeVariables(
+        step,
+        *skolemResultFormulaFreeVariables);
     }
     if (sourceFormulaTransform != nullptr) {
       MegalodonKernelSyntax::setSourceFormulaTransform(step, *sourceFormulaTransform);
@@ -14527,6 +14539,38 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           visit(formula);
           return result;
         };
+      auto freeVariables =
+        [&](Kernel::Formula* formula) {
+          std::vector<std::pair<unsigned, Kernel::TermList>> variables;
+          Lib::DHMap<unsigned, Kernel::TermList> collectedSorts;
+          Kernel::SortHelper::collectVariableSorts(
+            formula,
+            collectedSorts,
+            /*ignoreBound=*/true);
+          Lib::DHMap<unsigned, Kernel::TermList>::Iterator sortIterator(collectedSorts);
+          while (sortIterator.hasNext()) {
+            unsigned var;
+            Kernel::TermList sort;
+            sortIterator.next(var, sort);
+            variables.push_back(std::make_pair(var, sort));
+          }
+          std::sort(
+            variables.begin(),
+            variables.end(),
+            [](const auto& left, const auto& right) {
+              return left.first < right.first;
+            });
+          std::vector<MegalodonKernelSyntax::RenderedKernelTypedVariable> result;
+          for (const auto& var : variables) {
+            std::string varType;
+            if (certificateTypeSexpr(var.second, varType)) {
+              result.push_back({
+                variableName(var.first),
+                MegalodonKernelSyntax::type(varType)});
+            }
+          }
+          return result;
+        };
       if (!resultFormula.empty()) {
         hasSkolemResultFormulaQuantifiedVariables = true;
         skolemResultFormulaQuantifiedVariables = quantifiedVariables(u->getFormula());
@@ -14535,6 +14579,16 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       bool hasSkolemSourceFormulaQuantifiedVariables = false;
       std::vector<MegalodonKernelSyntax::RenderedKernelQuantifiedVariable>
         skolemSourceFormulaQuantifiedVariables;
+      bool hasSkolemResultFormulaFreeVariables = false;
+      std::vector<MegalodonKernelSyntax::RenderedKernelTypedVariable>
+        skolemResultFormulaFreeVariables;
+      if (!resultFormula.empty()) {
+        hasSkolemResultFormulaFreeVariables = true;
+        skolemResultFormulaFreeVariables = freeVariables(u->getFormula());
+      }
+      bool hasSkolemSourceFormulaFreeVariables = false;
+      std::vector<MegalodonKernelSyntax::RenderedKernelTypedVariable>
+        skolemSourceFormulaFreeVariables;
       std::vector<MegalodonKernelSyntax::RenderedKernelSkolemMacroEdge> skolemMacroEdges;
       for (Kernel::Unit* parent : iterTraits(u->getParents())) {
         const std::string prefix = "parent_" + std::to_string(kernelParentIndex);
@@ -14551,6 +14605,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               hasSkolemSourceFormulaQuantifiedVariables = true;
               skolemSourceFormulaQuantifiedVariables =
                 quantifiedVariables(parent->getFormula());
+              hasSkolemSourceFormulaFreeVariables = true;
+              skolemSourceFormulaFreeVariables =
+                freeVariables(parent->getFormula());
             } else {
               MegalodonKernelSyntax::RenderedKernelSkolemMacroEdge edge;
               edge.index = skolemMacroEdges.size();
@@ -14775,7 +14832,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         nullptr,
         &skolemMacroEdges,
         hasSkolemSourceFormulaQuantifiedVariables ? &skolemSourceFormulaQuantifiedVariables : nullptr,
-        hasSkolemResultFormulaQuantifiedVariables ? &skolemResultFormulaQuantifiedVariables : nullptr);
+        hasSkolemResultFormulaQuantifiedVariables ? &skolemResultFormulaQuantifiedVariables : nullptr,
+        hasSkolemSourceFormulaFreeVariables ? &skolemSourceFormulaFreeVariables : nullptr,
+        hasSkolemResultFormulaFreeVariables ? &skolemResultFormulaFreeVariables : nullptr);
     }
     std::vector<std::string> fields;
     fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));

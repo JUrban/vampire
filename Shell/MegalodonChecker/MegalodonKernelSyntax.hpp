@@ -345,6 +345,11 @@ struct RenderedKernelQuantifiedVariable {
   RenderedKernelType type;
 };
 
+struct RenderedKernelTypedVariable {
+  std::string variable;
+  RenderedKernelType type;
+};
+
 struct RenderedKernelSkolemMacroEdge {
   std::size_t index = 0;
   std::size_t parentIndex = 0;
@@ -495,6 +500,10 @@ struct MegalodonKernelStep {
   std::vector<RenderedKernelQuantifiedVariable> skolemSourceFormulaQuantifiedVariables;
   bool hasSkolemResultFormulaQuantifiedVariables = false;
   std::vector<RenderedKernelQuantifiedVariable> skolemResultFormulaQuantifiedVariables;
+  bool hasSkolemSourceFormulaFreeVariables = false;
+  std::vector<RenderedKernelTypedVariable> skolemSourceFormulaFreeVariables;
+  bool hasSkolemResultFormulaFreeVariables = false;
+  std::vector<RenderedKernelTypedVariable> skolemResultFormulaFreeVariables;
   bool hasSkolemMacroEdges = false;
   std::vector<RenderedKernelSkolemMacroEdge> skolemMacroEdges;
   bool hasSourceFormulaTransform = false;
@@ -613,6 +622,14 @@ void setSkolemSourceFormulaQuantifiedVariables(
 void setSkolemResultFormulaQuantifiedVariables(
   MegalodonKernelStep& step,
   const std::vector<RenderedKernelQuantifiedVariable>& variables);
+
+void setSkolemSourceFormulaFreeVariables(
+  MegalodonKernelStep& step,
+  const std::vector<RenderedKernelTypedVariable>& variables);
+
+void setSkolemResultFormulaFreeVariables(
+  MegalodonKernelStep& step,
+  const std::vector<RenderedKernelTypedVariable>& variables);
 
 void addSkolemMacroEdge(
   MegalodonKernelStep& step,

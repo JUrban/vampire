@@ -418,6 +418,22 @@ void setSkolemResultFormulaQuantifiedVariables(
   step.skolemResultFormulaQuantifiedVariables = variables;
 }
 
+void setSkolemSourceFormulaFreeVariables(
+  MegalodonKernelStep& step,
+  const std::vector<RenderedKernelTypedVariable>& variables)
+{
+  step.hasSkolemSourceFormulaFreeVariables = true;
+  step.skolemSourceFormulaFreeVariables = variables;
+}
+
+void setSkolemResultFormulaFreeVariables(
+  MegalodonKernelStep& step,
+  const std::vector<RenderedKernelTypedVariable>& variables)
+{
+  step.hasSkolemResultFormulaFreeVariables = true;
+  step.skolemResultFormulaFreeVariables = variables;
+}
+
 void addSkolemMacroEdge(
   MegalodonKernelStep& step,
   const RenderedKernelSkolemMacroEdge& edge)
@@ -817,6 +833,22 @@ void appendQuantifiedVariableFields(
   for (std::size_t variableIndex = 0; variableIndex < variables.size(); ++variableIndex) {
     const std::string variablePrefix = prefix + "_quantifier_" + std::to_string(variableIndex);
     fields.push_back(variablePrefix + "_kind=" + variables[variableIndex].kind);
+    fields.push_back(variablePrefix + "_var=" + variables[variableIndex].variable);
+    fields.push_back(variablePrefix + "_type=" + variables[variableIndex].type.sexpr);
+  }
+}
+
+void appendTypedVariableFields(
+  std::vector<std::string>& fields,
+  const std::string& prefix,
+  const std::string& role,
+  const std::vector<RenderedKernelTypedVariable>& variables)
+{
+  fields.push_back(
+    prefix + "_" + role + "_count=" + std::to_string(variables.size()));
+  for (std::size_t variableIndex = 0; variableIndex < variables.size(); ++variableIndex) {
+    const std::string variablePrefix =
+      prefix + "_" + role + "_" + std::to_string(variableIndex);
     fields.push_back(variablePrefix + "_var=" + variables[variableIndex].variable);
     fields.push_back(variablePrefix + "_type=" + variables[variableIndex].type.sexpr);
   }
@@ -1357,6 +1389,14 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
   if (step.hasSkolemResultFormulaQuantifiedVariables) {
     appendQuantifiedVariableFields(
       fields, "result_formula", step.skolemResultFormulaQuantifiedVariables);
+  }
+  if (step.hasSkolemSourceFormulaFreeVariables) {
+    appendTypedVariableFields(
+      fields, "source_formula", "free_variable", step.skolemSourceFormulaFreeVariables);
+  }
+  if (step.hasSkolemResultFormulaFreeVariables) {
+    appendTypedVariableFields(
+      fields, "result_formula", "free_variable", step.skolemResultFormulaFreeVariables);
   }
   if (step.hasSkolemMacroEdges) {
     appendSkolemMacroEdgeFields(fields, step.skolemMacroEdges);
