@@ -858,6 +858,15 @@ void appendSkolemMacroEdgeFields(
   std::vector<std::string>& fields,
   const std::vector<RenderedKernelSkolemMacroEdge>& edges)
 {
+  auto appendFormulaChildFields =
+    [&](const std::string& prefix, const std::vector<RenderedKernelFormulaChild>& children) {
+      fields.push_back(prefix + "_child_count=" + std::to_string(children.size()));
+      for (const RenderedKernelFormulaChild& child : children) {
+        const std::string childPrefix = prefix + "_child_" + std::to_string(child.index);
+        fields.push_back(childPrefix + "_role=" + child.role);
+        fields.push_back(childPrefix + "_formula=" + child.formula.sexpr);
+      }
+    };
   fields.push_back("skolem_macro_edge_count=" + std::to_string(edges.size()));
   for (const RenderedKernelSkolemMacroEdge& edge : edges) {
     const std::string prefix = "skolem_macro_edge_" + std::to_string(edge.index);
@@ -876,6 +885,7 @@ void appendSkolemMacroEdgeFields(
       fields, prefix + "_formula", edge.formulaQuantifiedVariables);
     appendTypedVariableFields(
       fields, prefix + "_formula", "free_variable", edge.formulaFreeVariables);
+    appendFormulaChildFields(prefix + "_formula", edge.formulaChildren);
     if (edge.hasFormulaShape) {
       fields.push_back(prefix + "_formula_connective=" + edge.formulaConnective);
       fields.push_back(prefix + "_formula_exists_count=" + std::to_string(edge.formulaExistsCount));
@@ -891,6 +901,7 @@ void appendSkolemMacroEdgeFields(
       fields, prefix + "_source", edge.sourceQuantifiedVariables);
     appendTypedVariableFields(
       fields, prefix + "_source", "free_variable", edge.sourceFreeVariables);
+    appendFormulaChildFields(prefix + "_source", edge.sourceChildren);
     if (edge.hasSourceShape) {
       fields.push_back(prefix + "_source_connective=" + edge.sourceConnective);
       fields.push_back(prefix + "_source_exists_count=" + std::to_string(edge.sourceExistsCount));
@@ -906,6 +917,7 @@ void appendSkolemMacroEdgeFields(
       fields, prefix + "_target", edge.targetQuantifiedVariables);
     appendTypedVariableFields(
       fields, prefix + "_target", "free_variable", edge.targetFreeVariables);
+    appendFormulaChildFields(prefix + "_target", edge.targetChildren);
     if (edge.hasTargetShape) {
       fields.push_back(prefix + "_target_connective=" + edge.targetConnective);
       fields.push_back(prefix + "_target_exists_count=" + std::to_string(edge.targetExistsCount));

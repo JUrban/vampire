@@ -350,6 +350,12 @@ struct RenderedKernelTypedVariable {
   RenderedKernelType type;
 };
 
+struct RenderedKernelFormulaChild {
+  std::size_t index = 0;
+  std::string role;
+  RenderedKernelFormula formula;
+};
+
 struct RenderedKernelSkolemMacroEdge {
   std::size_t index = 0;
   std::size_t parentIndex = 0;
@@ -357,10 +363,13 @@ struct RenderedKernelSkolemMacroEdge {
   std::vector<std::pair<std::string, RenderedKernelType>> binders;
   std::vector<RenderedKernelQuantifiedVariable> formulaQuantifiedVariables;
   std::vector<RenderedKernelTypedVariable> formulaFreeVariables;
+  std::vector<RenderedKernelFormulaChild> formulaChildren;
   std::vector<RenderedKernelQuantifiedVariable> sourceQuantifiedVariables;
   std::vector<RenderedKernelTypedVariable> sourceFreeVariables;
+  std::vector<RenderedKernelFormulaChild> sourceChildren;
   std::vector<RenderedKernelQuantifiedVariable> targetQuantifiedVariables;
   std::vector<RenderedKernelTypedVariable> targetFreeVariables;
+  std::vector<RenderedKernelFormulaChild> targetChildren;
   bool hasFormulaShape = false;
   std::string formulaConnective;
   std::size_t formulaExistsCount = 0;
