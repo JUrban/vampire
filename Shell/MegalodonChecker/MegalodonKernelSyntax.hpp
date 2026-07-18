@@ -398,6 +398,7 @@ struct RenderedKernelSkolemMacroEdge {
   bool hasTarget = false;
   RenderedKernelFormula target;
   bool hasProofContract = false;
+  std::vector<RenderedKernelSkolemIntroducedSymbol> contractIntroducedSymbols;
 };
 
 struct RenderedKernelSkolemProofContract {

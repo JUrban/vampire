@@ -940,6 +940,27 @@ void appendSkolemMacroEdgeFields(
       fields.push_back(prefix + "_contract_parent_index=" + std::to_string(edge.parentIndex));
       fields.push_back(prefix + "_contract_unit=" + edge.unit.value);
       fields.push_back(prefix + "_contract_binder_count=" + std::to_string(edge.binders.size()));
+      fields.push_back(
+        prefix + "_contract_introduced_count="
+        + std::to_string(edge.contractIntroducedSymbols.size()));
+      for (std::size_t localIndex = 0;
+           localIndex < edge.contractIntroducedSymbols.size();
+           ++localIndex) {
+        const RenderedKernelSkolemIntroducedSymbol& introduced =
+          edge.contractIntroducedSymbols[localIndex];
+        const std::string introducedPrefix =
+          prefix + "_contract_introduced_" + std::to_string(localIndex);
+        fields.push_back(introducedPrefix + "_index=" + std::to_string(introduced.index));
+        if (introduced.hasSymbol) {
+          fields.push_back(introducedPrefix + "_symbol=" + introduced.symbol);
+        }
+        if (introduced.hasReplacedVariable) {
+          fields.push_back(introducedPrefix + "_replaced_var=" + introduced.replacedVariable);
+        }
+        if (introduced.hasWitnessTerm) {
+          fields.push_back(introducedPrefix + "_witness_term=" + introduced.witnessTerm.sexpr);
+        }
+      }
       if (edge.hasSource) {
         fields.push_back(prefix + "_contract_source_formula=" + edge.source.sexpr);
       }

@@ -15026,6 +15026,30 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           ++symbolIndex;
         }
       }
+      auto renderedFormulaContainsSymbol =
+        [](const std::string& formula, const std::string& symbol) {
+          const std::string tmhNeedle = "(TMH \"" + symbol + "\")";
+          const std::string atomNeedle = "\"" + symbol + "\"";
+          return formula.find(tmhNeedle) != std::string::npos
+                 || formula.find(atomNeedle) != std::string::npos;
+        };
+      for (auto& edge : skolemMacroEdges) {
+        if (!edge.hasProofContract || !edge.hasSource || !edge.hasTarget) {
+          continue;
+        }
+        for (const auto& introduced : skolemIntroducedSymbols) {
+          if (!introduced.hasSymbol) {
+            continue;
+          }
+          const bool occursInTarget =
+            renderedFormulaContainsSymbol(edge.target.sexpr, introduced.symbol);
+          const bool occursInSource =
+            renderedFormulaContainsSymbol(edge.source.sexpr, introduced.symbol);
+          if (occursInTarget && !occursInSource) {
+            edge.contractIntroducedSymbols.push_back(introduced);
+          }
+        }
+      }
       MegalodonKernelSyntax::RenderedKernelSkolemProofContract skolemProofContract;
       const bool hasSkolemProofContract =
         !skolemSourceUnitValue.empty()
