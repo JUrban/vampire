@@ -402,6 +402,22 @@ void addSkolemIntroducedSymbol(
   step.skolemIntroducedSymbols.push_back(introduced);
 }
 
+void setSkolemSourceFormulaQuantifiedVariables(
+  MegalodonKernelStep& step,
+  const std::vector<RenderedKernelQuantifiedVariable>& variables)
+{
+  step.hasSkolemSourceFormulaQuantifiedVariables = true;
+  step.skolemSourceFormulaQuantifiedVariables = variables;
+}
+
+void setSkolemResultFormulaQuantifiedVariables(
+  MegalodonKernelStep& step,
+  const std::vector<RenderedKernelQuantifiedVariable>& variables)
+{
+  step.hasSkolemResultFormulaQuantifiedVariables = true;
+  step.skolemResultFormulaQuantifiedVariables = variables;
+}
+
 void addSkolemMacroEdge(
   MegalodonKernelStep& step,
   const RenderedKernelSkolemMacroEdge& edge)
@@ -1334,6 +1350,14 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
     appendSubsumptionResolutionPivotFields(fields, step.subsumptionResolutionPivot);
   }
   appendSkolemIntroducedSymbolFields(fields, step.skolemIntroducedSymbols);
+  if (step.hasSkolemSourceFormulaQuantifiedVariables) {
+    appendQuantifiedVariableFields(
+      fields, "source_formula", step.skolemSourceFormulaQuantifiedVariables);
+  }
+  if (step.hasSkolemResultFormulaQuantifiedVariables) {
+    appendQuantifiedVariableFields(
+      fields, "result_formula", step.skolemResultFormulaQuantifiedVariables);
+  }
   if (step.hasSkolemMacroEdges) {
     appendSkolemMacroEdgeFields(fields, step.skolemMacroEdges);
   }

@@ -491,6 +491,10 @@ struct MegalodonKernelStep {
   bool hasSubsumptionResolutionPivot = false;
   RenderedKernelSubsumptionResolutionPivot subsumptionResolutionPivot;
   std::vector<RenderedKernelSkolemIntroducedSymbol> skolemIntroducedSymbols;
+  bool hasSkolemSourceFormulaQuantifiedVariables = false;
+  std::vector<RenderedKernelQuantifiedVariable> skolemSourceFormulaQuantifiedVariables;
+  bool hasSkolemResultFormulaQuantifiedVariables = false;
+  std::vector<RenderedKernelQuantifiedVariable> skolemResultFormulaQuantifiedVariables;
   bool hasSkolemMacroEdges = false;
   std::vector<RenderedKernelSkolemMacroEdge> skolemMacroEdges;
   bool hasSourceFormulaTransform = false;
@@ -601,6 +605,14 @@ void setSubsumptionResolutionPivot(
 void addSkolemIntroducedSymbol(
   MegalodonKernelStep& step,
   const RenderedKernelSkolemIntroducedSymbol& introduced);
+
+void setSkolemSourceFormulaQuantifiedVariables(
+  MegalodonKernelStep& step,
+  const std::vector<RenderedKernelQuantifiedVariable>& variables);
+
+void setSkolemResultFormulaQuantifiedVariables(
+  MegalodonKernelStep& step,
+  const std::vector<RenderedKernelQuantifiedVariable>& variables);
 
 void addSkolemMacroEdge(
   MegalodonKernelStep& step,
