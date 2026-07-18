@@ -14314,6 +14314,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         kernelFields.push_back("result_formula=" + resultFormula);
       }
       unsigned kernelParentIndex = 0;
+      unsigned skolemMacroEdgeCount = 0;
+      std::vector<std::string> skolemMacroEdgeFields;
       for (Kernel::Unit* parent : iterTraits(u->getParents())) {
         const std::string prefix = "parent_" + std::to_string(kernelParentIndex);
         kernelFields.push_back(prefix + "_unit=u" + std::to_string(parent->number()));
@@ -14326,12 +14328,31 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             kernelFields.push_back(prefix + "_formula=" + parentFormula);
             if (kernelParentIndex == 0) {
               kernelFields.push_back("source_formula=" + parentFormula);
+            } else {
+              const std::string edgePrefix =
+                "skolem_macro_edge_" + std::to_string(skolemMacroEdgeCount);
+              skolemMacroEdgeFields.push_back(edgePrefix + "_parent_index=" + std::to_string(kernelParentIndex));
+              skolemMacroEdgeFields.push_back(edgePrefix + "_unit=u" + std::to_string(parent->number()));
+              skolemMacroEdgeFields.push_back(edgePrefix + "_formula=" + parentFormula);
+              if (parent->getFormula()->connective() == Kernel::IMP) {
+                std::string edgeSource;
+                std::string edgeTarget;
+                if (certificateFormulaTermSexpr(parent->getFormula()->left(), edgeSource)) {
+                  skolemMacroEdgeFields.push_back(edgePrefix + "_source=" + edgeSource);
+                }
+                if (certificateFormulaTermSexpr(parent->getFormula()->right(), edgeTarget)) {
+                  skolemMacroEdgeFields.push_back(edgePrefix + "_target=" + edgeTarget);
+                }
+              }
+              ++skolemMacroEdgeCount;
             }
           }
         }
         ++kernelParentIndex;
       }
       kernelFields.push_back("proof_parent_count=" + std::to_string(kernelParentIndex));
+      kernelFields.push_back("skolem_macro_edge_count=" + std::to_string(skolemMacroEdgeCount));
+      kernelFields.insert(kernelFields.end(), skolemMacroEdgeFields.begin(), skolemMacroEdgeFields.end());
       std::vector<MegalodonKernelSyntax::RenderedKernelSkolemIntroducedSymbol> skolemIntroducedSymbols;
       if (_is->hasIntroducedSymbols(u)) {
         auto& symbols = _is->getIntroducedSymbols(u);
