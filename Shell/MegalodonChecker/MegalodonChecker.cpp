@@ -51,6 +51,145 @@ bool emitLegacyMegalodonJsonDiagnostics()
   return std::getenv("VAMPIRE_MEGALODON_LEGACY_JSON") != nullptr;
 }
 
+std::string formulaConnectiveName(Kernel::Connective connective)
+{
+  switch (connective) {
+    case Kernel::LITERAL: return "literal";
+    case Kernel::BOOL_TERM: return "bool_term";
+    case Kernel::TRUE: return "true";
+    case Kernel::FALSE: return "false";
+    case Kernel::NOT: return "not";
+    case Kernel::AND: return "and";
+    case Kernel::OR: return "or";
+    case Kernel::IMP: return "imp";
+    case Kernel::IFF: return "iff";
+    case Kernel::XOR: return "xor";
+    case Kernel::FORALL: return "forall";
+    case Kernel::EXISTS: return "exists";
+    default: return "unknown";
+  }
+}
+
+std::size_t quantifiedVariableCount(Kernel::Formula* formula)
+{
+  std::size_t count = 0;
+  Kernel::VSList::Iterator iterator(formula->vars());
+  while (iterator.hasNext()) {
+    iterator.next();
+    ++count;
+  }
+  return count;
+}
+
+struct FormulaShapeSummary {
+  std::string connective;
+  std::size_t existsCount = 0;
+  std::size_t forallCount = 0;
+  std::size_t andCount = 0;
+  std::size_t orCount = 0;
+  std::size_t impCount = 0;
+};
+
+FormulaShapeSummary formulaShapeSummary(Kernel::Formula* formula)
+{
+  FormulaShapeSummary summary;
+  if (formula == nullptr) {
+    summary.connective = "missing";
+    return summary;
+  }
+  summary.connective = formulaConnectiveName(formula->connective());
+  std::function<void(Kernel::Formula*)> visit =
+    [&](Kernel::Formula* current) {
+      if (current == nullptr) {
+        return;
+      }
+      switch (current->connective()) {
+        case Kernel::EXISTS:
+          summary.existsCount += quantifiedVariableCount(current);
+          visit(current->qarg());
+          return;
+        case Kernel::FORALL:
+          summary.forallCount += quantifiedVariableCount(current);
+          visit(current->qarg());
+          return;
+        case Kernel::AND:
+        case Kernel::OR: {
+          std::size_t childCount = 0;
+          Kernel::FormulaList::Iterator iterator(current->args());
+          while (iterator.hasNext()) {
+            ++childCount;
+            visit(iterator.next());
+          }
+          if (current->connective() == Kernel::AND) {
+            summary.andCount += childCount == 0 ? 0 : childCount - 1;
+          } else {
+            summary.orCount += childCount == 0 ? 0 : childCount - 1;
+          }
+          return;
+        }
+        case Kernel::IMP:
+          ++summary.impCount;
+          visit(current->left());
+          visit(current->right());
+          return;
+        case Kernel::IFF:
+        case Kernel::XOR:
+          visit(current->left());
+          visit(current->right());
+          return;
+        case Kernel::NOT:
+          visit(current->uarg());
+          return;
+        default:
+          return;
+      }
+    };
+  visit(formula);
+  return summary;
+}
+
+void setSkolemMacroEdgeFormulaShape(
+  MegalodonKernelSyntax::RenderedKernelSkolemMacroEdge& edge,
+  Kernel::Formula* formula)
+{
+  const FormulaShapeSummary summary = formulaShapeSummary(formula);
+  edge.hasFormulaShape = true;
+  edge.formulaConnective = summary.connective;
+  edge.formulaExistsCount = summary.existsCount;
+  edge.formulaForallCount = summary.forallCount;
+  edge.formulaAndCount = summary.andCount;
+  edge.formulaOrCount = summary.orCount;
+  edge.formulaImpCount = summary.impCount;
+}
+
+void setSkolemMacroEdgeSourceShape(
+  MegalodonKernelSyntax::RenderedKernelSkolemMacroEdge& edge,
+  Kernel::Formula* formula)
+{
+  const FormulaShapeSummary summary = formulaShapeSummary(formula);
+  edge.hasSourceShape = true;
+  edge.sourceConnective = summary.connective;
+  edge.sourceExistsCount = summary.existsCount;
+  edge.sourceForallCount = summary.forallCount;
+  edge.sourceAndCount = summary.andCount;
+  edge.sourceOrCount = summary.orCount;
+  edge.sourceImpCount = summary.impCount;
+}
+
+void setSkolemMacroEdgeTargetShape(
+  MegalodonKernelSyntax::RenderedKernelSkolemMacroEdge& edge,
+  Kernel::Formula* formula)
+{
+  const FormulaShapeSummary summary = formulaShapeSummary(formula);
+  edge.hasTargetShape = true;
+  edge.targetConnective = summary.connective;
+  edge.targetExistsCount = summary.existsCount;
+  edge.targetForallCount = summary.forallCount;
+  edge.targetAndCount = summary.andCount;
+  edge.targetOrCount = summary.orCount;
+  edge.targetImpCount = summary.impCount;
+}
+
 }
 
 MegalodonChecker::MegalodonChecker(std::ostream& out, Kernel::InferenceStore* is)
@@ -14342,6 +14481,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               edge.hasFormula = true;
               edge.formula = MegalodonKernelSyntax::formula(parentFormula);
               Kernel::Formula* edgeBody = parent->getFormula();
+              setSkolemMacroEdgeFormulaShape(edge, edgeBody);
               while (edgeBody->connective() == Kernel::FORALL) {
                 std::vector<std::pair<unsigned, Kernel::TermList>> vars;
                 Kernel::VSList::Iterator varIterator(edgeBody->vars());
@@ -14365,10 +14505,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                 if (certificateFormulaTermSexpr(edgeBody->left(), edgeSource)) {
                   edge.hasSource = true;
                   edge.source = MegalodonKernelSyntax::formula(edgeSource);
+                  setSkolemMacroEdgeSourceShape(edge, edgeBody->left());
                 }
                 if (certificateFormulaTermSexpr(edgeBody->right(), edgeTarget)) {
                   edge.hasTarget = true;
                   edge.target = MegalodonKernelSyntax::formula(edgeTarget);
+                  setSkolemMacroEdgeTargetShape(edge, edgeBody->right());
                 }
               }
               skolemMacroEdges.push_back(edge);

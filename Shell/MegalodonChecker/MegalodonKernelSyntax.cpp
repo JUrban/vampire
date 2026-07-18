@@ -810,11 +810,35 @@ void appendSkolemMacroEdgeFields(
     if (edge.hasFormula) {
       fields.push_back(prefix + "_formula=" + edge.formula.sexpr);
     }
+    if (edge.hasFormulaShape) {
+      fields.push_back(prefix + "_formula_connective=" + edge.formulaConnective);
+      fields.push_back(prefix + "_formula_exists_count=" + std::to_string(edge.formulaExistsCount));
+      fields.push_back(prefix + "_formula_forall_count=" + std::to_string(edge.formulaForallCount));
+      fields.push_back(prefix + "_formula_and_count=" + std::to_string(edge.formulaAndCount));
+      fields.push_back(prefix + "_formula_or_count=" + std::to_string(edge.formulaOrCount));
+      fields.push_back(prefix + "_formula_imp_count=" + std::to_string(edge.formulaImpCount));
+    }
     if (edge.hasSource) {
       fields.push_back(prefix + "_source=" + edge.source.sexpr);
     }
+    if (edge.hasSourceShape) {
+      fields.push_back(prefix + "_source_connective=" + edge.sourceConnective);
+      fields.push_back(prefix + "_source_exists_count=" + std::to_string(edge.sourceExistsCount));
+      fields.push_back(prefix + "_source_forall_count=" + std::to_string(edge.sourceForallCount));
+      fields.push_back(prefix + "_source_and_count=" + std::to_string(edge.sourceAndCount));
+      fields.push_back(prefix + "_source_or_count=" + std::to_string(edge.sourceOrCount));
+      fields.push_back(prefix + "_source_imp_count=" + std::to_string(edge.sourceImpCount));
+    }
     if (edge.hasTarget) {
       fields.push_back(prefix + "_target=" + edge.target.sexpr);
+    }
+    if (edge.hasTargetShape) {
+      fields.push_back(prefix + "_target_connective=" + edge.targetConnective);
+      fields.push_back(prefix + "_target_exists_count=" + std::to_string(edge.targetExistsCount));
+      fields.push_back(prefix + "_target_forall_count=" + std::to_string(edge.targetForallCount));
+      fields.push_back(prefix + "_target_and_count=" + std::to_string(edge.targetAndCount));
+      fields.push_back(prefix + "_target_or_count=" + std::to_string(edge.targetOrCount));
+      fields.push_back(prefix + "_target_imp_count=" + std::to_string(edge.targetImpCount));
     }
   }
 }
