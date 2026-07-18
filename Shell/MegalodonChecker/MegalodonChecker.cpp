@@ -12381,7 +12381,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const MegalodonKernelSyntax::RenderedKernelSplitDependency* splitDependency = nullptr,
         const MegalodonKernelSyntax::RenderedKernelAvatarSplitStep* avatarSplit = nullptr,
         const MegalodonKernelSyntax::RenderedKernelAvatarRefutation* avatarRefutation = nullptr,
-        const MegalodonKernelSyntax::RenderedKernelPredicateDefinition* predicateDefinition = nullptr) {
+        const MegalodonKernelSyntax::RenderedKernelPredicateDefinition* predicateDefinition = nullptr,
+        const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemMacroEdge>* skolemMacroEdges = nullptr) {
     if (!MegalodonKernelSyntax::isSupportedRule(kernelRule)) {
       INVALID_OPERATION("unsupported Megalodon kernel_v1 rule: " + kernelRule);
     }
@@ -12399,6 +12400,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     if (skolemIntroducedSymbols != nullptr) {
       for (const auto& introduced : *skolemIntroducedSymbols) {
         MegalodonKernelSyntax::addSkolemIntroducedSymbol(step, introduced);
+      }
+    }
+    if (skolemMacroEdges != nullptr) {
+      step.hasSkolemMacroEdges = true;
+      for (const auto& edge : *skolemMacroEdges) {
+        MegalodonKernelSyntax::addSkolemMacroEdge(step, edge);
       }
     }
     if (sourceFormulaTransform != nullptr) {
@@ -14314,8 +14321,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         kernelFields.push_back("result_formula=" + resultFormula);
       }
       unsigned kernelParentIndex = 0;
-      unsigned skolemMacroEdgeCount = 0;
-      std::vector<std::string> skolemMacroEdgeFields;
+      std::vector<MegalodonKernelSyntax::RenderedKernelSkolemMacroEdge> skolemMacroEdges;
       for (Kernel::Unit* parent : iterTraits(u->getParents())) {
         const std::string prefix = "parent_" + std::to_string(kernelParentIndex);
         kernelFields.push_back(prefix + "_unit=u" + std::to_string(parent->number()));
@@ -14329,30 +14335,35 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             if (kernelParentIndex == 0) {
               kernelFields.push_back("source_formula=" + parentFormula);
             } else {
-              const std::string edgePrefix =
-                "skolem_macro_edge_" + std::to_string(skolemMacroEdgeCount);
-              skolemMacroEdgeFields.push_back(edgePrefix + "_parent_index=" + std::to_string(kernelParentIndex));
-              skolemMacroEdgeFields.push_back(edgePrefix + "_unit=u" + std::to_string(parent->number()));
-              skolemMacroEdgeFields.push_back(edgePrefix + "_formula=" + parentFormula);
-              if (parent->getFormula()->connective() == Kernel::IMP) {
+              MegalodonKernelSyntax::RenderedKernelSkolemMacroEdge edge;
+              edge.index = skolemMacroEdges.size();
+              edge.parentIndex = kernelParentIndex;
+              edge.unit = MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number()));
+              edge.hasFormula = true;
+              edge.formula = MegalodonKernelSyntax::formula(parentFormula);
+              Kernel::Formula* edgeBody = parent->getFormula();
+              while (edgeBody->connective() == Kernel::FORALL) {
+                edgeBody = edgeBody->qarg();
+              }
+              if (edgeBody->connective() == Kernel::IMP) {
                 std::string edgeSource;
                 std::string edgeTarget;
-                if (certificateFormulaTermSexpr(parent->getFormula()->left(), edgeSource)) {
-                  skolemMacroEdgeFields.push_back(edgePrefix + "_source=" + edgeSource);
+                if (certificateFormulaTermSexpr(edgeBody->left(), edgeSource)) {
+                  edge.hasSource = true;
+                  edge.source = MegalodonKernelSyntax::formula(edgeSource);
                 }
-                if (certificateFormulaTermSexpr(parent->getFormula()->right(), edgeTarget)) {
-                  skolemMacroEdgeFields.push_back(edgePrefix + "_target=" + edgeTarget);
+                if (certificateFormulaTermSexpr(edgeBody->right(), edgeTarget)) {
+                  edge.hasTarget = true;
+                  edge.target = MegalodonKernelSyntax::formula(edgeTarget);
                 }
               }
-              ++skolemMacroEdgeCount;
+              skolemMacroEdges.push_back(edge);
             }
           }
         }
         ++kernelParentIndex;
       }
       kernelFields.push_back("proof_parent_count=" + std::to_string(kernelParentIndex));
-      kernelFields.push_back("skolem_macro_edge_count=" + std::to_string(skolemMacroEdgeCount));
-      kernelFields.insert(kernelFields.end(), skolemMacroEdgeFields.begin(), skolemMacroEdgeFields.end());
       std::vector<MegalodonKernelSyntax::RenderedKernelSkolemIntroducedSymbol> skolemIntroducedSymbols;
       if (_is->hasIntroducedSymbols(u)) {
         auto& symbols = _is->getIntroducedSymbols(u);
@@ -14513,7 +14524,19 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         kernelFields,
         false,
         nullptr,
-        skolemIntroducedSymbols.empty() ? nullptr : &skolemIntroducedSymbols);
+        skolemIntroducedSymbols.empty() ? nullptr : &skolemIntroducedSymbols,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        &skolemMacroEdges);
     }
     std::vector<std::string> fields;
     fields.push_back("rule=" + Kernel::ruleName(u->inference().rule()));

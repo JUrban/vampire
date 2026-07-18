@@ -339,6 +339,18 @@ struct RenderedKernelSkolemIntroducedSymbol {
   std::string choicePrinciple;
 };
 
+struct RenderedKernelSkolemMacroEdge {
+  std::size_t index = 0;
+  std::size_t parentIndex = 0;
+  RenderedKernelUnitRef unit;
+  bool hasFormula = false;
+  RenderedKernelFormula formula;
+  bool hasSource = false;
+  RenderedKernelFormula source;
+  bool hasTarget = false;
+  RenderedKernelFormula target;
+};
+
 struct RenderedKernelTransformationPair {
   std::size_t index = 0;
   RenderedKernelFormula source;
@@ -448,6 +460,8 @@ struct MegalodonKernelStep {
   bool hasSubsumptionResolutionPivot = false;
   RenderedKernelSubsumptionResolutionPivot subsumptionResolutionPivot;
   std::vector<RenderedKernelSkolemIntroducedSymbol> skolemIntroducedSymbols;
+  bool hasSkolemMacroEdges = false;
+  std::vector<RenderedKernelSkolemMacroEdge> skolemMacroEdges;
   bool hasSourceFormulaTransform = false;
   RenderedKernelSourceFormulaTransform sourceFormulaTransform;
   bool hasRectifyRenamings = false;
@@ -556,6 +570,10 @@ void setSubsumptionResolutionPivot(
 void addSkolemIntroducedSymbol(
   MegalodonKernelStep& step,
   const RenderedKernelSkolemIntroducedSymbol& introduced);
+
+void addSkolemMacroEdge(
+  MegalodonKernelStep& step,
+  const RenderedKernelSkolemMacroEdge& edge);
 
 void setSourceFormulaTransform(
   MegalodonKernelStep& step,

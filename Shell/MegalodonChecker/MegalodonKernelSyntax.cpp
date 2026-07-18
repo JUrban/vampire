@@ -402,6 +402,14 @@ void addSkolemIntroducedSymbol(
   step.skolemIntroducedSymbols.push_back(introduced);
 }
 
+void addSkolemMacroEdge(
+  MegalodonKernelStep& step,
+  const RenderedKernelSkolemMacroEdge& edge)
+{
+  step.hasSkolemMacroEdges = true;
+  step.skolemMacroEdges.push_back(edge);
+}
+
 void setSourceFormulaTransform(
   MegalodonKernelStep& step,
   const RenderedKernelSourceFormulaTransform& transform)
@@ -780,6 +788,27 @@ void appendSkolemIntroducedSymbolFields(
     }
     if (introduced.hasChoicePrinciple) {
       fields.push_back(prefix + "_choice_principle=" + introduced.choicePrinciple);
+    }
+  }
+}
+
+void appendSkolemMacroEdgeFields(
+  std::vector<std::string>& fields,
+  const std::vector<RenderedKernelSkolemMacroEdge>& edges)
+{
+  fields.push_back("skolem_macro_edge_count=" + std::to_string(edges.size()));
+  for (const RenderedKernelSkolemMacroEdge& edge : edges) {
+    const std::string prefix = "skolem_macro_edge_" + std::to_string(edge.index);
+    fields.push_back(prefix + "_parent_index=" + std::to_string(edge.parentIndex));
+    fields.push_back(prefix + "_unit=" + edge.unit.value);
+    if (edge.hasFormula) {
+      fields.push_back(prefix + "_formula=" + edge.formula.sexpr);
+    }
+    if (edge.hasSource) {
+      fields.push_back(prefix + "_source=" + edge.source.sexpr);
+    }
+    if (edge.hasTarget) {
+      fields.push_back(prefix + "_target=" + edge.target.sexpr);
     }
   }
 }
@@ -1255,6 +1284,9 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
     appendSubsumptionResolutionPivotFields(fields, step.subsumptionResolutionPivot);
   }
   appendSkolemIntroducedSymbolFields(fields, step.skolemIntroducedSymbols);
+  if (step.hasSkolemMacroEdges) {
+    appendSkolemMacroEdgeFields(fields, step.skolemMacroEdges);
+  }
   if (step.hasSourceFormulaTransform) {
     appendSourceFormulaTransformFields(fields, step.sourceFormulaTransform);
   }
