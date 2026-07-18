@@ -399,6 +399,18 @@ struct RenderedKernelSkolemMacroEdge {
   RenderedKernelFormula target;
 };
 
+struct RenderedKernelSkolemProofContract {
+  std::string version = "choice_macro_v1";
+  std::string primitiveRule = "skolem_formula";
+  RenderedKernelUnitRef sourceUnit;
+  RenderedKernelFormula sourceFormula;
+  RenderedKernelFormula resultFormula;
+  std::size_t proofParentCount = 0;
+  std::size_t introducedCount = 0;
+  std::size_t macroEdgeCount = 0;
+  bool usesClassicalChoice = false;
+};
+
 struct RenderedKernelTransformationPair {
   std::size_t index = 0;
   RenderedKernelFormula source;
@@ -518,6 +530,8 @@ struct MegalodonKernelStep {
   std::vector<RenderedKernelTypedVariable> skolemResultFormulaFreeVariables;
   bool hasSkolemMacroEdges = false;
   std::vector<RenderedKernelSkolemMacroEdge> skolemMacroEdges;
+  bool hasSkolemProofContract = false;
+  RenderedKernelSkolemProofContract skolemProofContract;
   bool hasSourceFormulaTransform = false;
   RenderedKernelSourceFormulaTransform sourceFormulaTransform;
   bool hasRectifyRenamings = false;
@@ -646,6 +660,10 @@ void setSkolemResultFormulaFreeVariables(
 void addSkolemMacroEdge(
   MegalodonKernelStep& step,
   const RenderedKernelSkolemMacroEdge& edge);
+
+void setSkolemProofContract(
+  MegalodonKernelStep& step,
+  const RenderedKernelSkolemProofContract& contract);
 
 void setSourceFormulaTransform(
   MegalodonKernelStep& step,

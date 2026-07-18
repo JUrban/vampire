@@ -12522,6 +12522,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         const MegalodonKernelSyntax::RenderedKernelAvatarRefutation* avatarRefutation = nullptr,
         const MegalodonKernelSyntax::RenderedKernelPredicateDefinition* predicateDefinition = nullptr,
         const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemMacroEdge>* skolemMacroEdges = nullptr,
+        const MegalodonKernelSyntax::RenderedKernelSkolemProofContract* skolemProofContract = nullptr,
         const std::vector<MegalodonKernelSyntax::RenderedKernelQuantifiedVariable>* skolemSourceFormulaQuantifiedVariables = nullptr,
         const std::vector<MegalodonKernelSyntax::RenderedKernelQuantifiedVariable>* skolemResultFormulaQuantifiedVariables = nullptr,
         const std::vector<MegalodonKernelSyntax::RenderedKernelTypedVariable>* skolemSourceFormulaFreeVariables = nullptr,
@@ -12550,6 +12551,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       for (const auto& edge : *skolemMacroEdges) {
         MegalodonKernelSyntax::addSkolemMacroEdge(step, edge);
       }
+    }
+    if (skolemProofContract != nullptr) {
+      MegalodonKernelSyntax::setSkolemProofContract(step, *skolemProofContract);
     }
     if (skolemSourceFormulaQuantifiedVariables != nullptr) {
       MegalodonKernelSyntax::setSkolemSourceFormulaQuantifiedVariables(
@@ -14590,52 +14594,205 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       std::vector<MegalodonKernelSyntax::RenderedKernelTypedVariable>
         skolemSourceFormulaFreeVariables;
       std::vector<MegalodonKernelSyntax::RenderedKernelSkolemMacroEdge> skolemMacroEdges;
-      auto immediateFormulaChildren =
-        [&](Kernel::Formula* formula) {
-          std::vector<MegalodonKernelSyntax::RenderedKernelFormulaChild> children;
-          auto addChild =
-            [&](const std::string& role, Kernel::Formula* childFormula) {
-              std::string renderedChild;
-              if (!certificateFormulaTermSexpr(childFormula, renderedChild)) {
-                return;
+      std::string skolemSourceUnitValue;
+      std::string skolemSourceFormula;
+      auto immediateRenderedFormulaChildren =
+        [&](const std::string& renderedFormula) {
+          auto trim = [](const std::string& value) {
+            std::size_t first = 0;
+            while (first < value.size()
+                   && std::isspace(static_cast<unsigned char>(value[first]))) {
+              ++first;
+            }
+            std::size_t last = value.size();
+            while (last > first
+                   && std::isspace(static_cast<unsigned char>(value[last - 1]))) {
+              --last;
+            }
+            return value.substr(first, last - first);
+          };
+          auto listItems = [&](const std::string& value) {
+            std::vector<std::string> items;
+            const std::string trimmed = trim(value);
+            if (trimmed.size() < 2 || trimmed.front() != '(' || trimmed.back() != ')') {
+              return items;
+            }
+            std::size_t start = 1;
+            unsigned depth = 0;
+            bool inString = false;
+            bool escape = false;
+            for (std::size_t index = 1; index + 1 < trimmed.size(); ++index) {
+              const char ch = trimmed[index];
+              if (inString) {
+                if (escape) {
+                  escape = false;
+                } else if (ch == '\\') {
+                  escape = true;
+                } else if (ch == '"') {
+                  inString = false;
+                }
+                continue;
               }
+              if (ch == '"') {
+                inString = true;
+                continue;
+              }
+              if (ch == '(') {
+                ++depth;
+                continue;
+              }
+              if (ch == ')') {
+                if (depth > 0) {
+                  --depth;
+                }
+                continue;
+              }
+              if (depth == 0 && std::isspace(static_cast<unsigned char>(ch))) {
+                if (index > start) {
+                  items.push_back(trim(trimmed.substr(start, index - start)));
+                }
+                start = index + 1;
+              }
+            }
+            if (trimmed.size() - 1 > start) {
+              items.push_back(trim(trimmed.substr(start, trimmed.size() - 1 - start)));
+            }
+            return items;
+          };
+          auto quotedAtom = [](const std::string& value) {
+            if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+              return value.substr(1, value.size() - 2);
+            }
+            return value;
+          };
+          auto tmhName = [&](const std::string& value) {
+            const auto items = listItems(value);
+            if (items.size() == 2 && items[0] == "TMH") {
+              return quotedAtom(items[1]);
+            }
+            return std::string();
+          };
+          auto addRenderedChild =
+            [](std::vector<MegalodonKernelSyntax::RenderedKernelFormulaChild>& children,
+               const std::string& role,
+               const std::string& formula) {
               MegalodonKernelSyntax::RenderedKernelFormulaChild child;
               child.index = children.size();
               child.role = role;
-              child.formula = MegalodonKernelSyntax::formula(renderedChild);
+              child.formula = MegalodonKernelSyntax::formula(formula);
               children.push_back(child);
             };
-          switch (formula->connective()) {
-            case Kernel::AND:
-            case Kernel::OR: {
-              std::size_t childIndex = 0;
-              Kernel::FormulaList::Iterator iterator(formula->args());
-              while (iterator.hasNext()) {
-                addChild("arg_" + std::to_string(childIndex), iterator.next());
-                ++childIndex;
+          std::function<std::vector<std::string>(const std::string&, const std::string&)>
+            flattenBinary =
+              [&](const std::string& head, const std::string& value) {
+                const auto items = listItems(value);
+                if (items.size() == 3 && items[0] == "AP") {
+                  const auto funItems = listItems(items[1]);
+                  if (funItems.size() == 3
+                      && funItems[0] == "AP"
+                      && tmhName(funItems[1]) == head) {
+                    std::vector<std::string> result =
+                      flattenBinary(head, funItems[2]);
+                    std::vector<std::string> right =
+                      flattenBinary(head, items[2]);
+                    result.insert(result.end(), right.begin(), right.end());
+                    return result;
+                  }
+                }
+                return std::vector<std::string>{value};
+              };
+          std::function<std::string(const std::string&)> stripAllGroup =
+            [&](const std::string& value) -> std::string {
+              const auto items = listItems(value);
+              if (items.size() == 4 && items[0] == "ALLV") {
+                return stripAllGroup(items[3]);
               }
-              break;
-            }
-            case Kernel::IMP:
-              addChild("left", formula->left());
-              addChild("right", formula->right());
-              break;
-            case Kernel::IFF:
-            case Kernel::XOR:
-              addChild("left", formula->left());
-              addChild("right", formula->right());
-              break;
-            case Kernel::NOT:
-              addChild("body", formula->uarg());
-              break;
-            case Kernel::FORALL:
-            case Kernel::EXISTS:
-              addChild("body", formula->qarg());
-              break;
-            default:
-              break;
-          }
-          return children;
+              return value;
+            };
+          std::function<std::string(const std::string&, const std::string&)> stripBinderGroup =
+            [&](const std::string& value, const std::string& binder) -> std::string {
+              const auto items = listItems(value);
+              if ((binder == "LAM" && items.size() == 3 && items[0] == binder)
+                  || (binder != "LAM" && items.size() == 4 && items[0] == binder)) {
+                const std::string& body = binder == "LAM" ? items[2] : items[3];
+                return stripBinderGroup(body, binder);
+              }
+              return value;
+            };
+          std::function<std::string(const std::string&, const std::string&)> stripExistsGroup =
+            [&](const std::string& value, const std::string& binder) -> std::string {
+              const auto items = listItems(value);
+              if (items.size() == 3 && items[0] == "AP") {
+                const std::string head = tmhName(items[1]);
+                const auto binderItems = listItems(items[2]);
+                if (head == "vampire_exists_prop"
+                    && ((binder == "LAM" && binderItems.size() == 3 && binderItems[0] == binder)
+                        || (binder != "LAM" && binderItems.size() == 4 && binderItems[0] == binder))) {
+                  const std::string& body =
+                    binderItems[0] == "LAM" ? binderItems[2] : binderItems[3];
+                  return stripExistsGroup(body, binder);
+                }
+              }
+              return value;
+            };
+          std::function<std::vector<MegalodonKernelSyntax::RenderedKernelFormulaChild>(const std::string&)>
+            childrenOf =
+              [&](const std::string& value) {
+                std::vector<MegalodonKernelSyntax::RenderedKernelFormulaChild> children;
+                const auto items = listItems(value);
+                if (items.empty()) {
+                  return children;
+                }
+                if (items[0] == "ALLV" && items.size() == 4) {
+                  addRenderedChild(children, "body", stripAllGroup(items[3]));
+                } else if ((items[0] == "LAMV" || items[0] == "VLAMV")
+                           && items.size() == 4) {
+                  addRenderedChild(children, "body", stripBinderGroup(items[3], items[0]));
+                } else if (items[0] == "LAM" && items.size() == 3) {
+                  addRenderedChild(children, "body", stripBinderGroup(items[2], items[0]));
+                } else if (items[0] == "IMP" && items.size() == 3) {
+                  addRenderedChild(children, "left", items[1]);
+                  addRenderedChild(children, "right", items[2]);
+                } else if ((items[0] == "TMNOT" || items[0] == "NOT")
+                           && items.size() == 2) {
+                  addRenderedChild(children, "body", items[1]);
+                } else if (items[0] == "AP" && items.size() == 3) {
+                  const auto funItems = listItems(items[1]);
+                  if (funItems.size() == 3 && funItems[0] == "AP") {
+                    const std::string head = tmhName(funItems[1]);
+                    if (head == "vampire_and" || head == "vampire_or") {
+                      std::vector<std::string> flattened =
+                        flattenBinary(head, funItems[2]);
+                      std::vector<std::string> right =
+                        flattenBinary(head, items[2]);
+                      flattened.insert(flattened.end(), right.begin(), right.end());
+                      for (std::size_t index = 0; index < flattened.size(); ++index) {
+                        addRenderedChild(
+                          children,
+                          "arg_" + std::to_string(index),
+                          flattened[index]);
+                      }
+                    }
+                  } else {
+                    const std::string head = tmhName(items[1]);
+                    if (head == "vampire_exists_prop") {
+                      const auto binderItems = listItems(items[2]);
+                      if ((binderItems.size() == 4
+                           && (binderItems[0] == "LAMV" || binderItems[0] == "VLAMV"))
+                          || (binderItems.size() == 3 && binderItems[0] == "LAM")) {
+                        const std::string& body =
+                          binderItems[0] == "LAM" ? binderItems[2] : binderItems[3];
+                        addRenderedChild(
+                          children,
+                          "body",
+                          stripExistsGroup(body, binderItems[0]));
+                      }
+                    }
+                  }
+                }
+                return children;
+              };
+          return childrenOf(renderedFormula);
         };
       for (Kernel::Unit* parent : iterTraits(u->getParents())) {
         const std::string prefix = "parent_" + std::to_string(kernelParentIndex);
@@ -14649,6 +14806,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             kernelFields.push_back(prefix + "_formula=" + parentFormula);
             if (kernelParentIndex == 0) {
               kernelFields.push_back("source_formula=" + parentFormula);
+              skolemSourceUnitValue = "u" + std::to_string(parent->number());
+              skolemSourceFormula = parentFormula;
               hasSkolemSourceFormulaQuantifiedVariables = true;
               skolemSourceFormulaQuantifiedVariables =
                 quantifiedVariables(parent->getFormula());
@@ -14666,7 +14825,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               setSkolemMacroEdgeFormulaShape(edge, edgeBody);
               edge.formulaQuantifiedVariables = quantifiedVariables(edgeBody);
               edge.formulaFreeVariables = freeVariables(edgeBody);
-              edge.formulaChildren = immediateFormulaChildren(edgeBody);
+              edge.formulaChildren = immediateRenderedFormulaChildren(parentFormula);
               while (edgeBody->connective() == Kernel::FORALL) {
                 std::vector<std::pair<unsigned, Kernel::TermList>> vars;
                 Kernel::VSList::Iterator varIterator(edgeBody->vars());
@@ -14693,7 +14852,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                   setSkolemMacroEdgeSourceShape(edge, edgeBody->left());
                   edge.sourceQuantifiedVariables = quantifiedVariables(edgeBody->left());
                   edge.sourceFreeVariables = freeVariables(edgeBody->left());
-                  edge.sourceChildren = immediateFormulaChildren(edgeBody->left());
+                  edge.sourceChildren = immediateRenderedFormulaChildren(edgeSource);
                 }
                 if (certificateFormulaTermSexpr(edgeBody->right(), edgeTarget)) {
                   edge.hasTarget = true;
@@ -14701,7 +14860,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                   setSkolemMacroEdgeTargetShape(edge, edgeBody->right());
                   edge.targetQuantifiedVariables = quantifiedVariables(edgeBody->right());
                   edge.targetFreeVariables = freeVariables(edgeBody->right());
-                  edge.targetChildren = immediateFormulaChildren(edgeBody->right());
+                  edge.targetChildren = immediateRenderedFormulaChildren(edgeTarget);
                 }
               }
               skolemMacroEdges.push_back(edge);
@@ -14866,6 +15025,23 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           ++symbolIndex;
         }
       }
+      MegalodonKernelSyntax::RenderedKernelSkolemProofContract skolemProofContract;
+      const bool hasSkolemProofContract =
+        !skolemSourceUnitValue.empty()
+        && !skolemSourceFormula.empty()
+        && !resultFormula.empty();
+      if (hasSkolemProofContract) {
+        skolemProofContract.sourceUnit =
+          MegalodonKernelSyntax::unitRef(skolemSourceUnitValue);
+        skolemProofContract.sourceFormula =
+          MegalodonKernelSyntax::formula(skolemSourceFormula);
+        skolemProofContract.resultFormula =
+          MegalodonKernelSyntax::formula(resultFormula);
+        skolemProofContract.proofParentCount = kernelParentIndex;
+        skolemProofContract.introducedCount = skolemIntroducedSymbols.size();
+        skolemProofContract.macroEdgeCount = skolemMacroEdges.size();
+        skolemProofContract.usesClassicalChoice = !skolemIntroducedSymbols.empty();
+      }
       emitKernelV1(
         "skolemize",
         kernelFields,
@@ -14884,6 +15060,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         nullptr,
         nullptr,
         &skolemMacroEdges,
+        hasSkolemProofContract ? &skolemProofContract : nullptr,
         hasSkolemSourceFormulaQuantifiedVariables ? &skolemSourceFormulaQuantifiedVariables : nullptr,
         hasSkolemResultFormulaQuantifiedVariables ? &skolemResultFormulaQuantifiedVariables : nullptr,
         hasSkolemSourceFormulaFreeVariables ? &skolemSourceFormulaFreeVariables : nullptr,

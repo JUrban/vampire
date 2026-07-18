@@ -442,6 +442,14 @@ void addSkolemMacroEdge(
   step.skolemMacroEdges.push_back(edge);
 }
 
+void setSkolemProofContract(
+  MegalodonKernelStep& step,
+  const RenderedKernelSkolemProofContract& contract)
+{
+  step.hasSkolemProofContract = true;
+  step.skolemProofContract = contract;
+}
+
 void setSourceFormulaTransform(
   MegalodonKernelStep& step,
   const RenderedKernelSourceFormulaTransform& transform)
@@ -927,6 +935,26 @@ void appendSkolemMacroEdgeFields(
       fields.push_back(prefix + "_target_imp_count=" + std::to_string(edge.targetImpCount));
     }
   }
+}
+
+void appendSkolemProofContractFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelSkolemProofContract& contract)
+{
+  fields.push_back("skolem_contract=" + contract.version);
+  fields.push_back("skolem_contract_primitive_rule=" + contract.primitiveRule);
+  fields.push_back("skolem_contract_source_unit=" + contract.sourceUnit.value);
+  fields.push_back("skolem_contract_source_formula=" + contract.sourceFormula.sexpr);
+  fields.push_back("skolem_contract_result_formula=" + contract.resultFormula.sexpr);
+  fields.push_back(
+    "skolem_contract_proof_parent_count=" + std::to_string(contract.proofParentCount));
+  fields.push_back(
+    "skolem_contract_introduced_count=" + std::to_string(contract.introducedCount));
+  fields.push_back(
+    "skolem_contract_macro_edge_count=" + std::to_string(contract.macroEdgeCount));
+  fields.push_back(
+    std::string("skolem_contract_uses_classical_choice=")
+    + (contract.usesClassicalChoice ? "1" : "0"));
 }
 
 void appendSourceFormulaTransformFields(
@@ -1418,6 +1446,9 @@ std::vector<std::string> kernelStepFields(const MegalodonKernelStep& step)
   }
   if (step.hasSkolemMacroEdges) {
     appendSkolemMacroEdgeFields(fields, step.skolemMacroEdges);
+  }
+  if (step.hasSkolemProofContract) {
+    appendSkolemProofContractFields(fields, step.skolemProofContract);
   }
   if (step.hasSourceFormulaTransform) {
     appendSourceFormulaTransformFields(fields, step.sourceFormulaTransform);
