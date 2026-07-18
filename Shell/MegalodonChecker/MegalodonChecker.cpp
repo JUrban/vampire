@@ -14459,6 +14459,59 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       if (certificateFormulaTermSexpr(u->getFormula(), resultFormula)) {
         kernelFields.push_back("result_formula=" + resultFormula);
       }
+      auto quantifiedVariables =
+        [&](Kernel::Formula* formula) {
+          std::vector<MegalodonKernelSyntax::RenderedKernelQuantifiedVariable> result;
+          std::function<void(Kernel::Formula*)> visit =
+            [&](Kernel::Formula* current) {
+              if (current == nullptr) {
+                return;
+              }
+              switch (current->connective()) {
+                case Kernel::FORALL:
+                case Kernel::EXISTS: {
+                  const std::string kind = formulaConnectiveName(current->connective());
+                  std::vector<std::pair<unsigned, Kernel::TermList>> vars;
+                  Kernel::VSList::Iterator varIterator(current->vars());
+                  while (varIterator.hasNext()) {
+                    vars.push_back(varIterator.next());
+                  }
+                  for (const auto& var : vars) {
+                    std::string varType;
+                    if (certificateTypeSexpr(var.second, varType)) {
+                      result.push_back({
+                        kind,
+                        variableName(var.first),
+                        MegalodonKernelSyntax::type(varType)});
+                    }
+                  }
+                  visit(current->qarg());
+                  return;
+                }
+                case Kernel::AND:
+                case Kernel::OR: {
+                  Kernel::FormulaList::Iterator iterator(current->args());
+                  while (iterator.hasNext()) {
+                    visit(iterator.next());
+                  }
+                  return;
+                }
+                case Kernel::IMP:
+                case Kernel::IFF:
+                case Kernel::XOR:
+                  visit(current->left());
+                  visit(current->right());
+                  return;
+                case Kernel::NOT:
+                  visit(current->uarg());
+                  return;
+                default:
+                  return;
+              }
+            };
+          visit(formula);
+          return result;
+        };
       unsigned kernelParentIndex = 0;
       std::vector<MegalodonKernelSyntax::RenderedKernelSkolemMacroEdge> skolemMacroEdges;
       for (Kernel::Unit* parent : iterTraits(u->getParents())) {
@@ -14482,6 +14535,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               edge.formula = MegalodonKernelSyntax::formula(parentFormula);
               Kernel::Formula* edgeBody = parent->getFormula();
               setSkolemMacroEdgeFormulaShape(edge, edgeBody);
+              edge.formulaQuantifiedVariables = quantifiedVariables(edgeBody);
               while (edgeBody->connective() == Kernel::FORALL) {
                 std::vector<std::pair<unsigned, Kernel::TermList>> vars;
                 Kernel::VSList::Iterator varIterator(edgeBody->vars());
@@ -14506,11 +14560,13 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                   edge.hasSource = true;
                   edge.source = MegalodonKernelSyntax::formula(edgeSource);
                   setSkolemMacroEdgeSourceShape(edge, edgeBody->left());
+                  edge.sourceQuantifiedVariables = quantifiedVariables(edgeBody->left());
                 }
                 if (certificateFormulaTermSexpr(edgeBody->right(), edgeTarget)) {
                   edge.hasTarget = true;
                   edge.target = MegalodonKernelSyntax::formula(edgeTarget);
                   setSkolemMacroEdgeTargetShape(edge, edgeBody->right());
+                  edge.targetQuantifiedVariables = quantifiedVariables(edgeBody->right());
                 }
               }
               skolemMacroEdges.push_back(edge);

@@ -339,11 +339,20 @@ struct RenderedKernelSkolemIntroducedSymbol {
   std::string choicePrinciple;
 };
 
+struct RenderedKernelQuantifiedVariable {
+  std::string kind;
+  std::string variable;
+  RenderedKernelType type;
+};
+
 struct RenderedKernelSkolemMacroEdge {
   std::size_t index = 0;
   std::size_t parentIndex = 0;
   RenderedKernelUnitRef unit;
   std::vector<std::pair<std::string, RenderedKernelType>> binders;
+  std::vector<RenderedKernelQuantifiedVariable> formulaQuantifiedVariables;
+  std::vector<RenderedKernelQuantifiedVariable> sourceQuantifiedVariables;
+  std::vector<RenderedKernelQuantifiedVariable> targetQuantifiedVariables;
   bool hasFormulaShape = false;
   std::string formulaConnective;
   std::size_t formulaExistsCount = 0;

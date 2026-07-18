@@ -792,6 +792,20 @@ void appendSkolemIntroducedSymbolFields(
   }
 }
 
+void appendQuantifiedVariableFields(
+  std::vector<std::string>& fields,
+  const std::string& prefix,
+  const std::vector<RenderedKernelQuantifiedVariable>& variables)
+{
+  fields.push_back(prefix + "_quantifier_count=" + std::to_string(variables.size()));
+  for (std::size_t variableIndex = 0; variableIndex < variables.size(); ++variableIndex) {
+    const std::string variablePrefix = prefix + "_quantifier_" + std::to_string(variableIndex);
+    fields.push_back(variablePrefix + "_kind=" + variables[variableIndex].kind);
+    fields.push_back(variablePrefix + "_var=" + variables[variableIndex].variable);
+    fields.push_back(variablePrefix + "_type=" + variables[variableIndex].type.sexpr);
+  }
+}
+
 void appendSkolemMacroEdgeFields(
   std::vector<std::string>& fields,
   const std::vector<RenderedKernelSkolemMacroEdge>& edges)
@@ -810,6 +824,8 @@ void appendSkolemMacroEdgeFields(
     if (edge.hasFormula) {
       fields.push_back(prefix + "_formula=" + edge.formula.sexpr);
     }
+    appendQuantifiedVariableFields(
+      fields, prefix + "_formula", edge.formulaQuantifiedVariables);
     if (edge.hasFormulaShape) {
       fields.push_back(prefix + "_formula_connective=" + edge.formulaConnective);
       fields.push_back(prefix + "_formula_exists_count=" + std::to_string(edge.formulaExistsCount));
@@ -821,6 +837,8 @@ void appendSkolemMacroEdgeFields(
     if (edge.hasSource) {
       fields.push_back(prefix + "_source=" + edge.source.sexpr);
     }
+    appendQuantifiedVariableFields(
+      fields, prefix + "_source", edge.sourceQuantifiedVariables);
     if (edge.hasSourceShape) {
       fields.push_back(prefix + "_source_connective=" + edge.sourceConnective);
       fields.push_back(prefix + "_source_exists_count=" + std::to_string(edge.sourceExistsCount));
@@ -832,6 +850,8 @@ void appendSkolemMacroEdgeFields(
     if (edge.hasTarget) {
       fields.push_back(prefix + "_target=" + edge.target.sexpr);
     }
+    appendQuantifiedVariableFields(
+      fields, prefix + "_target", edge.targetQuantifiedVariables);
     if (edge.hasTargetShape) {
       fields.push_back(prefix + "_target_connective=" + edge.targetConnective);
       fields.push_back(prefix + "_target_exists_count=" + std::to_string(edge.targetExistsCount));
