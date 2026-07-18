@@ -934,6 +934,19 @@ void appendSkolemMacroEdgeFields(
       fields.push_back(prefix + "_target_or_count=" + std::to_string(edge.targetOrCount));
       fields.push_back(prefix + "_target_imp_count=" + std::to_string(edge.targetImpCount));
     }
+    if (edge.hasProofContract) {
+      fields.push_back(prefix + "_contract=branch_v1");
+      fields.push_back(prefix + "_contract_primitive_rule=skolem_branch");
+      fields.push_back(prefix + "_contract_parent_index=" + std::to_string(edge.parentIndex));
+      fields.push_back(prefix + "_contract_unit=" + edge.unit.value);
+      fields.push_back(prefix + "_contract_binder_count=" + std::to_string(edge.binders.size()));
+      if (edge.hasSource) {
+        fields.push_back(prefix + "_contract_source_formula=" + edge.source.sexpr);
+      }
+      if (edge.hasTarget) {
+        fields.push_back(prefix + "_contract_target_formula=" + edge.target.sexpr);
+      }
+    }
   }
 }
 

@@ -397,6 +397,7 @@ struct RenderedKernelSkolemMacroEdge {
   std::size_t targetImpCount = 0;
   bool hasTarget = false;
   RenderedKernelFormula target;
+  bool hasProofContract = false;
 };
 
 struct RenderedKernelSkolemProofContract {

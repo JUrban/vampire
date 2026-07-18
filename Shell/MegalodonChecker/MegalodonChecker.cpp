@@ -14862,6 +14862,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                   edge.targetFreeVariables = freeVariables(edgeBody->right());
                   edge.targetChildren = immediateRenderedFormulaChildren(edgeTarget);
                 }
+                edge.hasProofContract = edge.hasSource && edge.hasTarget;
               }
               skolemMacroEdges.push_back(edge);
             }
