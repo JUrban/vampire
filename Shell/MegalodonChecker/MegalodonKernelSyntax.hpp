@@ -350,6 +350,14 @@ struct RenderedKernelTypedVariable {
   RenderedKernelType type;
 };
 
+struct RenderedKernelSkolemParentInstantiation {
+  std::size_t index = 0;
+  std::string variable;
+  RenderedKernelType type;
+  RenderedKernelTerm term;
+  std::string role;
+};
+
 struct RenderedKernelFormulaChild {
   std::size_t index = 0;
   std::string role;
@@ -398,6 +406,8 @@ struct RenderedKernelSkolemMacroEdge {
   bool hasTarget = false;
   RenderedKernelFormula target;
   bool hasProofContract = false;
+  std::vector<RenderedKernelTypedVariable> contractParentStepVariables;
+  std::vector<RenderedKernelSkolemParentInstantiation> contractParentInstantiations;
   std::vector<RenderedKernelSkolemIntroducedSymbol> contractIntroducedSymbols;
 };
 
@@ -413,6 +423,8 @@ struct RenderedKernelSkolemProofContract {
   std::size_t introducedCount = 0;
   std::size_t macroEdgeCount = 0;
   bool usesClassicalChoice = false;
+  std::vector<RenderedKernelTypedVariable> parentStepVariables;
+  std::vector<RenderedKernelSkolemParentInstantiation> parentInstantiations;
 };
 
 struct RenderedKernelTransformationPair {

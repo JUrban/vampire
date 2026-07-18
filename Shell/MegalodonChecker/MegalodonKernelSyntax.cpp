@@ -815,7 +815,7 @@ void appendSkolemIntroducedSymbolFields(
         prefix + "_source_variable_application_count="
         + std::to_string(introduced.sourceVariableApplicationCount));
     }
-    if (!introduced.dependencies.empty()) {
+    if (introduced.hasSourceVariableApplicationCount || !introduced.dependencies.empty()) {
       fields.push_back(prefix + "_dependency_count=" + std::to_string(introduced.dependencies.size()));
       for (std::size_t dependencyIndex = 0;
            dependencyIndex < introduced.dependencies.size();
@@ -941,6 +941,32 @@ void appendSkolemMacroEdgeFields(
       fields.push_back(prefix + "_contract_unit=" + edge.unit.value);
       fields.push_back(prefix + "_contract_binder_count=" + std::to_string(edge.binders.size()));
       fields.push_back(
+        prefix + "_contract_parent_step_variable_count="
+        + std::to_string(edge.contractParentStepVariables.size()));
+      for (std::size_t variableIndex = 0;
+           variableIndex < edge.contractParentStepVariables.size();
+           ++variableIndex) {
+        const RenderedKernelTypedVariable& variable =
+          edge.contractParentStepVariables[variableIndex];
+        const std::string variablePrefix =
+          prefix + "_contract_parent_step_variable_" + std::to_string(variableIndex);
+        fields.push_back(variablePrefix + "_var=" + variable.variable);
+        fields.push_back(variablePrefix + "_type=" + variable.type.sexpr);
+      }
+      fields.push_back(
+        prefix + "_contract_parent_instantiation_count="
+        + std::to_string(edge.contractParentInstantiations.size()));
+      for (const RenderedKernelSkolemParentInstantiation& instantiation :
+           edge.contractParentInstantiations) {
+        const std::string instantiationPrefix =
+          prefix + "_contract_parent_instantiation_"
+          + std::to_string(instantiation.index);
+        fields.push_back(instantiationPrefix + "_var=" + instantiation.variable);
+        fields.push_back(instantiationPrefix + "_type=" + instantiation.type.sexpr);
+        fields.push_back(instantiationPrefix + "_term=" + instantiation.term.sexpr);
+        fields.push_back(instantiationPrefix + "_role=" + instantiation.role);
+      }
+      fields.push_back(
         prefix + "_contract_introduced_count="
         + std::to_string(edge.contractIntroducedSymbols.size()));
       for (std::size_t localIndex = 0;
@@ -1004,6 +1030,32 @@ void appendSkolemProofContractFields(
   fields.push_back(
     std::string("skolem_contract_uses_classical_choice=")
     + (contract.usesClassicalChoice ? "1" : "0"));
+  fields.push_back(
+    "skolem_contract_parent_step_variable_count="
+    + std::to_string(contract.parentStepVariables.size()));
+  for (std::size_t variableIndex = 0;
+       variableIndex < contract.parentStepVariables.size();
+       ++variableIndex) {
+    const RenderedKernelTypedVariable& variable =
+      contract.parentStepVariables[variableIndex];
+    const std::string variablePrefix =
+      "skolem_contract_parent_step_variable_" + std::to_string(variableIndex);
+    fields.push_back(variablePrefix + "_var=" + variable.variable);
+    fields.push_back(variablePrefix + "_type=" + variable.type.sexpr);
+  }
+  fields.push_back(
+    "skolem_contract_parent_instantiation_count="
+    + std::to_string(contract.parentInstantiations.size()));
+  for (const RenderedKernelSkolemParentInstantiation& instantiation :
+       contract.parentInstantiations) {
+    const std::string instantiationPrefix =
+      "skolem_contract_parent_instantiation_"
+      + std::to_string(instantiation.index);
+    fields.push_back(instantiationPrefix + "_var=" + instantiation.variable);
+    fields.push_back(instantiationPrefix + "_type=" + instantiation.type.sexpr);
+    fields.push_back(instantiationPrefix + "_term=" + instantiation.term.sexpr);
+    fields.push_back(instantiationPrefix + "_role=" + instantiation.role);
+  }
 }
 
 void appendSourceFormulaTransformFields(

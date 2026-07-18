@@ -14575,6 +14575,35 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           }
           return result;
         };
+      auto allVariables =
+        [&](Kernel::Formula* formula) {
+          std::vector<std::pair<unsigned, Kernel::TermList>> variables;
+          Lib::DHMap<unsigned, Kernel::TermList> collectedSorts;
+          Kernel::SortHelper::collectVariableSorts(formula, collectedSorts);
+          Lib::DHMap<unsigned, Kernel::TermList>::Iterator sortIterator(collectedSorts);
+          while (sortIterator.hasNext()) {
+            unsigned var;
+            Kernel::TermList sort;
+            sortIterator.next(var, sort);
+            variables.push_back(std::make_pair(var, sort));
+          }
+          std::sort(
+            variables.begin(),
+            variables.end(),
+            [](const auto& left, const auto& right) {
+              return left.first < right.first;
+            });
+          std::vector<MegalodonKernelSyntax::RenderedKernelTypedVariable> result;
+          for (const auto& var : variables) {
+            std::string varType;
+            if (certificateTypeSexpr(var.second, varType)) {
+              result.push_back({
+                variableName(var.first),
+                MegalodonKernelSyntax::type(varType)});
+            }
+          }
+          return result;
+        };
       if (!resultFormula.empty()) {
         hasSkolemResultFormulaQuantifiedVariables = true;
         skolemResultFormulaQuantifiedVariables = quantifiedVariables(u->getFormula());
@@ -14819,6 +14848,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               edge.index = skolemMacroEdges.size();
               edge.parentIndex = kernelParentIndex;
               edge.unit = MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number()));
+              edge.contractParentStepVariables = allVariables(parent->getFormula());
               edge.hasFormula = true;
               edge.formula = MegalodonKernelSyntax::formula(parentFormula);
               Kernel::Formula* edgeBody = parent->getFormula();
@@ -14872,9 +14902,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       }
       kernelFields.push_back("proof_parent_count=" + std::to_string(kernelParentIndex));
       std::vector<MegalodonKernelSyntax::RenderedKernelSkolemIntroducedSymbol> skolemIntroducedSymbols;
+      Kernel::Formula* sourceFormulaForSkolem = nullptr;
       if (_is->hasIntroducedSymbols(u)) {
         auto& symbols = _is->getIntroducedSymbols(u);
-        Kernel::Formula* sourceFormulaForSkolem = nullptr;
         for (Kernel::Unit* parent : iterTraits(u->getParents())) {
           if (!parent->isClause()) {
             sourceFormulaForSkolem = parent->getFormula();
@@ -15033,10 +15063,43 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           return formula.find(tmhNeedle) != std::string::npos
                  || formula.find(atomNeedle) != std::string::npos;
         };
+      std::map<std::string, MegalodonKernelSyntax::RenderedKernelSkolemIntroducedSymbol>
+        introducedByReplacedVariable;
+      for (const auto& introduced : skolemIntroducedSymbols) {
+        if (introduced.hasReplacedVariable && introduced.hasWitnessTerm) {
+          introducedByReplacedVariable[introduced.replacedVariable] = introduced;
+        }
+      }
+      auto parentInstantiations =
+        [&](const std::vector<MegalodonKernelSyntax::RenderedKernelTypedVariable>& variables) {
+          std::vector<MegalodonKernelSyntax::RenderedKernelSkolemParentInstantiation> result;
+          for (std::size_t variableIndex = 0;
+               variableIndex < variables.size();
+               ++variableIndex) {
+            const auto& variable = variables[variableIndex];
+            MegalodonKernelSyntax::RenderedKernelSkolemParentInstantiation instantiation;
+            instantiation.index = variableIndex;
+            instantiation.variable = variable.variable;
+            instantiation.type = variable.type;
+            auto introduced = introducedByReplacedVariable.find(variable.variable);
+            if (introduced != introducedByReplacedVariable.end()) {
+              instantiation.term = introduced->second.witnessTerm;
+              instantiation.role = "skolem_witness";
+            } else {
+              instantiation.term = MegalodonKernelSyntax::term(
+                "(TMH " + sexprQuote(variable.variable) + ")");
+              instantiation.role = "preserved_variable";
+            }
+            result.push_back(instantiation);
+          }
+          return result;
+        };
       for (auto& edge : skolemMacroEdges) {
         if (!edge.hasProofContract || !edge.hasSource || !edge.hasTarget) {
           continue;
         }
+        edge.contractParentInstantiations =
+          parentInstantiations(edge.contractParentStepVariables);
         for (const auto& introduced : skolemIntroducedSymbols) {
           if (!introduced.hasSymbol) {
             continue;
@@ -15070,6 +15133,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         skolemProofContract.introducedCount = skolemIntroducedSymbols.size();
         skolemProofContract.macroEdgeCount = skolemMacroEdges.size();
         skolemProofContract.usesClassicalChoice = !skolemIntroducedSymbols.empty();
+        if (sourceFormulaForSkolem != nullptr) {
+          skolemProofContract.parentStepVariables = allVariables(sourceFormulaForSkolem);
+          skolemProofContract.parentInstantiations =
+            parentInstantiations(skolemProofContract.parentStepVariables);
+        }
       }
       emitKernelV1(
         "skolemize",
