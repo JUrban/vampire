@@ -304,7 +304,10 @@ bool appendPrimitiveExpansionChainFields(
   fields.push_back("primitive_expansion=prefix");
   fields.push_back("primitive_expansion_prefix=" + expectedFinalId);
   if (!requiredRules.empty()) {
-    fields.push_back("primitive_expansion_requires=" + requiredRules.front());
+    auto preferred = std::find(requiredRules.begin(), requiredRules.end(), "resolve");
+    fields.push_back(
+      "primitive_expansion_requires="
+      + (preferred != requiredRules.end() ? *preferred : requiredRules.front()));
   }
   fields.push_back(
     "primitive_expansion_final_result_clause=" + primitiveSteps.back().resultClause);

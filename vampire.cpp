@@ -487,7 +487,9 @@ void dispatchByMode(Problem* problem)
       env.options->setProof(requestedProof);
       env.options->set("proof_extra", "lean");
       env.options->set("shuffle_input", "off");
-      env.options->set("skolemization", "syntactic");
+      env.options->set(
+        "skolemization",
+        requestedProof == Options::Proof::MEGALODON ? "standard" : "syntactic");
       env.options->setOutputMode(Options::Output::LEAN);
     }
 

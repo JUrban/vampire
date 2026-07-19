@@ -609,7 +609,7 @@ void PortfolioMode::runSlice(std::string sliceCode, int timeLimitInDeciseconds, 
       opt.set("proof", parentRequestsMegalodonProof ? "megalodon" : "leancheck");
       opt.set("proof_extra", "lean");
       opt.set("shuffle_input", "off");
-      opt.set("skolemization", "syntactic");
+      opt.set("skolemization", parentRequestsMegalodonProof ? "standard" : "syntactic");
       opt.set("output_mode", "lean");
     } else if (parentProof == Options::Proof::SMTCHECK) {
       opt.set("proof", "smtcheck");
