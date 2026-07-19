@@ -998,6 +998,20 @@ void appendSkolemMacroEdgeFields(
         fields.push_back(propositionPrefix + "_role=" + proposition.role);
         fields.push_back(propositionPrefix + "_formula=" + proposition.formula.sexpr);
       }
+      fields.push_back(
+        prefix + "_contract_branch_choice_count="
+        + std::to_string(edge.contractBranchChoices.size()));
+      for (const RenderedKernelSkolemBranchChoice& choice :
+           edge.contractBranchChoices) {
+        const std::string choicePrefix =
+          prefix + "_contract_branch_choice_"
+          + std::to_string(choice.index);
+        fields.push_back(choicePrefix + "_symbol=" + choice.symbol);
+        fields.push_back(choicePrefix + "_replaced_var=" + choice.replacedVariable);
+        fields.push_back(choicePrefix + "_type=" + choice.type.sexpr);
+        fields.push_back(choicePrefix + "_predicate=" + choice.predicate.sexpr);
+        fields.push_back(choicePrefix + "_body=" + choice.body.sexpr);
+      }
       if (edge.hasSource) {
         fields.push_back(prefix + "_contract_source_formula=" + edge.source.sexpr);
       }

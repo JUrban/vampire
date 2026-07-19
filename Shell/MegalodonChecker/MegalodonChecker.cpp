@@ -15147,6 +15147,40 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             edge.contractIntroducedSymbols.push_back(introduced);
           }
         }
+        if (edge.hasSourceShape
+            && edge.sourceConnective == "exists"
+            && edge.sourceQuantifiedVariables.size() == 1) {
+          auto body =
+            std::find_if(
+              edge.sourceChildren.begin(),
+              edge.sourceChildren.end(),
+              [](const MegalodonKernelSyntax::RenderedKernelFormulaChild& child) {
+                return child.role == "body";
+              });
+          if (body != edge.sourceChildren.end()) {
+            const MegalodonKernelSyntax::RenderedKernelQuantifiedVariable& variable =
+              edge.sourceQuantifiedVariables.front();
+            for (const auto& introduced : edge.contractIntroducedSymbols) {
+              if (!introduced.hasSymbol
+                  || !introduced.hasReplacedVariable
+                  || introduced.replacedVariable != variable.variable) {
+                continue;
+              }
+              const std::string predicate =
+                "(VLAMV " + sexprQuote(variable.variable)
+                + " " + variable.type.sexpr
+                + " " + body->formula.sexpr
+                + ")";
+              edge.contractBranchChoices.push_back({
+                edge.contractBranchChoices.size(),
+                introduced.symbol,
+                introduced.replacedVariable,
+                variable.type,
+                MegalodonKernelSyntax::term(predicate),
+                body->formula});
+            }
+          }
+        }
       }
       MegalodonKernelSyntax::RenderedKernelSkolemProofContract skolemProofContract;
       const bool hasSkolemProofContract =
