@@ -14873,6 +14873,21 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                 }
                 edgeBody = edgeBody->qarg();
               }
+              for (const auto& binder : edge.binders) {
+                const bool alreadyRecorded =
+                  std::any_of(
+                    edge.contractParentStepVariables.begin(),
+                    edge.contractParentStepVariables.end(),
+                    [&](const MegalodonKernelSyntax::RenderedKernelTypedVariable& variable) {
+                      return variable.variable == binder.first
+                             && variable.type.sexpr == binder.second.sexpr;
+                    });
+                if (!alreadyRecorded) {
+                  edge.contractParentStepVariables.push_back({
+                    binder.first,
+                    binder.second});
+                }
+              }
               if (edgeBody->connective() == Kernel::IMP) {
                 std::string edgeSource;
                 std::string edgeTarget;
