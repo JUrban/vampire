@@ -216,9 +216,15 @@ bool MegalodonChecker::inferenceNeedsReplayInformation(const Kernel::InferenceRu
     case Kernel::InferenceRule::SUPERPOSITION:
       return true;
     case Kernel::InferenceRule::FORWARD_DEMODULATION:
-    case Kernel::InferenceRule::BACKWARD_DEMODULATION:
     case Kernel::InferenceRule::RECTIFY:
       return true;
+    case Kernel::InferenceRule::BACKWARD_DEMODULATION:
+      // Replaying backward demodulation can re-enter substitution-tree
+      // matchers whose query bindings are no longer safe to dereference after
+      // proof search.  The Megalodon emitter has proof-extra rewrite metadata
+      // for these steps, so avoid making optional replay metadata a crash
+      // boundary for certificate emission.
+      return false;
     default:
       return false;
   }
@@ -8991,8 +8997,14 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
         if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
           return false;
         }
+        std::string atom;
+        Kernel::TermList sort;
+        if (!safeApplySubstitution(Kernel::SortHelper::getEqualityArgumentSort(literal), substitution, sort)
+          || !certificateEqualityAtomSexpr(sort, lhs, rhs, atom)) {
+          return false;
+        }
         rendered = std::string("(") + (literal->isPositive() ? "pos " : "neg ")
-          + "(AP (AP (TMH \"=\") " + lhs + ") " + rhs + "))";
+          + atom + ")";
       } else {
         Kernel::Literal* substituted = nullptr;
         if (!safeApplySubstitution(literal, substitution, substituted)) {
@@ -9022,21 +9034,30 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
         if (literal->isEquality()) {
           std::string lhs;
           std::string rhs;
-          Kernel::TermList lhsTerm = Kernel::SubstHelper::apply(*literal->nthArgument(0), substitution);
-          Kernel::TermList rhsTerm = Kernel::SubstHelper::apply(*literal->nthArgument(1), substitution);
+          Kernel::TermList lhsTerm;
+          Kernel::TermList rhsTerm;
+          if (!safeApplySubstitution(*literal->nthArgument(0), substitution, lhsTerm)
+            || !safeApplySubstitution(*literal->nthArgument(1), substitution, rhsTerm)) {
+            return false;
+          }
           if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
             return false;
           }
           std::string atom;
-          Kernel::TermList sort =
-            Kernel::SubstHelper::apply(Kernel::SortHelper::getEqualityArgumentSort(literal), substitution);
+          Kernel::TermList sort;
+          if (!safeApplySubstitution(Kernel::SortHelper::getEqualityArgumentSort(literal), substitution, sort)) {
+            return false;
+          }
           if (!certificateEqualityAtomSexpr(sort, lhs, rhs, atom)) {
             return false;
           }
           rendered = std::string("(") + (literal->isPositive() ? "pos " : "neg ")
             + atom + ")";
         } else {
-          Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
+          Kernel::Literal* substituted = nullptr;
+          if (!safeApplySubstitution(literal, substitution, substituted)) {
+            return false;
+          }
           if (!certificateLiteralSexpr(substituted, rendered)) {
             return false;
           }
@@ -9158,21 +9179,30 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
         if (literal->isEquality()) {
           std::string lhs;
           std::string rhs;
-          Kernel::TermList lhsTerm = Kernel::SubstHelper::apply(*literal->nthArgument(0), substitution);
-          Kernel::TermList rhsTerm = Kernel::SubstHelper::apply(*literal->nthArgument(1), substitution);
+          Kernel::TermList lhsTerm;
+          Kernel::TermList rhsTerm;
+          if (!safeApplySubstitution(*literal->nthArgument(0), substitution, lhsTerm)
+            || !safeApplySubstitution(*literal->nthArgument(1), substitution, rhsTerm)) {
+            return false;
+          }
           if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
             return false;
           }
           std::string atom;
-          Kernel::TermList sort =
-            Kernel::SubstHelper::apply(Kernel::SortHelper::getEqualityArgumentSort(literal), substitution);
+          Kernel::TermList sort;
+          if (!safeApplySubstitution(Kernel::SortHelper::getEqualityArgumentSort(literal), substitution, sort)) {
+            return false;
+          }
           if (!certificateEqualityAtomSexpr(sort, lhs, rhs, atom)) {
             return false;
           }
           rendered = std::string("(") + (literal->isPositive() ? "pos " : "neg ")
             + atom + ")";
         } else {
-          Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, substitution);
+          Kernel::Literal* substituted = nullptr;
+          if (!safeApplySubstitution(literal, substitution, substituted)) {
+            return false;
+          }
           if (!certificateLiteralSexpr(substituted, rendered)) {
             return false;
           }
@@ -9200,14 +9230,20 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
       if (literal->isEquality()) {
         std::string lhs;
         std::string rhs;
-        Kernel::TermList lhsTerm = Kernel::SubstHelper::apply(*literal->nthArgument(0), substitution);
-        Kernel::TermList rhsTerm = Kernel::SubstHelper::apply(*literal->nthArgument(1), substitution);
+        Kernel::TermList lhsTerm;
+        Kernel::TermList rhsTerm;
+        if (!safeApplySubstitution(*literal->nthArgument(0), substitution, lhsTerm)
+          || !safeApplySubstitution(*literal->nthArgument(1), substitution, rhsTerm)) {
+          return false;
+        }
         if (!certificateTermSexpr(lhsTerm, lhs) || !certificateTermSexpr(rhsTerm, rhs)) {
           return false;
         }
         std::string atom;
-        Kernel::TermList sort =
-          Kernel::SubstHelper::apply(Kernel::SortHelper::getEqualityArgumentSort(literal), substitution);
+        Kernel::TermList sort;
+        if (!safeApplySubstitution(Kernel::SortHelper::getEqualityArgumentSort(literal), substitution, sort)) {
+          return false;
+        }
         if (!certificateEqualityAtomSexpr(sort, lhs, rhs, atom)) {
           return false;
         }
@@ -9285,12 +9321,12 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
     });
   }
 
-  Kernel::TermList redex = hasReplayRewrite
-    ? replayInfo->demodulationRedex
-    : rewriteExtra->rewritten;
-  Kernel::TermList replacement = hasReplayRewrite
-    ? replayInfo->demodulationReplacement
-    : rewriteExtra->replacement;
+  Kernel::TermList redex = hasProofExtraRewrite
+    ? rewriteExtra->rewritten
+    : replayInfo->demodulationRedex;
+  Kernel::TermList replacement = hasProofExtraRewrite
+    ? rewriteExtra->replacement
+    : replayInfo->demodulationReplacement;
 
   std::vector<std::string> actual;
   if (!appendCertificateClauseLiteralsSexpr(unit->asClause(), actual)) {
@@ -9390,8 +9426,12 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
         }
 
         for (const auto& activeSubstitutions : candidateSubstitutions) {
-          Kernel::TermList equalityLeft = Kernel::SubstHelper::apply(*equalityLiteral->nthArgument(0), activeSubstitutions[equalityParentIndex]);
-          Kernel::TermList equalityRight = Kernel::SubstHelper::apply(*equalityLiteral->nthArgument(1), activeSubstitutions[equalityParentIndex]);
+          Kernel::TermList equalityLeft;
+          Kernel::TermList equalityRight;
+          if (!safeApplySubstitution(*equalityLiteral->nthArgument(0), activeSubstitutions[equalityParentIndex], equalityLeft)
+            || !safeApplySubstitution(*equalityLiteral->nthArgument(1), activeSubstitutions[equalityParentIndex], equalityRight)) {
+            continue;
+          }
           bool needsSymmetry = false;
           if (equalityLeft == redex && equalityRight == replacement) {
             needsSymmetry = false;
@@ -9407,7 +9447,10 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
           }
 
           for (Kernel::Literal* targetLiteral : targetParent->iterLits()) {
-            Kernel::Literal* targetSubstituted = Kernel::SubstHelper::apply(targetLiteral, activeSubstitutions[targetParentIndex]);
+            Kernel::Literal* targetSubstituted = nullptr;
+            if (!safeApplySubstitution(targetLiteral, activeSubstitutions[targetParentIndex], targetSubstituted)) {
+              continue;
+            }
             std::vector<unsigned> nativePosition;
             std::string rewrittenTarget;
             Kernel::Literal* rewrittenLiteral = nullptr;
@@ -9513,10 +9556,13 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                 std::string equalityLiteralSexpr;
                 std::string fromSexpr;
                 std::string toSexpr;
-                Kernel::TermList equalitySort =
-                  Kernel::SubstHelper::apply(
-                    Kernel::SortHelper::getEqualityArgumentSort(equalityLiteral),
-                    activeSubstitutions[equalityParentIndex]);
+                Kernel::TermList equalitySort;
+                if (!safeApplySubstitution(
+                      Kernel::SortHelper::getEqualityArgumentSort(equalityLiteral),
+                      activeSubstitutions[equalityParentIndex],
+                      equalitySort)) {
+                  continue;
+                }
                 if (!substitutedLiteralSexpr(equalityLiteral, activeSubstitutions[equalityParentIndex], equalityParentLiteral)
                   || !positiveEqualityLiteralSexpr(redex, replacement, equalitySort, equalityLiteralSexpr)
                   || !certificateTermSexpr(redex, fromSexpr)
@@ -9559,7 +9605,10 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                   std::vector<unsigned> position;
                 };
                 std::vector<TargetRewrite> targetRewrites;
-                Kernel::Literal* currentLiteral = Kernel::SubstHelper::apply(targetLiteral, activeSubstitutions[targetParentIndex]);
+                Kernel::Literal* currentLiteral = nullptr;
+                if (!safeApplySubstitution(targetLiteral, activeSubstitutions[targetParentIndex], currentLiteral)) {
+                  continue;
+                }
                 std::string currentLiteralSexpr;
                 if (!certificateLiteralSexpr(currentLiteral, currentLiteralSexpr)) {
                   return false;
@@ -9737,10 +9786,13 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
             std::string equalityLiteralSexpr;
             std::string fromSexpr;
             std::string toSexpr;
-            Kernel::TermList equalitySort =
-              Kernel::SubstHelper::apply(
-                Kernel::SortHelper::getEqualityArgumentSort(equalityLiteral),
-                activeSubstitutions[equalityParentIndex]);
+            Kernel::TermList equalitySort;
+            if (!safeApplySubstitution(
+                  Kernel::SortHelper::getEqualityArgumentSort(equalityLiteral),
+                  activeSubstitutions[equalityParentIndex],
+                  equalitySort)) {
+              continue;
+            }
             if (!substitutedLiteralSexpr(equalityLiteral, activeSubstitutions[equalityParentIndex], equalityParentLiteral)
               || !positiveEqualityLiteralSexpr(redex, replacement, equalitySort, equalityLiteralSexpr)
               || !certificateTermSexpr(redex, fromSexpr)
@@ -11814,6 +11866,22 @@ bool MegalodonChecker::certificateNativeStepSexpr(
       || certificateSuperpositionStepsSexpr(unit, replayInfo, result)
       || certificateSuperpositionStepSexpr(unit, replayInfo, result)
       || certificateParamodulateStepSexpr(unit, replayInfo, result);
+  } catch (const Lib::Exception& ex) {
+    if (std::getenv("MEGALODON_CERT_DEBUG")) {
+      std::ostringstream msg;
+      msg << ex;
+      std::cerr << "megalodon native certificate skipped for u"
+                << unit->number() << " after Vampire exception: "
+                << msg.str() << std::endl;
+    }
+    return false;
+  } catch (const std::exception& ex) {
+    if (std::getenv("MEGALODON_CERT_DEBUG")) {
+      std::cerr << "megalodon native certificate skipped for u"
+                << unit->number() << " after exception: "
+                << ex.what() << std::endl;
+    }
+    return false;
   } catch (...) {
     if (std::getenv("MEGALODON_CERT_DEBUG")) {
       std::cerr << "megalodon native certificate skipped for u"
@@ -12607,6 +12675,18 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       || info->premises.size() != info->substitutionForBanksSub.size()) {
       return;
     }
+    const auto* proofExtra = extra == nullptr
+      ? nullptr
+      : static_cast<const Inferences::RewriteInferenceExtra*>(extra);
+    const bool useProofExtraRewrite = proofExtra != nullptr && proofExtra->hasReplacement;
+    const Kernel::TermList rewriteRedex =
+      useProofExtraRewrite ? proofExtra->rewritten : info->demodulationRedex;
+    const Kernel::TermList rewriteReplacement =
+      useProofExtraRewrite ? proofExtra->replacement : info->demodulationReplacement;
+    const Kernel::TermList rewriteRuleLhs =
+      useProofExtraRewrite ? proofExtra->lhs : info->demodulationRuleLhs;
+    const Kernel::TermList rewriteRuleRhs =
+      useProofExtraRewrite && proofExtra->hasRhs ? proofExtra->rhs : info->demodulationRuleRhs;
     MegalodonKernelSyntax::RenderedKernelRewrite rewrite;
     bool addedEquality = false;
     for (std::size_t parentIndex = 0; parentIndex < info->premises.size() && !addedEquality; ++parentIndex) {
@@ -12623,14 +12703,14 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         }
         Kernel::TermList left = *substituted->nthArgument(0);
         Kernel::TermList right = *substituted->nthArgument(1);
-        if (!((Kernel::TermList::equals(left, info->demodulationRedex)
-              && Kernel::TermList::equals(right, info->demodulationReplacement))
-            || (Kernel::TermList::equals(right, info->demodulationRedex)
-              && Kernel::TermList::equals(left, info->demodulationReplacement))
-            || (Kernel::TermList::equals(left, info->demodulationRuleLhs)
-              && Kernel::TermList::equals(right, info->demodulationRuleRhs))
-            || (Kernel::TermList::equals(right, info->demodulationRuleLhs)
-              && Kernel::TermList::equals(left, info->demodulationRuleRhs)))) {
+        if (!((Kernel::TermList::equals(left, rewriteRedex)
+              && Kernel::TermList::equals(right, rewriteReplacement))
+            || (Kernel::TermList::equals(right, rewriteRedex)
+              && Kernel::TermList::equals(left, rewriteReplacement))
+            || (Kernel::TermList::equals(left, rewriteRuleLhs)
+              && Kernel::TermList::equals(right, rewriteRuleRhs))
+            || (Kernel::TermList::equals(right, rewriteRuleLhs)
+              && Kernel::TermList::equals(left, rewriteRuleRhs)))) {
           continue;
         }
         std::string rendered;
@@ -12646,11 +12726,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       }
     }
     std::string rendered;
-    if (termSexprForKernel(info->demodulationRedex, rendered)) {
+    if (termSexprForKernel(rewriteRedex, rendered)) {
       rewrite.hasFrom = true;
       rewrite.from = MegalodonKernelSyntax::term(rendered);
     }
-    if (termSexprForKernel(info->demodulationReplacement, rendered)) {
+    if (termSexprForKernel(rewriteReplacement, rendered)) {
       rewrite.hasTo = true;
       rewrite.to = MegalodonKernelSyntax::term(rendered);
     }
@@ -12664,8 +12744,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         Kernel::Literal* rewrittenTarget = nullptr;
         if (!certificateRewriteLiteralAtMegalodonPosition(
               substituted,
-              info->demodulationRedex,
-              info->demodulationReplacement,
+              rewriteRedex,
+              rewriteReplacement,
               position,
               rewrittenTarget)) {
           continue;
@@ -16028,10 +16108,16 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           addKernelTermField(kernelFields, "replacement", rewrite->replacement);
         }
         if (info != nullptr && info->hasDemodulationRewrite) {
-          addKernelTermField(kernelFields, "replay_rule_lhs", info->demodulationRuleLhs);
-          addKernelTermField(kernelFields, "replay_rule_rhs", info->demodulationRuleRhs);
-          addKernelTermField(kernelFields, "replay_redex", info->demodulationRedex);
-          addKernelTermField(kernelFields, "replay_replacement", info->demodulationReplacement);
+          const bool replayMatchesKernelRewrite =
+            Kernel::TermList::equals(info->demodulationRedex, rewrite->rewritten)
+            && (!rewrite->hasReplacement
+              || Kernel::TermList::equals(info->demodulationReplacement, rewrite->replacement));
+          const std::string replayPrefix =
+            replayMatchesKernelRewrite ? "replay_" : "recorded_replay_";
+          addKernelTermField(kernelFields, replayPrefix + "rule_lhs", info->demodulationRuleLhs);
+          addKernelTermField(kernelFields, replayPrefix + "rule_rhs", info->demodulationRuleRhs);
+          addKernelTermField(kernelFields, replayPrefix + "redex", info->demodulationRedex);
+          addKernelTermField(kernelFields, replayPrefix + "replacement", info->demodulationReplacement);
           addKernelDemodulationRewriteFields(kernelFields);
         }
         emitKernelV1("rewrite", kernelFields);
