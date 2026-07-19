@@ -219,7 +219,10 @@ private:
     bool recordSyntheticMetadata = false,
     std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   bool certificateNativeStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
-  bool certificateResolveStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateResolveStepSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   bool certificateSubstitutedResolutionStepsSexpr(
     Kernel::Unit* unit,
     const InferenceRecorder::InferenceInformation* replayInfo,

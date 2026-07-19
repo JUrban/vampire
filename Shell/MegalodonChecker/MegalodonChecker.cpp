@@ -5155,7 +5155,10 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
   return true;
 }
 
-bool MegalodonChecker::certificateResolveStepSexpr(Kernel::Unit* unit, std::string& result)
+bool MegalodonChecker::certificateResolveStepSexpr(
+  Kernel::Unit* unit,
+  std::string& result,
+  std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps)
 {
   const Kernel::InferenceRule& rule = unit->inference().rule();
   if (!unit->isClause()
@@ -5381,10 +5384,11 @@ bool MegalodonChecker::certificateResolveStepSexpr(Kernel::Unit* unit, std::stri
       } else {
         return false;
       }
-    }
-    const std::string stepBase = "u" + std::to_string(unit->number());
-    const std::string resolveId = exactResult ? stepBase : stepBase + "_resolve";
+	    }
+	    const std::string stepBase = "u" + std::to_string(unit->number());
+	    const std::string resolveId = exactResult ? stepBase : stepBase + "_resolve";
     std::vector<std::string> steps;
+    std::vector<MegalodonKernelSyntax::PrimitiveStep> localPrimitiveSteps;
     std::string leftParentId = "u" + std::to_string(parents[0]->number());
     std::string rightParentId = "u" + std::to_string(parents[1]->number());
     auto emitPivotSymmetry =
@@ -5399,11 +5403,20 @@ bool MegalodonChecker::certificateResolveStepSexpr(Kernel::Unit* unit, std::stri
           return false;
         }
         parentLiterals[pivotIndex] = flippedLiteral;
+        const std::string symmetryClause = clauseSexprFromLiterals(parentLiterals);
         steps.push_back(
           "(equality_symmetry " + sexprQuote(symmetryId)
           + " (parent " + sexprQuote(parentId) + ")"
           + " (literal " + std::to_string(pivotIndex) + ")"
-          + " (result " + clauseSexprFromLiterals(parentLiterals) + "))");
+          + " (result " + symmetryClause + "))");
+        localPrimitiveSteps.push_back(
+          MegalodonKernelSyntax::primitiveClauseStep(
+            "equality_symmetry",
+            symmetryId,
+            {parentId},
+            symmetryClause,
+            {{"literal", std::to_string(pivotIndex)}},
+            steps.back()));
         parentId = symmetryId;
         return true;
       };
@@ -5415,12 +5428,22 @@ bool MegalodonChecker::certificateResolveStepSexpr(Kernel::Unit* unit, std::stri
       && !emitPivotSymmetry(parents[1], rightIndex, flippedRightPivotLiteral, stepBase + "_right_symmetry", rightParentId)) {
       return false;
     }
+    const std::string resolveResultClause =
+      clauseSexprFromLiterals(exactResult ? actual : expected);
     steps.push_back(
       "(resolve " + sexprQuote(resolveId)
       + " (parents " + sexprQuote(leftParentId)
       + " " + sexprQuote(rightParentId) + ")"
       + " (pivot " + std::to_string(leftIndex) + " " + std::to_string(rightIndex) + ")"
-      + " (result " + clauseSexprFromLiterals(exactResult ? actual : expected) + "))");
+      + " (result " + resolveResultClause + "))");
+    localPrimitiveSteps.push_back(
+      MegalodonKernelSyntax::primitiveClauseStep(
+        "resolve",
+        resolveId,
+        {leftParentId, rightParentId},
+        resolveResultClause,
+        {{"pivot_left", std::to_string(leftIndex)}, {"pivot_right", std::to_string(rightIndex)}},
+        steps.back()));
     if (!exactResult) {
       std::vector<std::string> current = expected;
       std::string currentParentId = resolveId;
@@ -5441,11 +5464,20 @@ bool MegalodonChecker::certificateResolveStepSexpr(Kernel::Unit* unit, std::stri
               continue;
             }
             const std::string factorId = stepBase + "_factor" + std::to_string(factorCount++);
+            const std::string factorClause = clauseSexprFromLiterals(candidate);
             steps.push_back(
               "(factor " + sexprQuote(factorId)
               + " (parent " + sexprQuote(currentParentId) + ")"
               + " (literals " + std::to_string(left) + " " + std::to_string(right) + ")"
-              + " (result " + clauseSexprFromLiterals(candidate) + "))");
+              + " (result " + factorClause + "))");
+            localPrimitiveSteps.push_back(
+              MegalodonKernelSyntax::primitiveClauseStep(
+                "factor",
+                factorId,
+                {currentParentId},
+                factorClause,
+                {{"literal_left", std::to_string(left)}, {"literal_right", std::to_string(right)}},
+                steps.back()));
             current = candidate;
             currentParentId = factorId;
             factored = true;
@@ -5456,10 +5488,19 @@ bool MegalodonChecker::certificateResolveStepSexpr(Kernel::Unit* unit, std::stri
           return false;
         }
       }
+      const std::string finalClause = clauseSexprFromLiterals(actual);
       steps.push_back(
         "(substitute " + sexprQuote(stepBase)
         + " (parent " + sexprQuote(currentParentId) + ") (subst)"
-        + " (result " + clauseSexprFromLiterals(actual) + "))");
+        + " (result " + finalClause + "))");
+      localPrimitiveSteps.push_back(
+        MegalodonKernelSyntax::primitiveClauseStep(
+          "substitute",
+          stepBase,
+          {currentParentId},
+          finalClause,
+          {{"substitution", "(subst)"}},
+          steps.back()));
     }
     std::ostringstream out;
     for (std::size_t i = 0; i < steps.size(); ++i) {
@@ -5469,6 +5510,9 @@ bool MegalodonChecker::certificateResolveStepSexpr(Kernel::Unit* unit, std::stri
       out << steps[i];
     }
     step = out.str();
+    if (primitiveSteps != nullptr) {
+      *primitiveSteps = localPrimitiveSteps;
+    }
     return true;
   };
 
@@ -16194,6 +16238,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
 	            const std::string sideParentId =
 	              "u" + std::to_string(parentClauses[subsumptionPivot.sideParentIndex]->number());
 	            std::string sideSubstituteId;
+	            std::string adoptedSideSubstitution = "(subst)";
 	            for (const auto& primitiveStep : primitiveSteps) {
 	              if (primitiveStep.rule != "substitute"
 	                || primitiveStep.parentIds.size() != 1
@@ -16205,6 +16250,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
 	                subsumptionPivot.hasSideSubstitution = true;
 	                subsumptionPivot.sideSubstitution =
 	                  MegalodonKernelSyntax::substitution(substitution);
+	                adoptedSideSubstitution = substitution;
 	                sideSubstituteId = primitiveStep.id;
 	                break;
 	              }
@@ -16233,9 +16279,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
 	              Kernel::Literal* sideLiteral =
 	                (*parentClauses[subsumptionPivot.sideParentIndex])[sideLiteralIndex];
 	              Kernel::Substitution sideSubstitution =
-	                hasKernelSubsumptionSubstitution
-	                  ? kernelSubsumptionSubstitution
-	                  : Kernel::Substitution();
+	                sideSubstituteId.empty()
+	                  ? Kernel::Substitution()
+	                  : (hasKernelSubsumptionSubstitution
+	                      ? kernelSubsumptionSubstitution
+	                      : Kernel::Substitution());
 	              Kernel::Literal* sideSubstituted =
 	                Kernel::SubstHelper::apply(sideLiteral, sideSubstitution);
 	              std::string sidePivot;
@@ -16256,6 +16304,29 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
 	              subsumptionPivot.hasSidePivotSubstituted = true;
 	              subsumptionPivot.sidePivotSubstituted =
 	                MegalodonKernelSyntax::literal(sidePivotSubstituted);
+	              subsumptionPivot.hasSideSubstitution = true;
+	              subsumptionPivot.sideSubstitution =
+	                MegalodonKernelSyntax::substitution(adoptedSideSubstitution);
+	              replaceKernelField(
+	                kernelFields,
+	                "side_substitution=",
+	                adoptedSideSubstitution);
+	              replaceKernelField(
+	                kernelFields,
+	                "side_pivot=",
+	                MegalodonKernelSyntax::literal(sidePivot).sexpr);
+	              replaceKernelField(
+	                kernelFields,
+	                "side_pivot_literal_index=",
+	                std::to_string(sideLiteralIndex));
+	              replaceKernelField(
+	                kernelFields,
+	                "side_pivot_parent_unit=",
+	                sideParentId);
+	              replaceKernelField(
+	                kernelFields,
+	                "side_pivot_substituted=",
+	                MegalodonKernelSyntax::literal(sidePivotSubstituted).sexpr);
 	              return;
 	            }
 	          };
@@ -16263,11 +16334,20 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
 	          || u->inference().rule() == Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION) {
 	          std::string primitiveExpansion;
 	          std::vector<MegalodonKernelSyntax::PrimitiveStep> primitiveSteps;
-	          if (certificateSubstitutedResolutionStepsSexpr(
-                u,
-                info,
-                primitiveExpansion,
-                &primitiveSteps)
+	          if (certificateResolveStepSexpr(
+	                u,
+	                primitiveExpansion,
+	                &primitiveSteps)
+	            && MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
+	              kernelFields,
+	              primitiveSteps,
+	              "u" + std::to_string(u->number()))) {
+	            adoptSubsumptionPivotFromPrimitiveSteps(primitiveSteps);
+	          } else if (certificateSubstitutedResolutionStepsSexpr(
+	                u,
+	                info,
+	                primitiveExpansion,
+	                &primitiveSteps)
 	            && MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
 	              kernelFields,
 	              primitiveSteps,
@@ -16283,12 +16363,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
 	              "u" + std::to_string(u->number()))) {
 	            adoptSubsumptionPivotFromPrimitiveSteps(primitiveSteps);
 	          } else if (certificateNativeStepSexpr(u, info, primitiveExpansion)) {
-            MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
-              kernelFields,
-              primitiveExpansion,
-              "subsumption_resolution");
-          }
-        }
+	            MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
+	              kernelFields,
+	              primitiveExpansion,
+	              "subsumption_resolution");
+	          }
+	        }
         if (u->inference().rule() == Kernel::InferenceRule::EQUALITY_RESOLUTION) {
           std::string primitiveExpansion;
           MegalodonKernelSyntax::PrimitiveStep equalityResolutionPrimitive;
