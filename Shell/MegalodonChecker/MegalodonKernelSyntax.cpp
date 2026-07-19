@@ -1011,6 +1011,9 @@ void appendSkolemMacroEdgeFields(
         fields.push_back(choicePrefix + "_type=" + choice.type.sexpr);
         fields.push_back(choicePrefix + "_predicate=" + choice.predicate.sexpr);
         fields.push_back(choicePrefix + "_body=" + choice.body.sexpr);
+        if (choice.hasWitnessTerm) {
+          fields.push_back(choicePrefix + "_witness_term=" + choice.witnessTerm.sexpr);
+        }
       }
       if (edge.hasSource) {
         fields.push_back(prefix + "_contract_source_formula=" + edge.source.sexpr);

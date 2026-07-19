@@ -15177,7 +15177,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                 introduced.replacedVariable,
                 variable.type,
                 MegalodonKernelSyntax::term(predicate),
-                body->formula});
+                body->formula,
+                introduced.hasWitnessTerm,
+                introduced.witnessTerm});
             }
           }
         }

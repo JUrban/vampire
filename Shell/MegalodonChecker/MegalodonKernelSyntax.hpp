@@ -377,6 +377,8 @@ struct RenderedKernelSkolemBranchChoice {
   RenderedKernelType type;
   RenderedKernelTerm predicate;
   RenderedKernelFormula body;
+  bool hasWitnessTerm = false;
+  RenderedKernelTerm witnessTerm;
 };
 
 struct RenderedKernelSkolemMacroEdge {
