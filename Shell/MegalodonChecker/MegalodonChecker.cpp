@@ -7401,21 +7401,22 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
     activeParentLiterals.push_back(
       nonIdentitySubstitution ? Kernel::SubstHelper::apply(literal, *selectedSubstitution) : literal);
   }
-  const std::string unitId = "u" + std::to_string(unit->number());
-  std::string activeParentId = "u" + std::to_string(parent->number());
-  std::string substitutionStep;
-  if (nonIdentitySubstitution) {
-    std::vector<std::string> substitutedLiterals;
-    if (!substitutedParentLiterals(*selectedSubstitution, substitutedLiterals)) {
-      return false;
-    }
-    activeParentId = unitId + "_subst";
-    substitutionStep =
-      "(substitute " + sexprQuote(activeParentId)
-      + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ") "
-      + subst
-      + " (result " + clauseSexprFromLiterals(substitutedLiterals) + "))";
-  }
+	  const std::string unitId = "u" + std::to_string(unit->number());
+	  std::string activeParentId = "u" + std::to_string(parent->number());
+	  std::string substitutionStep;
+	  std::vector<std::string> substitutionMetadata;
+	  if (nonIdentitySubstitution) {
+	    activeParentId = unitId + "_subst";
+	    if (!certificateSubstituteStepPartsSexpr(
+	          activeParentId,
+	          "u" + std::to_string(parent->number()),
+	          parent,
+	          *selectedSubstitution,
+	          substitutionStep,
+	          substitutionMetadata)) {
+	      return false;
+	    }
+	  }
 
   auto tryLiteralIndex = [&](unsigned literalIndex, std::string& step) {
     if (literalIndex >= activeParentLiterals.size()) {
@@ -7467,6 +7468,7 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
 	      std::vector<std::string> steps;
 	      if (!substitutionStep.empty()) {
 	        steps.push_back(substitutionStep);
+	        steps.insert(steps.end(), substitutionMetadata.begin(), substitutionMetadata.end());
 	      }
 	      std::ostringstream constraints;
 	      constraints << "(constraints (clause";
@@ -7501,10 +7503,11 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
       }
     }
 
-    std::vector<std::string> steps;
-    if (!substitutionStep.empty()) {
-      steps.push_back(substitutionStep);
-    }
+	    std::vector<std::string> steps;
+	    if (!substitutionStep.empty()) {
+	      steps.push_back(substitutionStep);
+	      steps.insert(steps.end(), substitutionMetadata.begin(), substitutionMetadata.end());
+	    }
     const bool directResult = sameMultiset(expected, actual);
     const std::string equalityResolutionId = directResult ? unitId : unitId + "_eqres";
     steps.push_back(
