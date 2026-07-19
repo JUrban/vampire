@@ -364,6 +364,12 @@ struct RenderedKernelFormulaChild {
   RenderedKernelFormula formula;
 };
 
+struct RenderedKernelSkolemBranchProposition {
+  std::size_t index = 0;
+  std::string role;
+  RenderedKernelFormula formula;
+};
+
 struct RenderedKernelSkolemMacroEdge {
   std::size_t index = 0;
   std::size_t parentIndex = 0;
@@ -409,6 +415,7 @@ struct RenderedKernelSkolemMacroEdge {
   std::vector<RenderedKernelTypedVariable> contractParentStepVariables;
   std::vector<RenderedKernelSkolemParentInstantiation> contractParentInstantiations;
   std::vector<RenderedKernelSkolemIntroducedSymbol> contractIntroducedSymbols;
+  std::vector<RenderedKernelSkolemBranchProposition> contractBranchPropositions;
 };
 
 struct RenderedKernelSkolemProofContract {

@@ -15113,6 +15113,26 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         if (!edge.hasProofContract || !edge.hasSource || !edge.hasTarget) {
           continue;
         }
+        edge.contractBranchPropositions.push_back({
+          edge.contractBranchPropositions.size(),
+          "source",
+          edge.source});
+        for (const auto& child : edge.sourceChildren) {
+          edge.contractBranchPropositions.push_back({
+            edge.contractBranchPropositions.size(),
+            "source_child_" + child.role,
+            child.formula});
+        }
+        edge.contractBranchPropositions.push_back({
+          edge.contractBranchPropositions.size(),
+          "target",
+          edge.target});
+        for (const auto& child : edge.targetChildren) {
+          edge.contractBranchPropositions.push_back({
+            edge.contractBranchPropositions.size(),
+            "target_child_" + child.role,
+            child.formula});
+        }
         edge.contractParentInstantiations =
           parentInstantiations(edge.contractParentStepVariables);
         for (const auto& introduced : skolemIntroducedSymbols) {

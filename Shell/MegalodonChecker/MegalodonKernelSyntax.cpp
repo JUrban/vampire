@@ -987,6 +987,17 @@ void appendSkolemMacroEdgeFields(
           fields.push_back(introducedPrefix + "_witness_term=" + introduced.witnessTerm.sexpr);
         }
       }
+      fields.push_back(
+        prefix + "_contract_branch_proposition_count="
+        + std::to_string(edge.contractBranchPropositions.size()));
+      for (const RenderedKernelSkolemBranchProposition& proposition :
+           edge.contractBranchPropositions) {
+        const std::string propositionPrefix =
+          prefix + "_contract_branch_proposition_"
+          + std::to_string(proposition.index);
+        fields.push_back(propositionPrefix + "_role=" + proposition.role);
+        fields.push_back(propositionPrefix + "_formula=" + proposition.formula.sexpr);
+      }
       if (edge.hasSource) {
         fields.push_back(prefix + "_contract_source_formula=" + edge.source.sexpr);
       }
