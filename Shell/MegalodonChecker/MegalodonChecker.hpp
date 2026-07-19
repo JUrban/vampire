@@ -231,7 +231,11 @@ private:
     std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   bool certificateFactorStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateTrivialInequalityRemovalStepsSexpr(Kernel::Unit* unit, std::string& result);
-  bool certificateEqualityResolutionStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
+  bool certificateEqualityResolutionStepSexpr(
+    Kernel::Unit* unit,
+    const InferenceRecorder::InferenceInformation* replayInfo,
+    std::string& result,
+    MegalodonKernelSyntax::PrimitiveStep* equalityResolutionPrimitive = nullptr);
   bool certificateEqualityFactoringStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateTruthConflictStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateForwardSubsumptionDemodulationStepsSexpr(Kernel::Unit* unit, std::string& result);

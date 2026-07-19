@@ -7167,7 +7167,8 @@ bool MegalodonChecker::certificateTrivialInequalityRemovalStepsSexpr(Kernel::Uni
 bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
   Kernel::Unit* unit,
   const InferenceRecorder::InferenceInformation* replayInfo,
-  std::string& result)
+  std::string& result,
+  MegalodonKernelSyntax::PrimitiveStep* equalityResolutionPrimitive)
 {
   const Kernel::InferenceRule& rule = unit->inference().rule();
   if (!unit->isClause()
@@ -7260,6 +7261,13 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
       }
       return appendCertificateSplitLiteralsSexpr(parent, literals);
     };
+  auto sourceParentLiterals =
+    [&](std::vector<std::string>& literals) {
+      if (!appendCertificateClauseLiteralsSexpr(parent, literals)) {
+        return false;
+      }
+      return appendCertificateSplitLiteralsSexpr(parent, literals);
+    };
   auto clauseSexprFromLiterals = [](const std::vector<std::string>& literals) {
     std::ostringstream out;
     out << "(clause";
@@ -7269,6 +7277,40 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
     out << ')';
     return out.str();
   };
+  auto appendLiteralFields =
+    [](std::vector<std::pair<std::string, std::string>>& fields,
+       const std::string& prefix,
+       const std::vector<std::string>& literals) {
+      fields.push_back({prefix + "_literal_count", std::to_string(literals.size())});
+      for (std::size_t i = 0; i < literals.size(); ++i) {
+        fields.push_back({prefix + "_literal_" + std::to_string(i), literals[i]});
+      }
+    };
+  auto equalityResolutionMetadataFields =
+    [&](const std::string& parentId,
+        const std::vector<std::string>& parentLiterals,
+        const std::vector<std::string>& resultLiterals,
+        const std::string* parentSubstitution = nullptr,
+        const std::vector<std::string>* parentSubstitutedLiterals = nullptr) {
+      std::vector<std::pair<std::string, std::string>> fields;
+      appendLiteralFields(fields, "result", resultLiterals);
+      fields.push_back({"parent_count", "1"});
+      fields.push_back({"parent_0_unit", parentId});
+      fields.push_back({"parent_0_clause", clauseSexprFromLiterals(parentLiterals)});
+      appendLiteralFields(fields, "parent_0", parentLiterals);
+      if (parentSubstitution != nullptr && parentSubstitutedLiterals != nullptr) {
+        fields.push_back({"parent_0_substitution", *parentSubstitution});
+        fields.push_back({
+          "parent_0_substituted_literal_count",
+          std::to_string(parentSubstitutedLiterals->size())});
+        for (std::size_t i = 0; i < parentSubstitutedLiterals->size(); ++i) {
+          fields.push_back({
+            "parent_0_substituted_literal_" + std::to_string(i),
+            (*parentSubstitutedLiterals)[i]});
+        }
+      }
+      return fields;
+    };
   auto sameMultiset = [](std::vector<std::string> left, std::vector<std::string> right) {
     std::sort(left.begin(), left.end());
     std::sort(right.begin(), right.end());
@@ -7403,6 +7445,13 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
   }
 	  const std::string unitId = "u" + std::to_string(unit->number());
 	  std::string activeParentId = "u" + std::to_string(parent->number());
+  const bool parentHasSplitDependencies =
+    parent->isClause()
+    && parent->asClause()->splits()
+    && !parent->asClause()->splits()->isEmpty();
+  if (parentHasSplitDependencies) {
+    activeParentId += "_split_dependency";
+  }
 	  std::string substitutionStep;
 	  std::vector<std::string> substitutionMetadata;
 	  if (nonIdentitySubstitution) {
@@ -7436,6 +7485,19 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
     std::vector<std::string> substitutedParent;
     if (!substitutedParentLiterals(*selectedSubstitution, substitutedParent)) {
       return false;
+    }
+    std::string metadataParentId = activeParentId;
+    std::vector<std::string> metadataParentLiterals = substitutedParent;
+    const std::string* metadataParentSubstitution = nullptr;
+    const std::vector<std::string>* metadataParentSubstitutedLiterals = nullptr;
+    if (nonIdentitySubstitution) {
+      metadataParentId = "u" + std::to_string(parent->number());
+      metadataParentLiterals.clear();
+      if (!sourceParentLiterals(metadataParentLiterals)) {
+        return false;
+      }
+      metadataParentSubstitution = &subst;
+      metadataParentSubstitutedLiterals = &substitutedParent;
     }
     std::vector<std::string> expected;
     for (unsigned i = 0; i < substitutedParent.size(); ++i) {
@@ -7476,13 +7538,30 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
 	        constraints << ' ' << constraint;
 	      }
 	      constraints << "))";
-      steps.push_back(
+      const std::string resultClause = clauseSexprFromLiterals(actual);
+      const std::string renderedStep =
         "(equality_resolution_constraints " + sexprQuote(unitId)
         + " (parent " + sexprQuote(activeParentId) + ")"
         + " (literal " + std::to_string(literalIndex) + ")"
         + " (selected " + selectedLiteral + ")"
         + ' ' + constraints.str()
-        + " (result " + clauseSexprFromLiterals(actual) + "))");
+        + " (result " + resultClause + "))";
+      steps.push_back(renderedStep);
+      if (equalityResolutionPrimitive != nullptr) {
+        *equalityResolutionPrimitive =
+          MegalodonKernelSyntax::primitiveClauseStep(
+            "equality_resolution_constraints",
+            unitId,
+            {activeParentId},
+            resultClause,
+            equalityResolutionMetadataFields(
+              metadataParentId,
+              metadataParentLiterals,
+              actual,
+              metadataParentSubstitution,
+              metadataParentSubstitutedLiterals),
+            renderedStep);
+      }
       std::ostringstream out;
       for (std::size_t i = 0; i < steps.size(); ++i) {
         if (i != 0) {
@@ -7510,11 +7589,31 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
 	    }
     const bool directResult = sameMultiset(expected, actual);
     const std::string equalityResolutionId = directResult ? unitId : unitId + "_eqres";
-    steps.push_back(
+    const std::vector<std::string>& equalityResolutionResultLiterals =
+      directResult ? actual : expected;
+    const std::string equalityResolutionResultClause =
+      clauseSexprFromLiterals(equalityResolutionResultLiterals);
+    const std::string equalityResolutionStep =
       "(equality_resolution " + sexprQuote(equalityResolutionId)
       + " (parent " + sexprQuote(activeParentId) + ")"
       + " (literal " + std::to_string(literalIndex) + ")"
-      + " (result " + clauseSexprFromLiterals(directResult ? actual : expected) + "))");
+      + " (result " + equalityResolutionResultClause + "))";
+    steps.push_back(equalityResolutionStep);
+    if (equalityResolutionPrimitive != nullptr) {
+      *equalityResolutionPrimitive =
+        MegalodonKernelSyntax::primitiveClauseStep(
+          "equality_resolution",
+          equalityResolutionId,
+          {activeParentId},
+          equalityResolutionResultClause,
+          equalityResolutionMetadataFields(
+            metadataParentId,
+            metadataParentLiterals,
+            equalityResolutionResultLiterals,
+            metadataParentSubstitution,
+            metadataParentSubstitutedLiterals),
+          equalityResolutionStep);
+    }
     if (!directResult) {
       std::vector<std::string> current = expected;
       std::string currentParentId = equalityResolutionId;
@@ -12067,10 +12166,10 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       addSubstitutedLiteralFields(fields, prefix, substituted);
     }
   };
-  auto emit = [&](const std::string& kind, const std::vector<std::string>& fields) {
+  auto emitForId = [&](const std::string& kind, const std::vector<std::string>& fields, const std::string& nativeStepId) {
     out << "megalodon_step_extra(" << u->number() << ',' << quote(kind) << ",[";
     std::ostringstream metadata;
-    metadata << "(step_extra " << sexprQuote("u" + std::to_string(u->number()))
+    metadata << "(step_extra " << sexprQuote(nativeStepId)
              << ' ' << sexprQuote(kind) << " (";
     for (std::size_t i = 0; i < fields.size(); ++i) {
       if (i != 0) {
@@ -12083,6 +12182,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     out << "]).\n";
     metadata << "))";
     _certificateNativeMetadata.push_back(metadata.str());
+  };
+  auto emit = [&](const std::string& kind, const std::vector<std::string>& fields) {
+    emitForId(kind, fields, "u" + std::to_string(u->number()));
   };
   auto addParentSubstitutionFields = [&](std::vector<std::string>& fields) {
     if (info == nullptr || info->premises.size() != info->substitutionForBanksSub.size()) {
@@ -12262,6 +12364,22 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       }
       MegalodonKernelSyntax::appendLiteralSelection(fields, selection);
     };
+  auto replaceKernelField =
+    [](std::vector<std::string>& fields,
+       const std::string& prefix,
+       const std::string& value) {
+      for (std::string& field : fields) {
+        if (field.rfind(prefix, 0) == 0) {
+          field = prefix + value;
+          return;
+        }
+      }
+      fields.push_back(prefix + value);
+    };
+  auto stepIdHasSuffix = [](const std::string& stepId, const std::string& suffix) {
+    return stepId.size() >= suffix.size()
+      && stepId.compare(stepId.size() - suffix.size(), suffix.size(), suffix) == 0;
+  };
   auto addKernelTermField = [&](std::vector<std::string>& fields, const std::string& name, Kernel::TermList term) {
     std::string rendered;
     if (termSexprForKernel(term, rendered)) {
@@ -15665,7 +15783,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       || u->inference().rule() == Kernel::InferenceRule::TRIVIAL_INEQUALITY_REMOVAL
     )) {
     std::string primitiveExpansion;
-    if (certificateEqualityResolutionStepSexpr(u, info, primitiveExpansion)) {
+    MegalodonKernelSyntax::PrimitiveStep equalityResolutionPrimitive;
+    if (certificateEqualityResolutionStepSexpr(
+          u,
+          info,
+          primitiveExpansion,
+          &equalityResolutionPrimitive)) {
       std::vector<std::string> kernelFields;
       if (parentClauses.size() == 1) {
         for (unsigned literalIndex = 0; literalIndex < parentClauses[0]->length(); ++literalIndex) {
@@ -15676,7 +15799,43 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           }
         }
       }
-      emitKernelV1("equality_resolution", kernelFields);
+      if (!equalityResolutionPrimitive.id.empty()
+        && !equalityResolutionPrimitive.rule.empty()
+        && equalityResolutionPrimitive.hasResultClause) {
+        if (equalityResolutionPrimitive.parentIds.size() == 1
+          && stepIdHasSuffix(equalityResolutionPrimitive.parentIds[0], "_split_dependency")) {
+          replaceKernelField(
+            kernelFields,
+            "selected_parent_unit=",
+            equalityResolutionPrimitive.parentIds[0]);
+        }
+        MegalodonKernelSyntax::MegalodonKernelStep step =
+          MegalodonKernelSyntax::kernelStep(
+            equalityResolutionPrimitive.id,
+            "equality_resolution");
+        MegalodonKernelSyntax::addFields(step, kernelFields);
+        MegalodonKernelSyntax::addPrimitiveExpansion(
+          step,
+          MegalodonKernelSyntax::primitiveExpansion(
+            equalityResolutionPrimitive.id,
+            equalityResolutionPrimitive.rule));
+        MegalodonKernelSyntax::addFields(
+          step,
+          {
+            "conclusion_unit=" + equalityResolutionPrimitive.id,
+            "result_clause=" + equalityResolutionPrimitive.resultClause,
+            "conclusion_clause=" + equalityResolutionPrimitive.resultClause,
+          });
+        for (const auto& field : equalityResolutionPrimitive.fields) {
+          MegalodonKernelSyntax::addField(
+            step,
+            field.first + "=" + field.second);
+        }
+        emitForId(
+          "kernel_v1",
+          MegalodonKernelSyntax::kernelStepFields(step),
+          equalityResolutionPrimitive.id);
+      }
     }
   }
 
@@ -15700,12 +15859,33 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             rewrite->selected.selectedLiteral.selectedLiteral,
             rewrite->selected.otherLiteral);
         }
-        emitKernelV1(
-          u->inference().rule() == Kernel::InferenceRule::SUPERPOSITION
-            ? "superposition"
-            : "equality_factoring",
-          kernelFields,
-          true);
+        auto hasKernelField = [&](const std::string& prefix) {
+          return std::any_of(kernelFields.begin(), kernelFields.end(), [&](const std::string& field) {
+            return field.rfind(prefix, 0) == 0;
+          });
+        };
+        const bool completeSuperpositionMetadata =
+          u->inference().rule() != Kernel::InferenceRule::SUPERPOSITION
+          || (
+            hasKernelField("target_substituted=")
+            && hasKernelField("equality_substituted=")
+            && hasKernelField("target_parent_index=")
+            && hasKernelField("target_literal_index=")
+            && hasKernelField("equality_parent_index=")
+            && hasKernelField("equality_literal_index=")
+            && hasKernelField("rewrite_position=")
+            && hasKernelField("from=")
+            && hasKernelField("to=")
+            && hasKernelField("rewritten_target=")
+          );
+        if (completeSuperpositionMetadata) {
+          emitKernelV1(
+            u->inference().rule() == Kernel::InferenceRule::SUPERPOSITION
+              ? "superposition"
+              : "equality_factoring",
+            kernelFields,
+            true);
+        }
       }
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(rewrite->selected.selectedLiteral.selectedLiteral));
@@ -15902,6 +16082,12 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         MegalodonKernelSyntax::RenderedKernelSubsumptionResolutionPivot subsumptionPivot;
 	        bool hasSubsumptionPivot = false;
 	        addKernelLiteralFields(kernelFields, "selected", selected->selectedLiteral, 0);
+        if (u->inference().rule() != Kernel::InferenceRule::EQUALITY_RESOLUTION) {
+          std::string renderedSelected;
+          if (literalSexprForKernel(selected->selectedLiteral, renderedSelected)) {
+            replaceKernelField(kernelFields, "selected_substituted=", renderedSelected);
+          }
+        }
         if (parentClauses.size() == 2) {
           auto [selectedParentIndex, selectedLiteralIndex] = literalPosition(selected->selectedLiteral, 0);
           if (selectedParentIndex >= 0 && selectedLiteralIndex >= 0) {
@@ -16031,13 +16217,58 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               "subsumption_resolution");
           }
         }
-        emitKernelV1(
-          u->inference().rule() == Kernel::InferenceRule::EQUALITY_RESOLUTION
-            ? "equality_resolution"
-            : "subsumption_resolution",
-          kernelFields,
-          false,
-          hasSubsumptionPivot ? &subsumptionPivot : nullptr);
+        if (u->inference().rule() == Kernel::InferenceRule::EQUALITY_RESOLUTION) {
+          std::string primitiveExpansion;
+          MegalodonKernelSyntax::PrimitiveStep equalityResolutionPrimitive;
+          if (certificateEqualityResolutionStepSexpr(
+                u,
+                info,
+                primitiveExpansion,
+                &equalityResolutionPrimitive)
+            && !equalityResolutionPrimitive.id.empty()
+            && !equalityResolutionPrimitive.rule.empty()
+            && equalityResolutionPrimitive.hasResultClause) {
+            if (equalityResolutionPrimitive.parentIds.size() == 1
+              && stepIdHasSuffix(equalityResolutionPrimitive.parentIds[0], "_split_dependency")) {
+              replaceKernelField(
+                kernelFields,
+                "selected_parent_unit=",
+                equalityResolutionPrimitive.parentIds[0]);
+            }
+            MegalodonKernelSyntax::MegalodonKernelStep step =
+              MegalodonKernelSyntax::kernelStep(
+                equalityResolutionPrimitive.id,
+                "equality_resolution");
+            MegalodonKernelSyntax::addFields(step, kernelFields);
+            MegalodonKernelSyntax::addPrimitiveExpansion(
+              step,
+              MegalodonKernelSyntax::primitiveExpansion(
+                equalityResolutionPrimitive.id,
+                equalityResolutionPrimitive.rule));
+            MegalodonKernelSyntax::addFields(
+              step,
+              {
+                "conclusion_unit=" + equalityResolutionPrimitive.id,
+                "result_clause=" + equalityResolutionPrimitive.resultClause,
+                "conclusion_clause=" + equalityResolutionPrimitive.resultClause,
+              });
+            for (const auto& field : equalityResolutionPrimitive.fields) {
+              MegalodonKernelSyntax::addField(
+                step,
+                field.first + "=" + field.second);
+            }
+            emitForId(
+              "kernel_v1",
+              MegalodonKernelSyntax::kernelStepFields(step),
+              equalityResolutionPrimitive.id);
+          }
+        } else {
+          emitKernelV1(
+            "subsumption_resolution",
+            kernelFields,
+            false,
+            hasSubsumptionPivot ? &subsumptionPivot : nullptr);
+        }
       }
       std::vector<std::string> fields;
       fields.push_back(std::string("selected=") + literalText(selected->selectedLiteral));
