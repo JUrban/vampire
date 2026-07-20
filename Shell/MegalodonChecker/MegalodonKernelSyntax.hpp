@@ -379,6 +379,10 @@ struct RenderedKernelSkolemBranchChoice {
   RenderedKernelFormula body;
   bool hasWitnessTerm = false;
   RenderedKernelTerm witnessTerm;
+  bool hasTransportRule = false;
+  std::string transportRule;
+  bool hasWitnessedBody = false;
+  RenderedKernelFormula witnessedBody;
 };
 
 struct RenderedKernelSkolemMacroEdge {

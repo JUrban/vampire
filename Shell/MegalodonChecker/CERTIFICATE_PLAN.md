@@ -86,6 +86,13 @@ primitive steps first, then print that list. The rendering structure alone
 does not count as the Prover9/Ivy-style IR until it becomes the required path
 for macro lowering.
 
+Post-audit note, 2026-07-20: Skolem branch-choice records now also emit a
+`choice_witness_substitution` transport descriptor with the source body
+instantiated by Vampire's own witness term.  This is not yet the complete
+Skolem/epsilon proof object, but it moves the critical transport proposition
+out of Megalodon-side proof inspection and into Vampire-emitted, typed
+certificate data.
+
 ## Initial Export Fragment
 
 The initial qualifying schedule should avoid AVATAR and higher-order-heavy

@@ -15638,21 +15638,32 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               + " " + choiceSource.type.sexpr
               + " " + body
               + ")";
-            edge.contractBranchChoices.push_back({
-              edge.contractBranchChoices.size(),
-              introduced->symbol,
-              introduced->replacedVariable,
-              choiceSource.type,
-              MegalodonKernelSyntax::term(predicate),
-              MegalodonKernelSyntax::formula(body),
-              introduced->hasWitnessTerm,
-              introduced->witnessTerm});
+            const std::string witnessTerm =
+              introduced->hasWitnessTerm
+                ? introduced->witnessTerm.sexpr
+                : "(TMH " + sexprQuote(introduced->symbol) + ")";
+            const std::string witnessedBody =
+              replaceRenderedVariableUses(
+                body,
+                {std::make_pair(choiceSource.variable, witnessTerm)});
+            MegalodonKernelSyntax::RenderedKernelSkolemBranchChoice choice;
+            choice.index = edge.contractBranchChoices.size();
+            choice.symbol = introduced->symbol;
+            choice.replacedVariable = introduced->replacedVariable;
+            choice.type = choiceSource.type;
+            choice.predicate = MegalodonKernelSyntax::term(predicate);
+            choice.body = MegalodonKernelSyntax::formula(body);
+            choice.hasWitnessTerm = introduced->hasWitnessTerm;
+            choice.witnessTerm = introduced->witnessTerm;
+            choice.hasTransportRule = true;
+            choice.transportRule = "choice_witness_substitution";
+            choice.hasWitnessedBody = true;
+            choice.witnessedBody = MegalodonKernelSyntax::formula(witnessedBody);
+            edge.contractBranchChoices.push_back(choice);
             earlierChoiceReplacements.push_back(
               std::make_pair(
                 choiceSource.variable,
-                introduced->hasWitnessTerm
-                  ? introduced->witnessTerm.sexpr
-                  : "(TMH " + sexprQuote(introduced->symbol) + ")"));
+                witnessTerm));
           }
         }
       }

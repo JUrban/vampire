@@ -1078,6 +1078,12 @@ void appendSkolemMacroEdgeFields(
         if (choice.hasWitnessTerm) {
           fields.push_back(choicePrefix + "_witness_term=" + choice.witnessTerm.sexpr);
         }
+        if (choice.hasTransportRule) {
+          fields.push_back(choicePrefix + "_transport_rule=" + choice.transportRule);
+        }
+        if (choice.hasWitnessedBody) {
+          fields.push_back(choicePrefix + "_witnessed_body=" + choice.witnessedBody.sexpr);
+        }
       }
       if (edge.hasSource) {
         fields.push_back(prefix + "_contract_source_formula=" + edge.source.sexpr);
