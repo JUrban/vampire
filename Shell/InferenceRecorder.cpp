@@ -239,11 +239,16 @@ void InferenceRecorder::forwardDemodulation(unsigned int id, Clause *conclusion,
 
 void InferenceRecorder::backwardDemodulation(unsigned int id, Clause *conclusion, const std::vector<Clause *> &premises, const SubstApplicator& appl)
 {
-  recordGenericSubstitutionToOneBank<SubstApplicator>(id, conclusion, premises, appl, 
-	[](const SubstApplicator &subst, const TermList &term, size_t bank) {
-      return subst(term.var());
-    }
-  );
+  // Backward demodulation substitutions can point into substitution-tree query
+  // bindings that are not safe to dereference during later proof-output replay.
+  // Megalodon demodulation certificates use RewriteInferenceExtra plus actual
+  // parents for backward demodulation, so recording this optional replay
+  // substitution is unnecessary and can make unrelated replayed inferences
+  // crash while emitting a proof.
+  (void)id;
+  (void)conclusion;
+  (void)premises;
+  (void)appl;
 }
 
 void InferenceRecorder::rectify(Formula* f, Formula* newFormula, VSList* vs, Substitution renaming, std::set<unsigned> unusedVars)
