@@ -15450,6 +15450,135 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           }
           return result;
         };
+      struct RenderedLeadingExistsChoiceSource {
+        std::string variable;
+        MegalodonKernelSyntax::RenderedKernelType type;
+        MegalodonKernelSyntax::RenderedKernelFormula body;
+      };
+      auto leadingExistsChoiceSources =
+        [&](const std::string& renderedFormula) {
+          auto trim = [](const std::string& value) {
+            std::size_t first = 0;
+            while (first < value.size()
+                   && std::isspace(static_cast<unsigned char>(value[first]))) {
+              ++first;
+            }
+            std::size_t last = value.size();
+            while (last > first
+                   && std::isspace(static_cast<unsigned char>(value[last - 1]))) {
+              --last;
+            }
+            return value.substr(first, last - first);
+          };
+          auto listItems = [&](const std::string& value) {
+            std::vector<std::string> items;
+            const std::string trimmed = trim(value);
+            if (trimmed.size() < 2 || trimmed.front() != '(' || trimmed.back() != ')') {
+              return items;
+            }
+            std::size_t start = 1;
+            unsigned depth = 0;
+            bool inString = false;
+            bool escape = false;
+            for (std::size_t index = 1; index + 1 < trimmed.size(); ++index) {
+              const char ch = trimmed[index];
+              if (inString) {
+                if (escape) {
+                  escape = false;
+                } else if (ch == '\\') {
+                  escape = true;
+                } else if (ch == '"') {
+                  inString = false;
+                }
+                continue;
+              }
+              if (ch == '"') {
+                inString = true;
+                continue;
+              }
+              if (ch == '(') {
+                ++depth;
+                continue;
+              }
+              if (ch == ')') {
+                if (depth > 0) {
+                  --depth;
+                }
+                continue;
+              }
+              if (depth == 0 && std::isspace(static_cast<unsigned char>(ch))) {
+                if (index > start) {
+                  items.push_back(trim(trimmed.substr(start, index - start)));
+                }
+                start = index + 1;
+              }
+            }
+            if (trimmed.size() - 1 > start) {
+              items.push_back(trim(trimmed.substr(start, trimmed.size() - 1 - start)));
+            }
+            return items;
+          };
+          auto quotedAtom = [](const std::string& value) {
+            if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+              return value.substr(1, value.size() - 2);
+            }
+            return value;
+          };
+          auto tmhName = [&](const std::string& value) {
+            const auto items = listItems(value);
+            if (items.size() == 2 && items[0] == "TMH") {
+              return quotedAtom(items[1]);
+            }
+            return std::string();
+          };
+          std::vector<RenderedLeadingExistsChoiceSource> result;
+          std::string current = trim(renderedFormula);
+          while (true) {
+            const auto items = listItems(current);
+            if (items.size() != 3 || items[0] != "AP"
+                || tmhName(items[1]) != "vampire_exists_prop") {
+              break;
+            }
+            const auto binderItems = listItems(items[2]);
+            if (binderItems.size() != 4
+                || (binderItems[0] != "LAMV" && binderItems[0] != "VLAMV")) {
+              break;
+            }
+            const std::string body = binderItems[3];
+            result.push_back({
+              quotedAtom(binderItems[1]),
+              MegalodonKernelSyntax::type(binderItems[2]),
+              MegalodonKernelSyntax::formula(body)});
+            current = trim(body);
+          }
+          return result;
+        };
+      auto replaceAllOccurrences =
+        [](std::string value,
+           const std::string& needle,
+           const std::string& replacement) {
+          if (needle.empty()) {
+            return value;
+          }
+          std::size_t position = 0;
+          while ((position = value.find(needle, position)) != std::string::npos) {
+            value.replace(position, needle.size(), replacement);
+            position += replacement.size();
+          }
+          return value;
+        };
+      auto replaceRenderedVariableUses =
+        [&](std::string formula,
+           const std::vector<std::pair<std::string, std::string>>& replacements) {
+          for (const auto& replacement : replacements) {
+            formula =
+              replaceAllOccurrences(
+                formula,
+                "(TMH " + sexprQuote(replacement.first) + ")",
+                replacement.second);
+          }
+          return formula;
+        };
       for (auto& edge : skolemMacroEdges) {
         if (!edge.hasProofContract || !edge.hasSource || !edge.hasTarget) {
           continue;
@@ -15488,40 +15617,42 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             edge.contractIntroducedSymbols.push_back(introduced);
           }
         }
-        if (edge.hasSourceShape
-            && edge.sourceConnective == "exists"
-            && edge.sourceQuantifiedVariables.size() == 1) {
-          auto body =
+        std::vector<std::pair<std::string, std::string>> earlierChoiceReplacements;
+        for (const auto& choiceSource : leadingExistsChoiceSources(edge.source.sexpr)) {
+          auto introduced =
             std::find_if(
-              edge.sourceChildren.begin(),
-              edge.sourceChildren.end(),
-              [](const MegalodonKernelSyntax::RenderedKernelFormulaChild& child) {
-                return child.role == "body";
+              edge.contractIntroducedSymbols.begin(),
+              edge.contractIntroducedSymbols.end(),
+              [&](const MegalodonKernelSyntax::RenderedKernelSkolemIntroducedSymbol& candidate) {
+                return candidate.hasSymbol
+                       && candidate.hasReplacedVariable
+                       && candidate.replacedVariable == choiceSource.variable;
               });
-          if (body != edge.sourceChildren.end()) {
-            const MegalodonKernelSyntax::RenderedKernelQuantifiedVariable& variable =
-              edge.sourceQuantifiedVariables.front();
-            for (const auto& introduced : edge.contractIntroducedSymbols) {
-              if (!introduced.hasSymbol
-                  || !introduced.hasReplacedVariable
-                  || introduced.replacedVariable != variable.variable) {
-                continue;
-              }
-              const std::string predicate =
-                "(VLAMV " + sexprQuote(variable.variable)
-                + " " + variable.type.sexpr
-                + " " + body->formula.sexpr
-                + ")";
-              edge.contractBranchChoices.push_back({
-                edge.contractBranchChoices.size(),
-                introduced.symbol,
-                introduced.replacedVariable,
-                variable.type,
-                MegalodonKernelSyntax::term(predicate),
-                body->formula,
-                introduced.hasWitnessTerm,
-                introduced.witnessTerm});
-            }
+          if (introduced != edge.contractIntroducedSymbols.end()) {
+            const std::string body =
+              replaceRenderedVariableUses(
+                choiceSource.body.sexpr,
+                earlierChoiceReplacements);
+            const std::string predicate =
+              "(VLAMV " + sexprQuote(choiceSource.variable)
+              + " " + choiceSource.type.sexpr
+              + " " + body
+              + ")";
+            edge.contractBranchChoices.push_back({
+              edge.contractBranchChoices.size(),
+              introduced->symbol,
+              introduced->replacedVariable,
+              choiceSource.type,
+              MegalodonKernelSyntax::term(predicate),
+              MegalodonKernelSyntax::formula(body),
+              introduced->hasWitnessTerm,
+              introduced->witnessTerm});
+            earlierChoiceReplacements.push_back(
+              std::make_pair(
+                choiceSource.variable,
+                introduced->hasWitnessTerm
+                  ? introduced->witnessTerm.sexpr
+                  : "(TMH " + sexprQuote(introduced->symbol) + ")"));
           }
         }
       }
