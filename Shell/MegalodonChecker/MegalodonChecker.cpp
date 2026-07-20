@@ -12928,7 +12928,18 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     setKernelConclusion(step);
     setKernelParents(step);
     fields = MegalodonKernelSyntax::kernelStepFields(step);
-    if (!MegalodonKernelSyntax::requiredPrimitivesForRule(kernelRule).empty()) {
+    const auto requiredPrimitives =
+      MegalodonKernelSyntax::requiredPrimitivesForRule(kernelRule);
+    if (!requiredPrimitives.empty()) {
+      auto fieldValue = [&](const std::string& key) -> std::string {
+        const std::string prefix = key + "=";
+        for (const std::string& field : fields) {
+          if (field.rfind(prefix, 0) == 0) {
+            return field.substr(prefix.size());
+          }
+        }
+        return "";
+      };
       const bool hasPrimitiveExpansion =
         std::any_of(fields.begin(), fields.end(), [](const std::string& field) {
           return field == "primitive_expansion=prefix";
@@ -12937,6 +12948,19 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         INVALID_OPERATION(
           "Megalodon kernel_v1 rule missing primitive expansion contract: "
           + kernelRule);
+      }
+      const std::string requiredPrimitive =
+        fieldValue("primitive_expansion_requires");
+      if (requiredPrimitive.empty()) {
+        INVALID_OPERATION(
+          "Megalodon kernel_v1 rule missing primitive expansion requirement: "
+          + kernelRule);
+      }
+      if (std::find(requiredPrimitives.begin(), requiredPrimitives.end(), requiredPrimitive)
+        == requiredPrimitives.end()) {
+        INVALID_OPERATION(
+          "Megalodon kernel_v1 rule has invalid primitive expansion requirement: "
+          + kernelRule + " -> " + requiredPrimitive);
       }
     }
     emit("kernel_v1", fields);
