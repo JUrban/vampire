@@ -39,6 +39,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -12961,6 +12962,42 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         INVALID_OPERATION(
           "Megalodon kernel_v1 rule has invalid primitive expansion requirement: "
           + kernelRule + " -> " + requiredPrimitive);
+      }
+      const std::string requiredPrimitiveCount =
+        fieldValue("primitive_expansion_requires_count");
+      if (!requiredPrimitiveCount.empty()) {
+        int count = 0;
+        std::size_t parsed = 0;
+        try {
+          count = std::stoi(requiredPrimitiveCount, &parsed);
+        } catch (const std::invalid_argument&) {
+          INVALID_OPERATION(
+            "Megalodon kernel_v1 rule has non-integer primitive expansion requirement count: "
+            + kernelRule + " -> " + requiredPrimitiveCount);
+        } catch (const std::out_of_range&) {
+          INVALID_OPERATION(
+            "Megalodon kernel_v1 rule has out-of-range primitive expansion requirement count: "
+            + kernelRule + " -> " + requiredPrimitiveCount);
+        }
+        if (parsed != requiredPrimitiveCount.size() || count < 0) {
+          INVALID_OPERATION(
+            "Megalodon kernel_v1 rule has invalid primitive expansion requirement count: "
+            + kernelRule + " -> " + requiredPrimitiveCount);
+        }
+        bool listedRequiredPrimitive = false;
+        for (int index = 0; index < count; ++index) {
+          const std::string listedPrimitive =
+            fieldValue(
+              "primitive_expansion_requires_" + std::to_string(index));
+          if (listedPrimitive == requiredPrimitive) {
+            listedRequiredPrimitive = true;
+          }
+        }
+        if (!listedRequiredPrimitive) {
+          INVALID_OPERATION(
+            "Megalodon kernel_v1 indexed primitive expansion requirements omit selected primitive: "
+            + kernelRule + " -> " + requiredPrimitive);
+        }
       }
     }
     emit("kernel_v1", fields);
