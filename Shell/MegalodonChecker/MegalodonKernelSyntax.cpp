@@ -21,6 +21,37 @@ std::vector<std::string> structuralRules()
   };
 }
 
+std::vector<std::string> primitiveRules()
+{
+  return {
+    "avatar_component",
+    "avatar_definition",
+    "avatar_refutation",
+    "avatar_split",
+    "cnf_formula_clause",
+    "cnf_literal",
+    "ennf_formula",
+    "equality_factoring",
+    "equality_factoring_constraints",
+    "equality_resolution",
+    "equality_resolution_constraints",
+    "factor",
+    "fool_atom_lift",
+    "fool_exhaustiveness",
+    "formula_copy",
+    "formula_term_copy",
+    "paramodulate",
+    "predicate_definition_intro",
+    "rectify_formula",
+    "resolve",
+    "skolem_branch",
+    "skolem_formula",
+    "split_dependency",
+    "substitute",
+    "truth_conflict",
+  };
+}
+
 std::vector<std::string> requiredPrimitivesForRule(const std::string& rule)
 {
   static const std::vector<std::pair<std::string, std::vector<std::string>>> contracts = {
@@ -94,6 +125,17 @@ bool isSupportedRule(const std::string& rule)
   const auto rules = supportedRules();
   for (const std::string& supported : rules) {
     if (supported == rule) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool isPrimitiveRule(const std::string& rule)
+{
+  const auto rules = primitiveRules();
+  for (const std::string& primitive : rules) {
+    if (primitive == rule) {
       return true;
     }
   }
@@ -294,6 +336,9 @@ bool appendPrimitiveExpansionChainFields(
   std::vector<std::string> requiredRules;
   for (const auto& step : primitiveSteps) {
     if (step.rule.empty() || step.id.empty() || step.rendered.empty()) {
+      return false;
+    }
+    if (!isPrimitiveRule(step.rule)) {
       return false;
     }
     if (std::find(requiredRules.begin(), requiredRules.end(), step.rule)
