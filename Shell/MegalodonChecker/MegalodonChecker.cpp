@@ -12928,6 +12928,17 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     setKernelConclusion(step);
     setKernelParents(step);
     fields = MegalodonKernelSyntax::kernelStepFields(step);
+    if (!MegalodonKernelSyntax::requiredPrimitivesForRule(kernelRule).empty()) {
+      const bool hasPrimitiveExpansion =
+        std::any_of(fields.begin(), fields.end(), [](const std::string& field) {
+          return field == "primitive_expansion=prefix";
+        });
+      if (!hasPrimitiveExpansion) {
+        INVALID_OPERATION(
+          "Megalodon kernel_v1 rule missing primitive expansion contract: "
+          + kernelRule);
+      }
+    }
     emit("kernel_v1", fields);
   };
 

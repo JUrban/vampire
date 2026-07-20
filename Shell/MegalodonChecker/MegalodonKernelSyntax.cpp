@@ -309,6 +309,10 @@ bool appendPrimitiveExpansionChainFields(
     && primitiveSteps.back().second != expectedFinalId) {
     return false;
   }
+  fields.push_back("primitive_expansion=prefix");
+  if (!expectedFinalId.empty()) {
+    fields.push_back("primitive_expansion_prefix=" + expectedFinalId);
+  }
   fields.push_back("primitive_expansion_step_count=" + std::to_string(primitiveSteps.size()));
   for (std::size_t i = 0; i < primitiveSteps.size(); ++i) {
     fields.push_back(
