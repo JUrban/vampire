@@ -35,6 +35,7 @@ std::vector<std::string> primitiveRules()
     "equality_factoring_constraints",
     "equality_resolution",
     "equality_resolution_constraints",
+    "equality_symmetry",
     "factor",
     "fool_atom_lift",
     "fool_exhaustiveness",
@@ -279,6 +280,9 @@ bool appendPrimitiveExpansionChainFields(
               if (quoteEnd != std::string::npos) {
                 std::string id =
                   expansion.substr(quoteStart + 1, quoteEnd - quoteStart - 1);
+                if (!isPrimitiveRule(rule)) {
+                  return false;
+                }
                 primitiveSteps.push_back({rule, id});
                 if (std::find(requiredRules.begin(), requiredRules.end(), rule)
                   == requiredRules.end()) {

@@ -18311,7 +18311,7 @@ bool MegalodonChecker::certificateTruthConflictResolutionStepJson(
 
     std::string stepBase = "u" + std::to_string(unit->number());
     std::string truthConflictStep =
-      "{\"rule\":\"truth_conflict_resolution\","
+      "{\"rule\":\"truth_conflict\","
       "\"parents\":["
       + quote("u" + std::to_string(parent->number())) + "],"
       "\"literal\":" + literal + ","
@@ -18330,7 +18330,7 @@ bool MegalodonChecker::certificateTruthConflictResolutionStepJson(
     std::string currentStepId = stepBase + "_truth_conflict";
     steps.push_back(
       "{\"id\":" + quote(currentStepId) + ","
-      "\"rule\":\"truth_conflict_resolution\","
+      "\"rule\":\"truth_conflict\","
       "\"parents\":[" + quote("u" + std::to_string(parent->number())) + "],"
       "\"literal\":" + literal + ","
       "\"substitution\":" + substitution + ","
@@ -18465,7 +18465,7 @@ bool MegalodonChecker::certificateTrivialInequalityRemovalStepsJson(Kernel::Unit
       continue;
     }
     if (isPositiveTruthConflict(literal)) {
-      removals.push_back({"truth_conflict_resolution", literalJson});
+      removals.push_back({"truth_conflict", literalJson});
     } else if (isNegativeReflexiveEquality(literal)) {
       removals.push_back({"equality_resolution", literalJson});
     } else {
