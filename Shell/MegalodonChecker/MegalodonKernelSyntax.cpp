@@ -313,6 +313,12 @@ bool appendPrimitiveExpansionChainFields(
   if (!expectedFinalId.empty()) {
     fields.push_back("primitive_expansion_prefix=" + expectedFinalId);
   }
+  if (!requiredRules.empty()) {
+    auto preferred = std::find(requiredRules.begin(), requiredRules.end(), "resolve");
+    fields.push_back(
+      "primitive_expansion_requires="
+      + (preferred != requiredRules.end() ? *preferred : requiredRules.front()));
+  }
   fields.push_back("primitive_expansion_step_count=" + std::to_string(primitiveSteps.size()));
   for (std::size_t i = 0; i < primitiveSteps.size(); ++i) {
     fields.push_back(
