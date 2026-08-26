@@ -325,7 +325,8 @@ bool appendPrimitiveExpansionChainFields(
     && primitiveSteps.back().id != expectedFinalId) {
     return false;
   }
-  if (!primitiveSteps.back().hasResultClause) {
+  if (!primitiveSteps.back().hasResultClause
+    && !primitiveSteps.back().hasResultFormula) {
     return false;
   }
   std::vector<std::string> requiredRules;
@@ -356,8 +357,13 @@ bool appendPrimitiveExpansionChainFields(
       "primitive_expansion_requires="
       + (preferred != requiredRules.end() ? *preferred : requiredRules.front()));
   }
-  fields.push_back(
-    "primitive_expansion_final_result_clause=" + primitiveSteps.back().resultClause);
+  if (primitiveSteps.back().hasResultClause) {
+    fields.push_back(
+      "primitive_expansion_final_result_clause=" + primitiveSteps.back().resultClause);
+  } else {
+    fields.push_back(
+      "primitive_expansion_final_result_formula=" + primitiveSteps.back().resultFormula);
+  }
   fields.push_back("primitive_expansion_step_count=" + std::to_string(primitiveSteps.size()));
   for (std::size_t i = 0; i < primitiveSteps.size(); ++i) {
     fields.push_back(
@@ -381,6 +387,11 @@ bool appendPrimitiveExpansionChainFields(
       fields.push_back(
         "primitive_expansion_step_" + std::to_string(i)
         + "_result_clause=" + primitiveSteps[i].resultClause);
+    }
+    if (primitiveSteps[i].hasResultFormula) {
+      fields.push_back(
+        "primitive_expansion_step_" + std::to_string(i)
+        + "_result_formula=" + primitiveSteps[i].resultFormula);
     }
     for (const auto& field : primitiveSteps[i].fields) {
       if (field.first.empty() || field.second.empty()) {
@@ -1207,6 +1218,10 @@ void appendRectifyRenamingFields(
     }
     if (renaming.hasSubstitution) {
       fields.push_back(prefix + "_substitution=" + renaming.substitution.sexpr);
+    }
+    if (renaming.hasAmbientVariableMap) {
+      fields.push_back(
+        prefix + "_ambient_variable_map=" + renaming.ambientVariableMap.sexpr);
     }
   }
   if (renamings.truncated) {

@@ -1,8 +1,8 @@
 # Megalodon Certificate Export Plan
 
-Date: 2026-07-15
+Date: 2026-07-15; updated through 2026-08-26
 
-Branch: `vampire/megalodon5`
+Branch: `vampire/megalodon6`
 
 Post-audit note, 2026-07-16: the July 16 Megalodon audit found that the broad
 native preprocessing frontier was non-qualifying because Megalodon dynamically
@@ -412,3 +412,39 @@ it does not close the whole project. Other macro families and preprocessing
 operations must undergo the same producer-record/builder/extracted-checker
 migration, and detached source-linked structural results remain distinct from
 original-development E1 proofs.
+
+## Exact Producer-Recorded Rectification, 2026-08-26
+
+Fresh rectification records now follow the same producer-to-small-kernel path.
+`Rectify` records the exact source and result formulas, top-level free-variable
+map, and every recursive quantified transformation under the actual inference
+unit id. Each recursive witness also carries the active outer-variable map,
+filtered by Vampire's `FormulaVarIterator` to variables free relative to that
+source subformula. This is necessary because an outer binder is represented as
+a free name when a nested witness is serialized independently.
+
+`MegalodonKernelBuilder::rectifyFormulaStep` owns the direct Lisp and typed
+metadata. Megalodon's extracted checker validates source equality, variable-only
+and injective maps, source/result occurrence, recursive ambient maps, alpha
+structure, vacuous quantifier removal, and equality symmetry. Its extracted
+elaborator transports the proof structurally. The old bounded formula traversal,
+guessed variable maps, scoped-renaming candidate checks, and rectification
+orientation fallback were deleted from this path.
+
+The final 20-worker run is:
+
+```text
+/project/tmp/rectify_ambient_exact_final_100_20260826
+PASS 100/100
+rectify_formula records 332
+superposition macros 351
+paramodulate records 533
+```
+
+Vampire was capped at ten seconds. The run required source checks,
+builder-strict replay, both primitive audits,
+`REQUIRE_SUPERPOSITION_EXACT_LOWERING=1`, and
+`REQUIRE_RECTIFY_EXACT_LOWERING=1`. Focused mutations of both the top-level
+free-variable map and a recursive ambient-variable map are rejected. This is
+E2/E3 producer and replay evidence; it is not yet 100 original-development E1
+proofs and does not certify the remaining compatibility macro families.

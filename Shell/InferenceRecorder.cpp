@@ -301,7 +301,13 @@ void InferenceRecorder::backwardDemodulation(unsigned int id, Clause *conclusion
   (void)appl;
 }
 
-void InferenceRecorder::rectify(Formula* f, Formula* newFormula, VSList* vs, Substitution renaming, std::set<unsigned> unusedVars)
+void InferenceRecorder::rectify(
+  Formula* f,
+  Formula* newFormula,
+  VSList* vs,
+  Substitution renaming,
+  std::set<unsigned> unusedVars,
+  const std::map<unsigned, unsigned>& ambientVariableRenaming)
 {
   //When there are no remaining variables after rectification, we do not need a renaming.
   if(vs == nullptr){
@@ -337,8 +343,13 @@ void InferenceRecorder::rectify(Formula* f, Formula* newFormula, VSList* vs, Sub
   }
   //std::cout << f->toString() << std::endl;
   //std::cout << "Combined" << combinedSubst << std::endl;
+  RectifyInferenceExtra::Renaming recorded;
+  recorded.sourceFormula = f;
+  recorded.resultFormula = newFormula;
+  recorded.quantifiedVariableSubstitution = std::move(combinedSubst);
+  recorded.ambientVariableRenaming = ambientVariableRenaming;
   static_cast<RectifyInferenceExtra*>(_currentRecording.get())->
-    renamings.emplace_back(newFormula, std::make_pair(f, combinedSubst));
+    renamings.push_back(std::move(recorded));
 
 }
 

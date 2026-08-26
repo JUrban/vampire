@@ -89,6 +89,13 @@ MegalodonKernelSyntax::PrimitiveStep foolAtomLiftStep(
     std::string,
     MegalodonKernelSyntax::RenderedKernelType>>& context);
 
+MegalodonKernelSyntax::PrimitiveStep rectifyFormulaStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelFormula& source,
+  const MegalodonKernelSyntax::RenderedKernelFormula& result,
+  const MegalodonKernelSyntax::RenderedKernelRectifyRenamings& renamings);
+
 std::vector<MegalodonKernelSyntax::RenderedKernelSkolemBranchScopeSymbol>
 sourceSignatureScope(
   Kernel::Formula* formula,

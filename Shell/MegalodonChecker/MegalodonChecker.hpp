@@ -16,6 +16,7 @@ namespace Shell {
 
 namespace MegalodonKernelSyntax {
 struct PrimitiveStep;
+struct RenderedKernelRectifyRenamings;
 }
 
 class MegalodonChecker : public Kernel::InferenceStore::AbstractProofPrinter {
@@ -182,7 +183,13 @@ private:
   bool certificateFormulaTermInputStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFormulaCopyStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFormulaTermCopyStepSexpr(Kernel::Unit* unit, std::string& result);
-  bool certificateRectifyFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateRectifyRenamings(
+    const InferenceRecorder::RectifyInferenceExtra* rectifyInfo,
+    MegalodonKernelSyntax::RenderedKernelRectifyRenamings& result);
+  bool certificateRectifyFormulaStepSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
   bool certificateFoolBoolStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFoolFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateEnnfFormulaStepSexpr(Kernel::Unit* unit, std::string& result);

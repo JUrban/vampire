@@ -1286,8 +1286,10 @@ void LeanChecker::rectify(std::ostream &out, SortMap &conclSorts, Unit *concl, c
   out << indent << "intro h\n";
   out << indent << "try simp only [forall_const, exists_const, -iff_self, -eq_self] at h\n";
   unsigned counter = 0;
-  for(auto [newFormula, formulaAndSubst] : rectifyInfo->renamings) {
-    auto [formula, subst] = formulaAndSubst;
+  for(const auto& recorded : rectifyInfo->renamings) {
+    Formula* newFormula = recorded.resultFormula;
+    Formula* formula = recorded.sourceFormula;
+    Substitution subst = recorded.quantifiedVariableSubstitution;
     //check if subst is identity, if so we can skip this formula
     bool identity = true;
     for(auto [var, term] : iterTraits(subst.items())){

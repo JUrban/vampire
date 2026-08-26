@@ -281,6 +281,68 @@ MegalodonKernelSyntax::PrimitiveStep foolAtomLiftStep(
   return step;
 }
 
+MegalodonKernelSyntax::PrimitiveStep rectifyFormulaStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelFormula& source,
+  const MegalodonKernelSyntax::RenderedKernelFormula& result,
+  const MegalodonKernelSyntax::RenderedKernelRectifyRenamings& renamings)
+{
+  MegalodonKernelSyntax::PrimitiveStep step;
+  step.rule = "rectify_formula";
+  step.id = id;
+  step.builderOwned = true;
+  step.parentIds = {parent.value};
+  step.hasResultFormula = true;
+  step.resultFormula = result.sexpr;
+  step.fields.push_back({"source_formula", source.sexpr});
+  step.fields.push_back({
+    "renaming_count",
+    std::to_string(renamings.reportedCount),
+  });
+  if (renamings.hasVariableMap) {
+    step.fields.push_back({
+      "free_variable_map",
+      renamings.variableMap.sexpr,
+    });
+  }
+
+  std::string renderedRenamings;
+  if (!renamings.renamings.empty()) {
+    renderedRenamings = " (renamings";
+    for (const auto& renaming : renamings.renamings) {
+      renderedRenamings +=
+        " (renaming (source (formula " + renaming.source.sexpr + ")) "
+        + renaming.substitution.sexpr
+        + " (ambient_variable_map " + renaming.ambientVariableMap.sexpr + ")"
+        + " (target (formula " + renaming.target.sexpr + ")))";
+      const std::string prefix =
+        "renaming_" + std::to_string(renaming.index);
+      step.fields.push_back({prefix + "_source", renaming.source.sexpr});
+      step.fields.push_back({prefix + "_target", renaming.target.sexpr});
+      step.fields.push_back({
+        prefix + "_substitution",
+        renaming.substitution.sexpr,
+      });
+      step.fields.push_back({
+        prefix + "_ambient_variable_map",
+        renaming.ambientVariableMap.sexpr,
+      });
+    }
+    renderedRenamings += ")";
+  }
+  const std::string renderedVariableMap =
+    renamings.hasVariableMap ? renamings.variableMap.sexpr : "(subst)";
+  step.rendered =
+    "(rectify_formula " + quote(id)
+    + " (parent " + quote(parent.value) + ")"
+    + " (source (formula " + source.sexpr + "))"
+    + " (free_variable_map " + renderedVariableMap + ")"
+    + renderedRenamings
+    + " (result (formula " + result.sexpr + ")))";
+  return step;
+}
+
 namespace {
 
 using KernelSymbol = std::pair<bool, unsigned>;

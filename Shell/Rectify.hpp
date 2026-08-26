@@ -22,6 +22,8 @@
 #include "Kernel/Formula.hpp"
 #include "Kernel/SubstHelper.hpp"
 
+#include <map>
+
 namespace Kernel {
   class Unit;
   class Clause;
@@ -61,6 +63,7 @@ private:
     }
     ~Renaming() override;
     bool tryGetBoundAndMarkUsed (unsigned var,unsigned& boundTo) const;
+    bool tryGetBound(unsigned var, unsigned& boundTo) const;
     VarWithUsageInfo getBoundAndUsage(unsigned var) const;
     unsigned bind (unsigned v);
     void undoBinding(unsigned v);
@@ -95,6 +98,9 @@ private:
   Renaming _renaming;
   /** placeholder for free variables */
   VList* _free;
+
+  /** Exact source-to-result map for free variables introduced by rectification. */
+  std::map<unsigned, unsigned> _freeVariableRenaming;
 
   /** if true, unused quantified variables will be removed */
   bool _removeUnusedVars;

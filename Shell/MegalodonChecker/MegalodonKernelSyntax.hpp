@@ -22,6 +22,8 @@ struct PrimitiveStep {
   std::vector<std::string> parentIds;
   bool hasResultClause = false;
   std::string resultClause;
+  bool hasResultFormula = false;
+  std::string resultFormula;
   std::vector<std::pair<std::string, std::string>> fields;
 };
 
@@ -490,6 +492,8 @@ struct RenderedKernelRectifyRenaming {
   RenderedKernelFormula target;
   bool hasSubstitution = false;
   RenderedKernelSubstitution substitution;
+  bool hasAmbientVariableMap = false;
+  RenderedKernelSubstitution ambientVariableMap;
 };
 
 struct RenderedKernelRectifyRenamings {

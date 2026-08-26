@@ -20,6 +20,7 @@
 #include "Lib/ScopedLet.hpp"
 
 #include "Kernel/Formula.hpp"
+#include "Kernel/FormulaVarIterator.hpp"
 #include "Kernel/FormulaUnit.hpp"
 #include "Kernel/Inference.hpp"
 #include "Kernel/SortHelper.hpp"
@@ -50,6 +51,19 @@ bool Rectify::Renaming::tryGetBoundAndMarkUsed(unsigned var,unsigned& boundTo) c
   vs->headPtr()->second = true;
   return true;
 } // Rectify::bound
+
+bool Rectify::Renaming::tryGetBound(unsigned var, unsigned& boundTo) const
+{
+  if (var >= _capacity) {
+    return false;
+  }
+  VarUsageTrackingList* vs = _array[var];
+  if (VarUsageTrackingList::isEmpty(vs)) {
+    return false;
+  }
+  boundTo = vs->head().first;
+  return true;
+}
 
 Rectify::VarWithUsageInfo Rectify::Renaming::getBoundAndUsage(unsigned var) const
 {
@@ -86,6 +100,12 @@ FormulaUnit* Rectify::rectify (FormulaUnit* unit0, bool removeUnusedVars)
 
   if (f != g) {
     unit = new FormulaUnit(g,FormulaClauseTransformation(InferenceRule::RECTIFY,unit));
+    if(env.reconstruction) {
+      InferenceRecorder::instance()->endRectifyRecording(
+        unit->number(), f, g, rect._freeVariableRenaming);
+    }
+  } else if(env.reconstruction) {
+    InferenceRecorder::instance()->discardRectifyRecording();
   }
 
   // note that this only kicks in when rectifying formulas with free variables
@@ -99,9 +119,6 @@ FormulaUnit* Rectify::rectify (FormulaUnit* unit0, bool removeUnusedVars)
       vsfifo.pushBack({v, varSorts.get(v)});
     }
     unit = new FormulaUnit(new QuantifiedFormula(FORALL, vsfifo.list(), g),FormulaClauseTransformation(InferenceRule::CLOSURE,unit));
-  }
-  if(unit != NULL && env.reconstruction) {
-    InferenceRecorder::instance()->endRectifyRecording(unit->number());
   }
   return unit;
 } // Rectify::rectify (Unit& unit)
@@ -358,6 +375,7 @@ unsigned Rectify::rectifyVar(unsigned v)
   if (! _renaming.tryGetBoundAndMarkUsed(v,newV)) {
     newV = _renaming.bind(v);
     VList::push(newV,_free);
+    _freeVariableRenaming[v] = newV;
   }
   return newV;
 }
@@ -455,7 +473,22 @@ Formula* Rectify::rectify (Formula* f)
     }
     Formula *newFormula = new QuantifiedFormula(f->connective(), vs, arg);
     if(env.reconstruction) {
-      InferenceRecorder::instance()->rectify(f, newFormula, vs, *substVariablesInFormula, *unusedVars);
+      std::map<unsigned, unsigned> ambientVariableRenaming;
+      FormulaVarIterator freeVariables(f);
+      while (freeVariables.hasNext()) {
+        const unsigned sourceVariable = freeVariables.next();
+        unsigned resultVariable;
+        if (_renaming.tryGetBound(sourceVariable, resultVariable)) {
+          ambientVariableRenaming[sourceVariable] = resultVariable;
+        }
+      }
+      InferenceRecorder::instance()->rectify(
+        f,
+        newFormula,
+        vs,
+        *substVariablesInFormula,
+        *unusedVars,
+        ambientVariableRenaming);
     }
     return newFormula;
   }

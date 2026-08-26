@@ -11,6 +11,7 @@
 #include "Kernel/SubstHelper.hpp"
 #include "Shell/EqResWithDeletion.hpp"
 #include <memory>
+#include <map>
 #include <unordered_map>
 #include <vector>
 #include <set>
@@ -49,8 +50,16 @@ public:
 
   class RectifyInferenceExtra : public GenericInferenceInformation {
     public:
-      //New formula, original formula, and the renaming from the new formula to the original formula.
-      std::vector<std::pair<Kernel::Formula*, std::pair<Kernel::Formula*, Kernel::Substitution>>> renamings;
+      struct Renaming {
+        Kernel::Formula* sourceFormula = nullptr;
+        Kernel::Formula* resultFormula = nullptr;
+        Kernel::Substitution quantifiedVariableSubstitution;
+        std::map<unsigned, unsigned> ambientVariableRenaming;
+      };
+      std::vector<Renaming> renamings;
+      Kernel::Formula* sourceFormula = nullptr;
+      Kernel::Formula* resultFormula = nullptr;
+      std::map<unsigned, unsigned> freeVariableRenaming;
   };
 
   // Returns the singleton instance (lazily initialized, thread-safe)
@@ -88,15 +97,48 @@ public:
 
   void backwardDemodulation(unsigned int id, Kernel::Clause *conclusion, const std::vector<Kernel::Clause *> &premises, const SubstApplicator &appl);
 
-  void rectify(Formula* f, Formula* newFormula, VSList* vs, Substitution renaming, std::set<unsigned> unusedVars);
+  void rectify(
+    Formula* f,
+    Formula* newFormula,
+    VSList* vs,
+    Substitution renaming,
+    std::set<unsigned> unusedVars,
+    const std::map<unsigned, unsigned>& ambientVariableRenaming);
 
   void startRectifyRecording(){
+    _lastInferenceId = 0;
     _currentRecording = std::make_unique<RectifyInferenceExtra>();
   }
 
-  void endRectifyRecording(unsigned int id){
+  void endRectifyRecording(
+      unsigned int id,
+      Kernel::Formula* sourceFormula,
+      Kernel::Formula* resultFormula,
+      const std::map<unsigned, unsigned>& freeVariableRenaming){
+    auto* info = static_cast<RectifyInferenceExtra*>(_currentRecording.get());
+    info->sourceFormula = sourceFormula;
+    info->resultFormula = resultFormula;
+    info->freeVariableRenaming = freeVariableRenaming;
     _lastInferenceId = id;
     _inferences[id] = std::move(_currentRecording);
+  }
+
+  void discardRectifyRecording(){
+    _currentRecording.reset();
+    _lastInferenceId = 0;
+  }
+
+  bool reassignLastInferenceInformation(unsigned int id){
+    auto source = _inferences.find(_lastInferenceId);
+    if (source == _inferences.end()) {
+      return false;
+    }
+    if (_lastInferenceId != id) {
+      _inferences[id] = std::move(source->second);
+      _inferences.erase(source);
+    }
+    _lastInferenceId = id;
+    return true;
   }
 
   //void unitResultingResolution(unsigned int id, Kernel::Clause *conclusion, const std::vector<Kernel::Unit *> &premises, const std::vector<Indexing::ResultSubstitutionSP> &substitutions);
