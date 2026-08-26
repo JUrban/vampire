@@ -292,3 +292,41 @@ families and top-level compatibility dispatch remain migration work. The next
 builder work should follow the same rule: structured Vampire data first,
 canonical serialization once, exact deterministic target checking, and no
 benchmark-name or library-name recovery.
+
+## Superposition Substitution Precedence, 2026-08-26
+
+The live `hammer.1009.43` proof exposed a producer-side loss of exact inference
+data at superposition step `u141`. Vampire's replayer had recorded the equality
+parent substitution
+
+```text
+X0 -> X2, X1 -> sK0, X2 -> X0, X3 -> X1
+```
+
+but the legacy superposition fallback copied that substitution and then
+overwrote it with a later matcher containing the identity binding `X0 -> X0`.
+The emitted `substitute` primitive consequently lost `X0 -> X2`, and the
+extracted Megalodon clause kernel correctly rejected the resulting side
+literals.
+
+The correction is deliberately narrow. The recorded replay substitution is
+authoritative; matcher bindings are added only for variables that the replay
+substitution does not bind. No target-side guessing or checker relaxation was
+added. A broader attempt to compose substitutions throughout the fallback was
+rejected after the 20-worker corpus gate immediately found 15 missing
+superposition expansions.
+
+The live regression
+`run_native_live_superposition_permutation_smoke.sh` checks the exact four
+bindings and all 136 strict typed-builder steps. The final source-linked THF
+batch at
+`/project/tmp/superposition_authoritative_final_100_20260826` passes 100/100
+with 20 workers, ten-second Vampire limits, source checks, builder-strict
+checking, 533 `paramodulate` records, 430 `substitute` records, and both
+certificate audits.
+
+This is not a promotion of `certificateSuperpositionStepSexpr` to the target
+architecture. That large fallback remains frozen compatibility code. The next
+Vampire-side superposition work must construct exact typed primitive records
+from recorded inference data and then delete the corresponding search branch;
+it must not add more candidate reconstruction to the fallback.

@@ -11734,14 +11734,17 @@ bool MegalodonChecker::certificateSuperpositionStepSexpr(
           if (!certificateRewriteLiteralAtMegalodonPosition(targetSubstituted, preferredRedex, instantiatedTo, position, rewrittenTarget)) {
             continue;
           }
-          Kernel::Substitution equalityOutputSubstitution = replayInfo->substitutionForBanksSub[equalityParentIndex];
+          const Kernel::Substitution& equalityOutputSubstitution =
+            replayInfo->substitutionForBanksSub[equalityParentIndex];
           Kernel::Substitution matcherCopy = matcherSubstitution;
           std::vector<std::pair<unsigned, Kernel::TermList>> extraEqualityBindings;
           Kernel::TermList originalFrom = *equalityLiteralCandidate->nthArgument(direction == 0 ? 0 : 1);
           Kernel::TermList originalTo = *equalityLiteralCandidate->nthArgument(direction == 0 ? 1 : 0);
           for (auto [var, term] : iterTraits(matcherCopy.items())) {
-            equalityOutputSubstitution.rebind(var, term);
-            extraEqualityBindings.push_back({var, term});
+            Kernel::TermList recorded;
+            if (!equalityOutputSubstitution.findBinding(var, recorded)) {
+              extraEqualityBindings.push_back({var, term});
+            }
           }
           if (originalFrom.isVar() && originalFrom != preferredRedex) {
             extraEqualityBindings.push_back({originalFrom.var(), preferredRedex});
