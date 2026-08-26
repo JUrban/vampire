@@ -649,3 +649,19 @@ not yet E1 completion: final refutation cleanup still depends on Megalodon's
 legacy CPS/proof-object route. The next and only approved Skolem milestone is a
 compact block-discharge constructor in `vampire_kernel_elab.ml`, followed by
 removal of that legacy route from qualifying mode.
+
+### Checked-claim Skolem discharge, 2026-08-26
+
+That block-discharge milestone is now implemented for qualifying mode.
+Producer-justified witness definitions are applied as each local proof claim is
+registered; claims remain a checked DAG, and the exported block is rejected if
+it contains an introduced witness. Qualifying replay requires `typed_v2`, does
+not construct the rich legacy proof object, does not enqueue CPS cleanup, and
+removes witness aliases from the returned delta and symbol tables.
+
+The original Megalodon source prefix now passes ten ordinary-Qed commands, each
+with a scoped Skolem record and a global-signature invariant. The legacy CPS
+path remains in the nonqualifying compatibility implementation and should be
+deleted only after its remaining tests are migrated. The next qualifying scope
+object is AVATAR split/SAT discharge, whose exported claim must contain no
+split name.
