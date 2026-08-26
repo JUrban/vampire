@@ -176,6 +176,50 @@ MegalodonKernelSyntax::PrimitiveStep equalityResolutionConstraintsStep(
       + " (result " + result.sexpr + "))");
 }
 
+MegalodonKernelSyntax::PrimitiveStep foolAtomLiftStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelFormula& source,
+  const MegalodonKernelSyntax::RenderedKernelFormula& target,
+  const std::string& path,
+  const std::vector<std::pair<
+    std::string,
+    MegalodonKernelSyntax::RenderedKernelType>>& context)
+{
+  MegalodonKernelSyntax::PrimitiveStep step;
+  step.rule = "fool_atom_lift";
+  step.id = id;
+  step.builderOwned = true;
+  step.fields = {
+    {"source_formula", source.sexpr},
+    {"target_formula", target.sexpr},
+    {"path", path},
+  };
+  std::string renderedContext = "(context";
+  step.fields.push_back({"context_count", std::to_string(context.size())});
+  for (std::size_t index = 0; index < context.size(); ++index) {
+    renderedContext +=
+      " (variable " + quote(context[index].first)
+      + " " + context[index].second.sexpr + ")";
+    step.fields.push_back({
+      "context_" + std::to_string(index) + "_name",
+      context[index].first,
+    });
+    step.fields.push_back({
+      "context_" + std::to_string(index) + "_type",
+      context[index].second.sexpr,
+    });
+  }
+  renderedContext += ")";
+  step.rendered =
+    "(fool_atom_lift " + quote(id)
+    + " (source (formula " + source.sexpr + "))"
+    + " (target (formula " + target.sexpr + "))"
+    + " (path " + quote(path) + ")"
+    + " " + renderedContext
+    + " (builder \"typed_v1\"))";
+  return step;
+}
+
 namespace {
 
 using KernelSymbol = std::pair<bool, unsigned>;

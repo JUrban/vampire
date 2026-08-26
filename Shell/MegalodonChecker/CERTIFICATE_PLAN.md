@@ -260,3 +260,35 @@ to increase pass counts. The next implementation milestone is:
 3. a clausal primitive builder for the later refutation steps;
 4. ten real live Vampire proofs whose source/preprocess layer and clausal
    primitive layer both check without certificate-derived `Known` propositions.
+
+## Typed FOOL Leaf Builder, 2026-08-26
+
+Direct FOOL leaves are now part of the builder-owned path.
+`MegalodonKernelBuilder::foolAtomLiftStep` accepts typed source and target
+formula records, the exact structural path, and the ordered typed lexical
+context. It owns the canonical Lisp record and marks it `typed_v1`; inference
+code no longer assembles fresh `fool_atom_lift` text directly.
+
+The producer traverses the complete formula structure and emits only atomic
+leaf differences. The previous depth, pair-count, and text-size cutoffs were
+removed. Equality leaves are canonicalized with Vampire's own HOL
+named-to-nameless conversion before comparison. If the canonical certificate
+terms are equal, as for a special lambda versus the equivalent
+`vLAM`/`db0` term, no identity primitive is emitted. Legacy rich diagnostic
+metadata may still describe the pre-canonical pair, but qualifying correctness
+is determined by the typed record set.
+
+Megalodon independently computes and checks exact leaf coverage, including
+the lexical context, and elaborates the formula proof through its extracted
+small-kernel module. A fresh 100-case THF run with 20 workers and ten-second
+Vampire limits emitted 177 `fool_formula` macros and 524 builder-owned leaves;
+all 100 certificates passed builder-strict structural checking. Removing one
+builder marker or one leaf is rejected. Full proof-term replay completes for
+98 cases; one later clausal injection failure and one long Megalodon timeout
+remain outside this FOOL family.
+
+This does not make the entire exporter Ivy-style. Other direct preprocessing
+families and top-level compatibility dispatch remain migration work. The next
+builder work should follow the same rule: structured Vampire data first,
+canonical serialization once, exact deterministic target checking, and no
+benchmark-name or library-name recovery.

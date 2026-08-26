@@ -2200,74 +2200,166 @@ bool MegalodonChecker::certificateFoolFormulaStepSexpr(Kernel::Unit* unit, std::
   }
   Kernel::Formula* source = static_cast<Kernel::FormulaUnit*>(parent)->formula();
   Kernel::Formula* target = static_cast<Kernel::FormulaUnit*>(unit)->formula();
-  std::vector<std::tuple<std::string, std::string, std::string, Kernel::Formula*>> primitives;
-  unsigned pairCount = 0;
-  const unsigned pairLimit = 48;
-  std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned, std::string)> collectPairs =
-    [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth, std::string path) {
-      if (left == nullptr || right == nullptr || depth > 24 || pairCount >= pairLimit) {
+  using FoolPrimitive =
+    std::pair<MegalodonKernelSyntax::PrimitiveStep, Kernel::Formula*>;
+  using FoolContext = std::vector<std::pair<
+    std::string,
+    MegalodonKernelSyntax::RenderedKernelType>>;
+  std::vector<FoolPrimitive> primitives;
+  std::function<void(
+    Kernel::Formula*,
+    Kernel::Formula*,
+    std::string,
+    const FoolContext&)> collectPairs =
+    [&](Kernel::Formula* left,
+        Kernel::Formula* right,
+        std::string path,
+        const FoolContext& context) {
+      if (left == nullptr || right == nullptr) {
         return;
       }
       if (left->toString() == right->toString()) {
         return;
       }
-      std::string leftText;
-      std::string rightText;
-      if (certificateFormulaTermSexpr(left, leftText) && certificateFormulaTermSexpr(right, rightText)) {
-        primitives.push_back(std::make_tuple(leftText, rightText, path, right));
-        ++pairCount;
-      }
-      if (left->connective() != right->connective()) {
-        return;
-      }
-      switch (left->connective()) {
+      if (left->connective() == right->connective()) {
+        switch (left->connective()) {
         case Kernel::AND:
         case Kernel::OR: {
           Kernel::FormulaList::Iterator leftIt(left->args());
           Kernel::FormulaList::Iterator rightIt(right->args());
           unsigned index = 0;
           while (leftIt.hasNext() && rightIt.hasNext()) {
-            collectPairs(leftIt.next(), rightIt.next(), depth + 1, path + ".arg[" + std::to_string(index) + "]");
+            collectPairs(
+              leftIt.next(),
+              rightIt.next(),
+              path + ".arg[" + std::to_string(index) + "]",
+              context);
             ++index;
           }
-          return;
+          if (!leftIt.hasNext() && !rightIt.hasNext()) {
+            return;
+          }
+          break;
         }
         case Kernel::IMP:
         case Kernel::IFF:
         case Kernel::XOR:
-          collectPairs(left->left(), right->left(), depth + 1, path + ".left");
-          collectPairs(left->right(), right->right(), depth + 1, path + ".right");
+          collectPairs(left->left(), right->left(), path + ".left", context);
+          collectPairs(left->right(), right->right(), path + ".right", context);
           return;
         case Kernel::NOT:
-          collectPairs(left->uarg(), right->uarg(), depth + 1, path + ".not");
+          collectPairs(left->uarg(), right->uarg(), path + ".not", context);
           return;
         case Kernel::FORALL:
-        case Kernel::EXISTS:
-          collectPairs(left->qarg(), right->qarg(), depth + 1, path + ".body");
-          return;
+        case Kernel::EXISTS: {
+          FoolContext bodyContext = context;
+          Kernel::VSList::Iterator leftVars(left->vars());
+          Kernel::VSList::Iterator rightVars(right->vars());
+          bool sameBinders = true;
+          while (leftVars.hasNext() && rightVars.hasNext()) {
+            auto leftVar = leftVars.next();
+            auto rightVar = rightVars.next();
+            std::string leftType;
+            std::string rightType;
+            if (variableName(leftVar.first) != variableName(rightVar.first)
+              || !certificateTypeSexpr(leftVar.second, leftType)
+              || !certificateTypeSexpr(rightVar.second, rightType)
+              || leftType != rightType) {
+              sameBinders = false;
+              break;
+            }
+            bodyContext.push_back({
+              variableName(leftVar.first),
+              MegalodonKernelSyntax::type(leftType),
+            });
+          }
+          if (leftVars.hasNext() || rightVars.hasNext()) {
+            sameBinders = false;
+          }
+          if (sameBinders) {
+            collectPairs(
+              left->qarg(), right->qarg(), path + ".body", bodyContext);
+            return;
+          }
+          break;
+        }
         default:
+          break;
+        }
+      }
+      if (left->connective() == Kernel::LITERAL
+        && right->connective() == Kernel::LITERAL) {
+        Kernel::Literal* leftLiteral = left->literal();
+        Kernel::Literal* rightLiteral = right->literal();
+        std::string leftSort;
+        std::string rightSort;
+        std::string leftFirst;
+        std::string rightFirst;
+        std::string leftSecond;
+        std::string rightSecond;
+        if (leftLiteral->isEquality()
+          && rightLiteral->isEquality()
+          && leftLiteral->polarity() == rightLiteral->polarity()
+          && certificateTypeSexpr(
+            HOL::convert::toNameless(
+              Kernel::SortHelper::getEqualityArgumentSort(leftLiteral)),
+            leftSort)
+          && certificateTypeSexpr(
+            HOL::convert::toNameless(
+              Kernel::SortHelper::getEqualityArgumentSort(rightLiteral)),
+            rightSort)
+          && certificateTermSexpr(
+            HOL::convert::toNameless(*leftLiteral->nthArgument(0)),
+            leftFirst)
+          && certificateTermSexpr(
+            HOL::convert::toNameless(*rightLiteral->nthArgument(0)),
+            rightFirst)
+          && certificateTermSexpr(
+            HOL::convert::toNameless(*leftLiteral->nthArgument(1)),
+            leftSecond)
+          && certificateTermSexpr(
+            HOL::convert::toNameless(*rightLiteral->nthArgument(1)),
+            rightSecond)
+          && leftSort == rightSort
+          && leftFirst == rightFirst
+          && leftSecond == rightSecond) {
           return;
+        }
+      }
+      std::string leftText;
+      std::string rightText;
+      if (certificateFormulaTermSexpr(left, leftText)
+        && certificateFormulaTermSexpr(right, rightText)
+        && leftText != rightText) {
+        const std::string primitiveId =
+          "u" + std::to_string(unit->number())
+          + "_fool_atom_" + std::to_string(primitives.size());
+        primitives.push_back({
+          MegalodonKernelBuilder::foolAtomLiftStep(
+            primitiveId,
+            MegalodonKernelSyntax::formula(leftText),
+            MegalodonKernelSyntax::formula(rightText),
+            path,
+            context),
+          right,
+        });
       }
     };
-  collectPairs(source, target, 0, "root");
+  collectPairs(source, target, "root", {});
 
   std::ostringstream out;
   const std::string unitId = "u" + std::to_string(unit->number());
   for (std::size_t index = 0; index < primitives.size(); ++index) {
-    const auto& [sourceText, targetText, path, targetFormula] = primitives[index];
-    const std::string primitiveId = unitId + "_fool_atom_" + std::to_string(index);
+    const auto& [primitive, targetFormula] = primitives[index];
     std::string proposition;
     bool renderingReplayExtra = _renderingReplayExtra;
     _renderingReplayExtra = true;
     bool hasProposition = formulaToMegalodon(targetFormula, proposition);
     _renderingReplayExtra = renderingReplayExtra;
     if (hasProposition) {
-      out << "(step_proposition " << sexprQuote(primitiveId) << " " << sexprQuote(proposition) << ")\n  ";
+      out << "(step_proposition " << sexprQuote(primitive.id) << " " << sexprQuote(proposition) << ")\n  ";
     }
-    out << "(fool_atom_lift " << sexprQuote(primitiveId)
-        << " (source (formula " << sourceText << "))"
-        << " (target (formula " << targetText << "))"
-        << " (path " << sexprQuote(path) << "))\n  ";
+    out << primitive.rendered << "\n  ";
   }
   out << "(fool_formula " << sexprQuote(unitId)
       << " (parent " << sexprQuote("u" + std::to_string(parent->number())) << ")"
@@ -14426,8 +14518,13 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         std::string sourceFormula;
         std::string resultFormula;
         std::string foolBoolStep;
+        std::string typedFoolStep;
         const bool emitsFoolBool = certificateFoolBoolStepSexpr(u, foolBoolStep);
+        const bool hasTypedFoolPrimitive =
+          certificateFoolFormulaStepSexpr(u, typedFoolStep)
+          && typedFoolStep.find("(fool_atom_lift ") != std::string::npos;
         if (!emitsFoolBool
+          && hasTypedFoolPrimitive
           && certificateFormulaTermSexpr(source, sourceFormula)
           && certificateFormulaTermSexpr(target, resultFormula)
           && sourceFormula != resultFormula

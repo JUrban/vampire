@@ -57,6 +57,15 @@ MegalodonKernelSyntax::PrimitiveStep equalityResolutionConstraintsStep(
   const MegalodonKernelSyntax::RenderedKernelClause& result,
   const std::vector<std::pair<std::string, std::string>>& metadataFields);
 
+MegalodonKernelSyntax::PrimitiveStep foolAtomLiftStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelFormula& source,
+  const MegalodonKernelSyntax::RenderedKernelFormula& target,
+  const std::string& path,
+  const std::vector<std::pair<
+    std::string,
+    MegalodonKernelSyntax::RenderedKernelType>>& context);
+
 std::vector<MegalodonKernelSyntax::RenderedKernelSkolemBranchScopeSymbol>
 sourceSignatureScope(
   Kernel::Formula* formula,
