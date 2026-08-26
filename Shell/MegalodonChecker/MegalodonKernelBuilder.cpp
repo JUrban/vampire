@@ -12,6 +12,27 @@
 namespace Shell {
 namespace MegalodonKernelBuilder {
 
+namespace {
+
+std::string quote(const std::string& value)
+{
+  std::string result = "\"";
+  for (char ch : value) {
+    switch (ch) {
+      case '\\': result += "\\\\"; break;
+      case '"': result += "\\\""; break;
+      case '\n': result += "\\n"; break;
+      case '\r': result += "\\r"; break;
+      case '\t': result += "\\t"; break;
+      default: result += ch; break;
+    }
+  }
+  result += '"';
+  return result;
+}
+
+}
+
 MegalodonKernelSyntax::PrimitiveStep primitiveClauseStep(
   const std::string& rule,
   const std::string& id,
@@ -29,6 +50,68 @@ MegalodonKernelSyntax::PrimitiveStep primitiveClauseStep(
   step.resultClause = resultClause;
   step.fields = fields;
   return step;
+}
+
+MegalodonKernelSyntax::PrimitiveStep resolveStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& leftParent,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& rightParent,
+  std::size_t leftPivot,
+  std::size_t rightPivot,
+  const MegalodonKernelSyntax::RenderedKernelClause& result)
+{
+  const std::string leftPivotText = std::to_string(leftPivot);
+  const std::string rightPivotText = std::to_string(rightPivot);
+  return primitiveClauseStep(
+    "resolve",
+    id,
+    {leftParent.value, rightParent.value},
+    result.sexpr,
+    {{"pivot_left", leftPivotText}, {"pivot_right", rightPivotText}},
+    "(resolve " + quote(id)
+      + " (parents " + quote(leftParent.value) + " " + quote(rightParent.value) + ")"
+      + " (pivot " + leftPivotText + " " + rightPivotText + ")"
+      + " (result " + result.sexpr + "))");
+}
+
+MegalodonKernelSyntax::PrimitiveStep factorStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  std::size_t leftLiteral,
+  std::size_t rightLiteral,
+  const MegalodonKernelSyntax::RenderedKernelClause& result)
+{
+  const std::string leftLiteralText = std::to_string(leftLiteral);
+  const std::string rightLiteralText = std::to_string(rightLiteral);
+  return primitiveClauseStep(
+    "factor",
+    id,
+    {parent.value},
+    result.sexpr,
+    {{"literal_left", leftLiteralText}, {"literal_right", rightLiteralText}},
+    "(factor " + quote(id)
+      + " (parent " + quote(parent.value) + ")"
+      + " (literals " + leftLiteralText + " " + rightLiteralText + ")"
+      + " (result " + result.sexpr + "))");
+}
+
+MegalodonKernelSyntax::PrimitiveStep equalitySymmetryStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  std::size_t literal,
+  const MegalodonKernelSyntax::RenderedKernelClause& result)
+{
+  const std::string literalText = std::to_string(literal);
+  return primitiveClauseStep(
+    "equality_symmetry",
+    id,
+    {parent.value},
+    result.sexpr,
+    {{"literal", literalText}},
+    "(equality_symmetry " + quote(id)
+      + " (parent " + quote(parent.value) + ")"
+      + " (literal " + literalText + ")"
+      + " (result " + result.sexpr + "))");
 }
 
 namespace {

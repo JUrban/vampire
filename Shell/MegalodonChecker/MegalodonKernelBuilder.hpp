@@ -22,6 +22,27 @@ MegalodonKernelSyntax::PrimitiveStep primitiveClauseStep(
   const std::vector<std::pair<std::string, std::string>>& fields,
   const std::string& rendered);
 
+MegalodonKernelSyntax::PrimitiveStep resolveStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& leftParent,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& rightParent,
+  std::size_t leftPivot,
+  std::size_t rightPivot,
+  const MegalodonKernelSyntax::RenderedKernelClause& result);
+
+MegalodonKernelSyntax::PrimitiveStep factorStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  std::size_t leftLiteral,
+  std::size_t rightLiteral,
+  const MegalodonKernelSyntax::RenderedKernelClause& result);
+
+MegalodonKernelSyntax::PrimitiveStep equalitySymmetryStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  std::size_t literal,
+  const MegalodonKernelSyntax::RenderedKernelClause& result);
+
 std::vector<MegalodonKernelSyntax::RenderedKernelSkolemBranchScopeSymbol>
 sourceSignatureScope(
   Kernel::Formula* formula,

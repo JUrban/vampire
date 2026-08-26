@@ -102,15 +102,23 @@ clausal primitive construction sites route through
 with ten-second Vampire limits passed strict Megalodon certificate checking,
 the primitive-record audit, and the `kernel_v1` metadata audit.
 
-This is an ownership correction, not completion of the primitive builder.
-Several call sites still render the primitive S-expression in
-`MegalodonChecker.cpp` and then hand both the rendered text and structured
-fields to the builder.  The next extraction must replace that duplication with
-rule-specific builder operations for `resolve`, `factor`, `substitute`, and
-`equality_symmetry`.  Those operations should consume parent ids, typed
-clauses/substitutions, and selected literal indices and should produce the
-canonical rendering internally.  New primitive rules must not add another
-generic construction path.
+The immediate follow-up added rule-specific builder operations for `resolve`,
+`factor`, and `equality_symmetry`.  All seventeen sites that construct typed
+`PrimitiveStep` metadata for those rules now pass typed unit references and
+clauses plus selected literal indices; the builder produces both the
+structured fields and canonical Lisp rendering for those records.  A focused
+65-step proof was byte-identical before and after this change, and a second
+20-worker 100-case run passed all three audits.  Other legacy native-export
+branches still assemble primitive-looking text directly in
+`MegalodonChecker.cpp`; they remain migration debt and are not covered by this
+claim.
+
+This remains incomplete.  Nine generic construction sites remain: six
+`substitute` sites, two equality-resolution variants, and one compatibility
+lambda used by URR substitutions.  The next extraction must give substitution
+and equality resolution their own typed builder operations and then remove the
+generic public `primitiveClauseStep` entry point.  New primitive rules must not
+add another generic construction path.
 
 ## Initial Export Fragment
 
