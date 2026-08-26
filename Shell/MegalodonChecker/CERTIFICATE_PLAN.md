@@ -737,3 +737,43 @@ then delete the nonqualifying RUP-search compatibility branch. The separate
 declarative script emitter still has broad formula/Skolem rendering failures;
 repair that renderer independently if checked human-readable scripts become a
 required output surface.
+
+### Closed native proof-term frontier, 2026-08-26
+
+The saved three failures and two timeout cases are now closed in the qualifying
+native checker. No additional producer metadata was needed: the existing
+`typed_v2` scoped Skolem records supplied the exact branch path, ambient scope,
+typed dependencies, witnesses, and target.
+
+The defect was a consumer scope violation. Megalodon's qualifying witness
+expander ignored the ambient depth supplied by the extracted scoped elaborator,
+so an earlier epsilon definition was inserted below a later existential or
+universal binder without the required de Bruijn shift. The expander now honors
+that depth. In addition, every emitted scoped branch is checked and shared as
+an intermediate proof-DAG claim before replay continues with the next emitted
+branch. This is deterministic expansion of producer records, not consumer path
+or substitution search.
+
+The cached five-case frontier passes at 8--86 seconds per case, and a ten-worker
+consumer-only run over the already produced source-linked TH0 batch reports:
+
+```text
+/project/tmp/avatar-sat-resolution-v1-source-linked-100-proof-final-20260826
+PASS 100
+```
+
+That batch contains 77 scoped Skolem records and 27 exact AVATAR refutations.
+The scoped trace mutation suite and extracted unit suite pass at:
+
+```text
+/project/tmp/scoped-skolem-mutation-final-20260826
+/project/tmp/kernel-elab-unit-scoped-fix-20260826
+```
+
+The largest epsilon-localized proof remains expensive, at roughly 1 GB and
+79--86 seconds. A shared normalization-cache experiment did not help and was
+removed. This is now a performance frontier, not an admitted inference or a
+proof failure. Keep the producer-owned certificate and native checked-claim
+path authoritative; do not move this work back into Python or infer missing
+Skolem data in OCaml. The separate simple declarative emitter remains a
+diagnostic output surface and still has independent rendering failures.
