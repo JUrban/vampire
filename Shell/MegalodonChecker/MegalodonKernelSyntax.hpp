@@ -353,6 +353,26 @@ struct RenderedKernelTypedVariable {
   RenderedKernelType type;
 };
 
+struct RenderedKernelScopedSkolemWitness {
+  bool typeVariable = false;
+  std::string symbol;
+  std::string replacedVariable;
+  RenderedKernelType replacedSort;
+  RenderedKernelTerm witnessTerm;
+  std::vector<RenderedKernelTypedVariable> dependencies;
+};
+
+struct RenderedKernelScopedSkolemBranch {
+  std::size_t index = 0;
+  RenderedKernelFormula source;
+  std::vector<std::size_t> path;
+  std::string normalization = "vampire_equality_rebuild_v1";
+  std::vector<RenderedKernelTypedVariable> ambient;
+  std::vector<RenderedKernelTypedVariable> context;
+  std::vector<RenderedKernelScopedSkolemWitness> witnesses;
+  RenderedKernelFormula target;
+};
+
 struct RenderedKernelSkolemParentInstantiation {
   std::size_t index = 0;
   std::string variable;

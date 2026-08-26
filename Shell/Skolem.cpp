@@ -27,6 +27,7 @@
 
 #include "Shell/Statistics.hpp"
 #include "Shell/AnswerLiteralManager.hpp"
+#include "Shell/InferenceRecorder.hpp"
 
 #include "Options.hpp"
 #include "Rectify.hpp"
@@ -72,6 +73,8 @@ FormulaUnit* Skolem::skolemiseImpl (FormulaUnit* unit, bool appify)
   ASS(_introducedSkolemSyms.isEmpty());
   
   _appify = appify;
+  _recording = env.reconstruction
+    || env.options->proof() == Options::Proof::MEGALODON;
   _beingSkolemised=unit;
   _skolimizingDefinitions = UnitList::empty();
   _varOccs.reset();
@@ -80,22 +83,35 @@ FormulaUnit* Skolem::skolemiseImpl (FormulaUnit* unit, bool appify)
   _varDeps.reset();
   _blockLookup.reset();
   _universalScope.reset();
+  _recordingPath.clear();
+  _recordingAmbient.clear();
 
   Formula* f = unit->formula();
   preskolemise(f);
   ASS_EQ(_varOccs.size(),0);
+
+  if (_recording) {
+    InferenceRecorder::instance()->startSkolemRecording(f);
+  }
 
   Formula* g = skolemise(f);
 
   _beingSkolemised = 0;
 
   if (f == g) { // not changed
+    if (_recording) {
+      InferenceRecorder::instance()->discardSkolemRecording();
+    }
     return unit;
   }
 
   UnitList* premiseList = new UnitList(unit,_skolimizingDefinitions); // making sure unit is the last inserted, i.e. first in the list
 
   FormulaUnit* res = new FormulaUnit(g,FormulaClauseTransformationMany(InferenceRule::SKOLEMIZE,premiseList));
+
+  if (_recording) {
+    InferenceRecorder::instance()->endSkolemRecording(res->number(), f, g);
+  }
 
   ASS(_introducedSkolemSyms.isNonEmpty());
   while(_introducedSkolemSyms.isNonEmpty()) {
@@ -337,7 +353,24 @@ Formula* Skolem::skolemise (Formula* f)
           _universalScope.push(v);
         }
       }
+      if (_recording) {
+        VSList::Iterator ambientIterator(f->vars());
+        while (ambientIterator.hasNext()) {
+          auto [variable, sort] = ambientIterator.next();
+          if (sort.isVar() || !sort.term()->shared() || !sort.term()->ground()) {
+            sort = SubstHelper::apply(sort, _subst);
+          }
+          _recordingAmbient.push_back({variable, sort});
+          _recordingPath.push_back(0);
+        }
+      }
       Formula* g = skolemise(f->qarg());
+      if (_recording) {
+        for (unsigned index = 0; index < VSList::length(f->vars()); ++index) {
+          _recordingPath.pop_back();
+          _recordingAmbient.pop_back();
+        }
+      }
       if(env.options->skolemizationType() == Options::SkolemizationType::SYNTACTIC){
         for(int x =0;x<VSList::length(f->vars());x++){
           _universalScope.pop();
@@ -369,6 +402,15 @@ Formula* Skolem::skolemise (Formula* f)
       //a variable list must be of the form [typevars, termvars]
       VSList::FIFO vArgs;
       Formula* before = SubstHelper::apply(f, _subst);
+      std::vector<InferenceRecorder::SkolemInferenceExtra::ScopedVariable> recordedContext;
+      std::vector<InferenceRecorder::SkolemInferenceExtra::ScopedVariable> recordedAmbient;
+      std::vector<InferenceRecorder::SkolemInferenceExtra::Witness> recordedWitnesses;
+
+      if (_recording) {
+        for (const auto& [variable, sort] : _recordingAmbient) {
+          recordedAmbient.push_back({variable, sort});
+        }
+      }
 
       ExVarDepInfo& depInfo = _varDeps.get(f);
 
@@ -428,6 +470,14 @@ Formula* Skolem::skolemise (Formula* f)
         arity++;
       }
 
+      if (_recording) {
+        VSList::Iterator contextIterator(vArgs.list());
+        while (contextIterator.hasNext()) {
+          auto [variable, sort] = contextIterator.next();
+          recordedContext.push_back({variable, sort});
+        }
+      }
+
       for(unsigned i = 0; i < termVars.size() && !_appify; i++){
         allVars.push(termVars[i]);
       }
@@ -469,6 +519,17 @@ Formula* Skolem::skolemise (Formula* f)
         }
         _introducedSkolemSyms.push(make_tuple(skolemisingTypeVar, sym, v));
 
+        if (_recording) {
+          InferenceRecorder::SkolemInferenceExtra::Witness witness;
+          witness.typeVariable = skolemisingTypeVar;
+          witness.symbol = sym;
+          witness.replacedVariable = v;
+          witness.replacedSort = rangeSort;
+          witness.witnessTerm = TermList(skolemTerm);
+          witness.dependencies = recordedContext;
+          recordedWitnesses.push_back(std::move(witness));
+        }
+
         env.statistics->skolemFunctions++;
 
         _subst.bindUnbound(v,skolemTerm);
@@ -498,6 +559,15 @@ Formula* Skolem::skolemise (Formula* f)
 
       {
         Formula* after = SubstHelper::apply(f->qarg(), _subst);
+        if (_recording) {
+          InferenceRecorder::instance()->recordSkolemBranch(
+            before,
+            after,
+            _recordingPath,
+            recordedAmbient,
+            recordedContext,
+            recordedWitnesses);
+        }
         Formula* def = new BinaryFormula(IMP, before, after);
 
         if (arity > 0) {
@@ -549,12 +619,32 @@ FormulaList* Skolem::skolemise (FormulaList* fs)
 
   FormulaList* res = args.top()->tail();
   ASS(FormulaList::isEmpty(res));
+  const std::size_t arity = args.size();
 
   while (args.isNonEmpty()) {
     fs = args.pop();
     Formula* g = fs->head();
     FormulaList* gs = fs->tail();
+    std::size_t recordedPathLength = 0;
+    if (_recording) {
+      const std::size_t child = args.size();
+      // Kernel terms encode n-ary junctions as right-associated binary nodes.
+      for (std::size_t index = 0; index < child; ++index) {
+        _recordingPath.push_back(1);
+        ++recordedPathLength;
+      }
+      if (child + 1 < arity) {
+        _recordingPath.push_back(0);
+        ++recordedPathLength;
+      }
+    }
     Formula* h = skolemise(g);
+    if (_recording) {
+      while (recordedPathLength > 0) {
+        _recordingPath.pop_back();
+        --recordedPathLength;
+      }
+    }
     FormulaList* hs = res; // = skolemise(gs);
 
     if (gs == hs && g == h) {
@@ -566,5 +656,3 @@ FormulaList* Skolem::skolemise (FormulaList* fs)
 
   return res;
 } // Skolem::skolemise
-
-

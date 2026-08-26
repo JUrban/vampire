@@ -90,6 +90,47 @@ void InferenceRecorder::discardEnnfRecording()
   _lastInferenceId = 0;
 }
 
+void InferenceRecorder::startSkolemRecording(Formula* sourceFormula)
+{
+  _lastInferenceId = 0;
+  auto recording = std::make_unique<SkolemInferenceExtra>();
+  recording->sourceFormula = sourceFormula;
+  _currentRecording = std::move(recording);
+}
+
+void InferenceRecorder::recordSkolemBranch(
+  Formula* sourceFormula,
+  Formula* targetFormula,
+  const std::vector<std::size_t>& path,
+  const std::vector<SkolemInferenceExtra::ScopedVariable>& ambient,
+  const std::vector<SkolemInferenceExtra::ScopedVariable>& context,
+  const std::vector<SkolemInferenceExtra::Witness>& witnesses)
+{
+  auto* recording = static_cast<SkolemInferenceExtra*>(_currentRecording.get());
+  ASS(recording);
+  recording->branches.push_back({sourceFormula, targetFormula, path, ambient, context, witnesses});
+}
+
+void InferenceRecorder::endSkolemRecording(
+  unsigned int id,
+  Formula* sourceFormula,
+  Formula* resultFormula)
+{
+  auto* recording = static_cast<SkolemInferenceExtra*>(_currentRecording.get());
+  ASS(recording);
+  ASS(recording->branches.size() > 0);
+  recording->sourceFormula = sourceFormula;
+  recording->resultFormula = resultFormula;
+  _lastInferenceId = id;
+  _inferences[id] = std::move(_currentRecording);
+}
+
+void InferenceRecorder::discardSkolemRecording()
+{
+  _currentRecording.reset();
+  _lastInferenceId = 0;
+}
+
 void InferenceRecorder::populateSubstitutions(std::vector<Substitution> &substMap,
                                               const std::unordered_map<unsigned int, unsigned int> &varMap,
                                               const std::vector<Clause *> premises,

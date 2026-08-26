@@ -76,6 +76,33 @@ public:
       std::vector<std::size_t> activeTrace;
   };
 
+  class SkolemInferenceExtra : public GenericInferenceInformation {
+    public:
+      struct ScopedVariable {
+        unsigned variable = 0;
+        Kernel::TermList sort;
+      };
+      struct Witness {
+        bool typeVariable = false;
+        unsigned symbol = 0;
+        unsigned replacedVariable = 0;
+        Kernel::TermList replacedSort;
+        Kernel::TermList witnessTerm;
+        std::vector<ScopedVariable> dependencies;
+      };
+      struct Branch {
+        Kernel::Formula* sourceFormula = nullptr;
+        Kernel::Formula* targetFormula = nullptr;
+        std::vector<std::size_t> path;
+        std::vector<ScopedVariable> ambient;
+        std::vector<ScopedVariable> context;
+        std::vector<Witness> witnesses;
+      };
+      Kernel::Formula* sourceFormula = nullptr;
+      Kernel::Formula* resultFormula = nullptr;
+      std::vector<Branch> branches;
+  };
+
   // Returns the singleton instance (lazily initialized, thread-safe)
   static InferenceRecorder *instance();
   // Optional: destroy the singleton (if you need controlled teardown)
@@ -150,6 +177,20 @@ public:
     Kernel::Formula* sourceFormula,
     Kernel::Formula* resultFormula);
   void discardEnnfRecording();
+
+  void startSkolemRecording(Kernel::Formula* sourceFormula);
+  void recordSkolemBranch(
+    Kernel::Formula* sourceFormula,
+    Kernel::Formula* targetFormula,
+    const std::vector<std::size_t>& path,
+    const std::vector<SkolemInferenceExtra::ScopedVariable>& ambient,
+    const std::vector<SkolemInferenceExtra::ScopedVariable>& context,
+    const std::vector<SkolemInferenceExtra::Witness>& witnesses);
+  void endSkolemRecording(
+    unsigned int id,
+    Kernel::Formula* sourceFormula,
+    Kernel::Formula* resultFormula);
+  void discardSkolemRecording();
 
   bool reassignLastInferenceInformation(unsigned int id){
     auto source = _inferences.find(_lastInferenceId);

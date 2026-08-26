@@ -201,7 +201,10 @@ private:
     Kernel::Unit* unit,
     std::string& result,
     MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
-  bool certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateSkolemFormulaStepSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
   bool termHasHeadFunctor(Kernel::TermList term, unsigned functor) const;
   bool findTermWithHeadFunctor(Kernel::TermList term, unsigned functor, Kernel::TermList& found) const;
   bool findFormulaTermWithHeadFunctor(Kernel::Formula* formula, unsigned functor, Kernel::TermList& found) const;

@@ -103,6 +103,13 @@ MegalodonKernelSyntax::PrimitiveStep ennfFormulaStep(
   const MegalodonKernelSyntax::RenderedKernelEnnfTrace& trace,
   const MegalodonKernelSyntax::RenderedKernelFormula& result);
 
+MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelFormula& source,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelScopedSkolemBranch>& branches,
+  const MegalodonKernelSyntax::RenderedKernelFormula& result);
+
 MegalodonKernelSyntax::PrimitiveStep cnfLiteralStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,

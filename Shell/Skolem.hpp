@@ -23,6 +23,9 @@
 
 #include "Kernel/Substitution.hpp"
 
+#include <cstddef>
+#include <vector>
+
 namespace Kernel {
   class Unit;
 }
@@ -116,6 +119,9 @@ private:
   UnitList* _skolimizingDefinitions;
 
   bool _appify; // a higher-order solution
+  bool _recording;
+  std::vector<std::size_t> _recordingPath;
+  std::vector<std::pair<unsigned, TermList>> _recordingAmbient;
 
 }; // class Skolem
 

@@ -391,6 +391,113 @@ MegalodonKernelSyntax::PrimitiveStep ennfFormulaStep(
   return step;
 }
 
+MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelFormula& source,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelScopedSkolemBranch>& branches,
+  const MegalodonKernelSyntax::RenderedKernelFormula& result)
+{
+  MegalodonKernelSyntax::PrimitiveStep step;
+  step.rule = "skolem_formula";
+  step.id = id;
+  step.builderOwned = true;
+  step.parentIds = {parent.value};
+  step.hasResultFormula = true;
+  step.resultFormula = result.sexpr;
+  step.fields = {
+    {"source_formula", source.sexpr},
+    {"branch_count", std::to_string(branches.size())},
+    {"path_encoding", "binary_kernel_term_v1"},
+    {"selection_source", "skolem_v1"},
+    {"primitive_lowering_source", "skolem_v1"},
+  };
+
+  std::string renderedBranches = "(branches";
+  for (const auto& branch : branches) {
+    const std::string prefix = "branch_" + std::to_string(branch.index);
+    step.fields.push_back({prefix + "_source", branch.source.sexpr});
+    step.fields.push_back({prefix + "_target", branch.target.sexpr});
+    std::string renderedPath = "(path";
+    for (std::size_t child : branch.path) {
+      renderedPath += " " + std::to_string(child);
+    }
+    renderedPath += ")";
+    step.fields.push_back({prefix + "_path", renderedPath});
+    step.fields.push_back({prefix + "_normalization", branch.normalization});
+    step.fields.push_back({
+      prefix + "_context_count",
+      std::to_string(branch.context.size()),
+    });
+    step.fields.push_back({
+      prefix + "_witness_count",
+      std::to_string(branch.witnesses.size()),
+    });
+
+    renderedBranches +=
+      " (branch (index " + std::to_string(branch.index) + ")"
+      + " " + renderedPath
+      + " (normalization " + quote(branch.normalization) + ")"
+      + " (source (formula " + branch.source.sexpr + "))"
+      + " (ambient";
+    for (const auto& variable : branch.ambient) {
+      renderedBranches +=
+        " (variable " + quote(variable.variable) + " " + variable.type.sexpr + ")";
+    }
+    renderedBranches += ")";
+    renderedBranches += " (context";
+    for (const auto& variable : branch.context) {
+      renderedBranches +=
+        " (variable " + quote(variable.variable) + " " + variable.type.sexpr + ")";
+    }
+    renderedBranches += ") (witnesses";
+    for (std::size_t witnessIndex = 0;
+         witnessIndex < branch.witnesses.size();
+         ++witnessIndex) {
+      const auto& witness = branch.witnesses[witnessIndex];
+      const std::string witnessPrefix =
+        prefix + "_witness_" + std::to_string(witnessIndex);
+      step.fields.push_back({witnessPrefix + "_symbol", witness.symbol});
+      step.fields.push_back({
+        witnessPrefix + "_replaced_variable",
+        witness.replacedVariable,
+      });
+      step.fields.push_back({witnessPrefix + "_sort", witness.replacedSort.sexpr});
+      step.fields.push_back({witnessPrefix + "_term", witness.witnessTerm.sexpr});
+      step.fields.push_back({
+        witnessPrefix + "_dependency_count",
+        std::to_string(witness.dependencies.size()),
+      });
+
+      renderedBranches +=
+        " (witness (index " + std::to_string(witnessIndex) + ")"
+        + " (kind " + quote(witness.typeVariable ? "type" : "term") + ")"
+        + " (symbol " + quote(witness.symbol) + ")"
+        + " (replaced_variable " + quote(witness.replacedVariable) + ")"
+        + " (sort " + witness.replacedSort.sexpr + ")"
+        + " (term " + witness.witnessTerm.sexpr + ")"
+        + " (dependencies";
+      for (const auto& dependency : witness.dependencies) {
+        renderedBranches +=
+          " (variable " + quote(dependency.variable) + " "
+          + dependency.type.sexpr + ")";
+      }
+      renderedBranches += "))";
+    }
+    renderedBranches +=
+      ") (target (formula " + branch.target.sexpr + ")))";
+  }
+  renderedBranches += ")";
+  step.rendered =
+    "(skolem_formula " + quote(id)
+    + " (parent " + quote(parent.value) + ")"
+    + " (source (formula " + source.sexpr + ")) "
+    + renderedBranches
+    + " (result (formula " + result.sexpr + "))"
+    + " (builder \"typed_v2\"))";
+  return step;
+}
+
 MegalodonKernelSyntax::PrimitiveStep cnfFormulaClauseStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,

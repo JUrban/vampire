@@ -632,3 +632,20 @@ choice justification, and continuation boundary; the consumer checks that the
 exported block conclusion contains no local witness. AVATAR scope discharge
 follows. No additional ENNF semantics or Skolem search may be added to the
 Megalodon compatibility monoliths.
+
+### Scoped Skolem checkpoint, 2026-08-26
+
+`Skolem::skolemise` now records a compact typed branch object during the real
+transformation. It contains exact branch source/target formulas, a binary
+kernel-term path, ambient universal variables, dependency context, and typed
+witnesses. `MegalodonKernelBuilder::skolemFormulaStep` is the sole fresh Lisp
+constructor. The `typed_v2` version denotes the binary path encoding; no
+consumer-side subformula search is permitted.
+
+The extracted OCaml checker and elaborator replay this object directly. A
+fresh 100-case source-linked THF gate passes builder-strict checking with 77
+Skolem steps, including nested, dependent, and multiple-witness cases. This is
+not yet E1 completion: final refutation cleanup still depends on Megalodon's
+legacy CPS/proof-object route. The next and only approved Skolem milestone is a
+compact block-discharge constructor in `vampire_kernel_elab.ml`, followed by
+removal of that legacy route from qualifying mode.
