@@ -489,3 +489,51 @@ rectification, and CNF. A focused source-linked 53-step proof term passes, and
 mutated result indices and forall witnesses are rejected. This closes the CNF
 producer/replay search gap for the measured corpus; it is not a claim of 100
 original-development E1 proof terms.
+
+## Corrected Next Gate: Compact Producer-Recorded ENNF
+
+An attempted live-DAG experiment on `and7I` demonstrated why ENNF must be the
+next producer-owned transformation. Its certificate contains an ENNF direct
+record of roughly 73 KB and a Skolem record of roughly 349 KB because complete
+intermediate formulas are repeated in transformation-pair metadata. Replaying
+those formulas claim by claim in Megalodon became slower with formula depth;
+moving that loop into `megalodon.ml` would repeat the architecture rejected by
+the July 20 audit. That experiment was removed rather than committed.
+
+The next qualifying ENNF object must therefore be built while `NNF::ennf`
+performs the transformation. It will contain the source and result formulas
+once, plus a compact constructor tree recording polarity and complete recursive
+coverage. The intended constructors are formula-level operations such as
+literal, junction, implication, negation, quantifier, Boolean term, and
+constant. Children encode traversal; they do not repeat source/result
+subformulas or rely on textual paths reconstructed after the inference.
+
+The ownership boundary is mandatory:
+
+```text
+NNF::ennf transformation event
+  -> typed ENNF trace
+  -> MegalodonKernelBuilder::ennfFormulaStep
+  -> canonical Lisp
+  -> Vampire_kernel_check trace validation
+  -> Vampire_kernel_elab proof constructor
+```
+
+`MegalodonChecker::certificateEnnfFormulaStepSexpr` must stop comparing the
+finished formulas to synthesize bounded pairs. The current depth-16 and
+pair-count-32 collector is compatibility code and must be deleted when the
+typed trace lands. No replacement ENNF semantics may be added to
+`megalodon.ml` or `vampire_cert_v1.ml`.
+
+Acceptance requires a mutation test for every trace constructor and for
+missing children, an exact-lowering metadata gate, the existing 100-case
+20-worker run with Vampire capped at ten seconds, and original-source Qed
+checks through the qualifying path. Certificate size and replay time must be
+reported alongside pass counts so a structurally correct but expansion-heavy
+object is not mistaken for the Ivy-style result.
+
+Skolemization follows the same rule. Existing typed branch contexts and
+choice substitutions are inputs to a scoped producer object. The consumer
+must discharge each witness at a DAG block boundary, and the block conclusion
+must be checked not to contain the local witness. Expanding a complete proof
+tree to remove Skolem symbols is not an approved qualifying implementation.
