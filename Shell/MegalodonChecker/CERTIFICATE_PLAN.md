@@ -448,3 +448,44 @@ builder-strict replay, both primitive audits,
 free-variable map and a recursive ambient-variable map are rejected. This is
 E2/E3 producer and replay evidence; it is not yet 100 original-development E1
 proofs and does not certify the remaining compatibility macro families.
+
+## Exact Producer-Recorded CNF Projection, 2026-08-26
+
+CNF clause extraction now records its complete deterministic projection while
+`CNF::clausify` still owns the source formula. The recursive record contains
+only producer facts: universal variables and their emitted witnesses,
+conjunction branch choices, both sides of each disjunction product, and exact
+source-literal pointers. It does not store a creation-time result index because
+Vampire may reorder clause literals later. The serializer assigns final indices
+once by source-literal pointer identity and requires complete one-to-one result
+coverage.
+
+`MegalodonKernelBuilder::cnfFormulaClauseStep` owns the canonical Lisp and
+indexed metadata. The direct primitive includes source formula, clause
+index/count, projection tree, and result clause. Fresh metadata uses
+`selection_source=cnf_v1`, `primitive_lowering_source=cnf_v1`, and typed-builder
+provenance. No formula-to-CNF candidate list is computed by the exporter.
+
+Megalodon's extracted checker follows the emitted tree and validates every
+source shape, witness, source literal, final result index, and coverage. Its
+extracted elaborator applies exactly those universal eliminations, Church
+conjunction projections, Church disjunction eliminations, and literal
+injections. The former monolithic result-directed universal/branch candidate
+search was deleted.
+
+The final source-linked run is:
+
+```text
+/project/tmp/cnf_exact_invariant_final_100_20260826
+PASS 100/100
+cnf_clause records 482
+cnf_formula_clause primitives 299
+cnf_literal primitives 183
+```
+
+It used 20 workers, ten-second Vampire limits, source-map and builder-strict
+checks, both primitive audits, and exact gates for superposition,
+rectification, and CNF. A focused source-linked 53-step proof term passes, and
+mutated result indices and forall witnesses are rejected. This closes the CNF
+producer/replay search gap for the measured corpus; it is not a claim of 100
+original-development E1 proof terms.

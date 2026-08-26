@@ -100,15 +100,46 @@ struct CNFTransformationInferenceExtra : public InferenceExtra {
   unsigned number;
 };
 
+enum class CNFProjectionKind {
+  FALSE_FORMULA,
+  FORALL,
+  AND_LEFT,
+  AND_RIGHT,
+  OR,
+  LITERAL,
+};
+
+struct CNFProjection {
+  explicit CNFProjection(CNFProjectionKind kind)
+    : kind(kind) {}
+
+  CNFProjectionKind kind;
+  bool hasVariable = false;
+  unsigned variable = 0;
+  Kernel::TermList variableSort;
+  bool hasWitnessTerm = false;
+  Kernel::TermList witnessTerm;
+  Kernel::Literal* sourceLiteral = nullptr;
+  std::vector<CNFProjection> children;
+};
+
 struct CNFClauseInferenceExtra : public InferenceExtra {
-  CNFClauseInferenceExtra(unsigned int parentNumber, unsigned int index, unsigned int count)
-    : parentNumber(parentNumber), index(index), count(count) {}
+  CNFClauseInferenceExtra(
+    unsigned int parentNumber,
+    unsigned int index,
+    unsigned int count,
+    CNFProjection projection)
+    : parentNumber(parentNumber),
+      index(index),
+      count(count),
+      projection(std::move(projection)) {}
 
   void output(std::ostream &out) const override;
 
   unsigned parentNumber;
   unsigned index;
   unsigned count;
+  CNFProjection projection;
 };
 
 struct TwoLiteralRewriteInferenceExtra : public InferenceExtra {

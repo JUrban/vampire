@@ -504,6 +504,20 @@ struct RenderedKernelRectifyRenamings {
   RenderedKernelSubstitution variableMap;
 };
 
+struct RenderedKernelCnfProjection {
+  std::string kind;
+  bool hasVariable = false;
+  std::string variable;
+  bool hasVariableType = false;
+  RenderedKernelType variableType;
+  bool hasWitnessTerm = false;
+  RenderedKernelTerm witnessTerm;
+  bool hasSourceLiteral = false;
+  RenderedKernelLiteral sourceLiteral;
+  std::size_t resultLiteralIndex = 0;
+  std::vector<RenderedKernelCnfProjection> children;
+};
+
 struct RenderedKernelCnfClause {
   RenderedKernelUnitRef sourceUnit;
   std::string sourceKind;
@@ -522,6 +536,8 @@ struct RenderedKernelCnfClause {
   std::size_t clauseIndex = 0;
   bool hasClauseCount = false;
   std::size_t clauseCount = 0;
+  bool hasProjection = false;
+  RenderedKernelCnfProjection projection;
 };
 
 struct RenderedKernelDefinitionParent {
@@ -630,6 +646,7 @@ RenderedKernelClause clause(const std::string& sexpr);
 RenderedKernelSubstitution substitution(const std::string& sexpr);
 RenderedKernelPosition position(const std::string& sexpr);
 RenderedKernelType type(const std::string& sexpr);
+std::string renderCnfProjection(const RenderedKernelCnfProjection& projection);
 std::vector<RenderedKernelLiteral> literals(const std::vector<std::string>& sexprs);
 MigrationField migrationField(const std::string& rendered);
 RenderedKernelPrimitiveParentSubstitution primitiveParentSubstitution(

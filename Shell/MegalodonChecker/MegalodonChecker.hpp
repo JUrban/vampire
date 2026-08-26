@@ -12,10 +12,15 @@
 #include <string>
 #include <vector>
 
+namespace Inferences {
+struct CNFProjection;
+}
+
 namespace Shell {
 
 namespace MegalodonKernelSyntax {
 struct PrimitiveStep;
+struct RenderedKernelCnfProjection;
 struct RenderedKernelRectifyRenamings;
 }
 
@@ -203,8 +208,18 @@ private:
   bool trimTrailingApplications(Kernel::TermList term, unsigned count, Kernel::TermList& trimmed) const;
   bool skolemWitnessTerm(Kernel::Formula* parent, Kernel::Formula* result, unsigned skolemFunctor, unsigned replacedVar, Kernel::TermList& witness, unsigned& parentApplicationCount) const;
   bool decomposeApplicationSpine(Kernel::TermList term, Kernel::TermList& head, std::vector<Kernel::TermList>& args) const;
-  bool certificateCnfLiteralStepSexpr(Kernel::Unit* unit, std::string& result);
-  bool certificateCnfFormulaClauseStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateCnfProjection(
+    const Inferences::CNFProjection& projection,
+    Kernel::Clause* resultClause,
+    MegalodonKernelSyntax::RenderedKernelCnfProjection& result);
+  bool certificateCnfLiteralStepSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
+  bool certificateCnfFormulaClauseStepSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
   bool certificatePredicateDefinitionStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificatePredicateDefinitionFoldStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateDefinitionInputStepSexpr(Kernel::Unit* unit, std::string& result);

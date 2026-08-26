@@ -343,6 +343,53 @@ MegalodonKernelSyntax::PrimitiveStep rectifyFormulaStep(
   return step;
 }
 
+MegalodonKernelSyntax::PrimitiveStep cnfLiteralStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelClause& result)
+{
+  return primitiveClauseStep(
+    "cnf_literal",
+    id,
+    {parent.value},
+    result.sexpr,
+    {},
+    "(cnf_literal " + quote(id)
+      + " (parent " + quote(parent.value) + ")"
+      + " (result " + result.sexpr + "))");
+}
+
+MegalodonKernelSyntax::PrimitiveStep cnfFormulaClauseStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelFormula& source,
+  std::size_t index,
+  std::size_t count,
+  const MegalodonKernelSyntax::RenderedKernelCnfProjection& projection,
+  const MegalodonKernelSyntax::RenderedKernelClause& result)
+{
+  const std::string renderedProjection =
+    MegalodonKernelSyntax::renderCnfProjection(projection);
+  return primitiveClauseStep(
+    "cnf_formula_clause",
+    id,
+    {parent.value},
+    result.sexpr,
+    {
+      {"source_formula", source.sexpr},
+      {"clause_index", std::to_string(index)},
+      {"clause_count", std::to_string(count)},
+      {"cnf_projection", renderedProjection},
+    },
+    "(cnf_formula_clause " + quote(id)
+      + " (parent " + quote(parent.value) + ")"
+      + " (source (formula " + source.sexpr + "))"
+      + " (index " + std::to_string(index) + ")"
+      + " (count " + std::to_string(count) + ")"
+      + " (projection " + renderedProjection + ")"
+      + " (result " + result.sexpr + "))");
+}
+
 namespace {
 
 using KernelSymbol = std::pair<bool, unsigned>;

@@ -2929,7 +2929,95 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(Kernel::Unit* unit, std
   return true;
 }
 
-bool MegalodonChecker::certificateCnfLiteralStepSexpr(Kernel::Unit* unit, std::string& result)
+bool MegalodonChecker::certificateCnfProjection(
+  const Inferences::CNFProjection& projection,
+  Kernel::Clause* resultClause,
+  MegalodonKernelSyntax::RenderedKernelCnfProjection& result)
+{
+  std::set<unsigned> usedResultLiterals;
+  std::function<bool(
+    const Inferences::CNFProjection&,
+    MegalodonKernelSyntax::RenderedKernelCnfProjection&)> render =
+    [&](const Inferences::CNFProjection& source,
+        MegalodonKernelSyntax::RenderedKernelCnfProjection& target) -> bool {
+      target = {};
+      switch (source.kind) {
+      case Inferences::CNFProjectionKind::FALSE_FORMULA:
+        target.kind = "false";
+        return source.children.empty();
+      case Inferences::CNFProjectionKind::LITERAL: {
+        if (source.sourceLiteral == nullptr || !source.children.empty()) {
+          return false;
+        }
+        target.kind = "literal";
+        std::string sourceLiteral;
+        if (!certificateLiteralSexpr(source.sourceLiteral, sourceLiteral)) {
+          return false;
+        }
+        target.hasSourceLiteral = true;
+        target.sourceLiteral = MegalodonKernelSyntax::literal(sourceLiteral);
+        for (unsigned index = 0; index < resultClause->length(); ++index) {
+          if (usedResultLiterals.find(index) == usedResultLiterals.end()
+            && (*resultClause)[index] == source.sourceLiteral) {
+            target.resultLiteralIndex = index;
+            usedResultLiterals.insert(index);
+            return true;
+          }
+        }
+        return false;
+      }
+      case Inferences::CNFProjectionKind::FORALL: {
+        if (!source.hasVariable || source.children.size() != 1) {
+          return false;
+        }
+        target.kind = "forall";
+        target.hasVariable = true;
+        target.variable = variableName(source.variable);
+        std::string rendered;
+        if (!certificateTypeSexpr(source.variableSort, rendered)) {
+          return false;
+        }
+        target.hasVariableType = true;
+        target.variableType = MegalodonKernelSyntax::type(rendered);
+        if (source.hasWitnessTerm) {
+          if (!certificateTermSexpr(source.witnessTerm, rendered)) {
+            return false;
+          }
+          target.hasWitnessTerm = true;
+          target.witnessTerm = MegalodonKernelSyntax::term(rendered);
+        }
+        target.children.resize(1);
+        return render(source.children[0], target.children[0]);
+      }
+      case Inferences::CNFProjectionKind::AND_LEFT:
+      case Inferences::CNFProjectionKind::AND_RIGHT:
+        if (source.children.size() != 1) {
+          return false;
+        }
+        target.kind = source.kind == Inferences::CNFProjectionKind::AND_LEFT
+          ? "and_left"
+          : "and_right";
+        target.children.resize(1);
+        return render(source.children[0], target.children[0]);
+      case Inferences::CNFProjectionKind::OR:
+        if (source.children.size() != 2) {
+          return false;
+        }
+        target.kind = "or";
+        target.children.resize(2);
+        return render(source.children[0], target.children[0])
+          && render(source.children[1], target.children[1]);
+      }
+      return false;
+    };
+  return render(projection, result)
+    && usedResultLiterals.size() == resultClause->length();
+}
+
+bool MegalodonChecker::certificateCnfLiteralStepSexpr(
+  Kernel::Unit* unit,
+  std::string& result,
+  MegalodonKernelSyntax::PrimitiveStep* primitiveStep)
 {
   if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::CLAUSIFY) {
     return false;
@@ -2956,13 +3044,21 @@ bool MegalodonChecker::certificateCnfLiteralStepSexpr(Kernel::Unit* unit, std::s
   if (!certificateClauseSexpr(unit->asClause(), clause)) {
     return false;
   }
-  result = "(cnf_literal " + sexprQuote("u" + std::to_string(unit->number()))
-    + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
-    + " (result " + clause + "))";
+  auto built = MegalodonKernelBuilder::cnfLiteralStep(
+    "u" + std::to_string(unit->number()),
+    MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number())),
+    MegalodonKernelSyntax::clause(clause));
+  result = built.rendered;
+  if (primitiveStep != nullptr) {
+    *primitiveStep = std::move(built);
+  }
   return true;
 }
 
-bool MegalodonChecker::certificateCnfFormulaClauseStepSexpr(Kernel::Unit* unit, std::string& result)
+bool MegalodonChecker::certificateCnfFormulaClauseStepSexpr(
+  Kernel::Unit* unit,
+  std::string& result,
+  MegalodonKernelSyntax::PrimitiveStep* primitiveStep)
 {
   if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::CLAUSIFY) {
     return false;
@@ -2980,15 +3076,32 @@ bool MegalodonChecker::certificateCnfFormulaClauseStepSexpr(Kernel::Unit* unit, 
     return false;
   }
   const auto* clauseExtra = static_cast<const Inferences::CNFClauseInferenceExtra*>(extra);
+  std::string source;
+  if (!certificateFormulaTermSexpr(
+        static_cast<Kernel::FormulaUnit*>(parent)->formula(), source)) {
+    return false;
+  }
   std::string clause;
   if (!certificateClauseSexpr(unit->asClause(), clause)) {
     return false;
   }
-  result = "(cnf_formula_clause " + sexprQuote("u" + std::to_string(unit->number()))
-    + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
-    + " (index " + std::to_string(clauseExtra->index) + ")"
-    + " (count " + std::to_string(clauseExtra->count) + ")"
-    + " (result " + clause + "))";
+  MegalodonKernelSyntax::RenderedKernelCnfProjection projection;
+  if (!certificateCnfProjection(
+        clauseExtra->projection, unit->asClause(), projection)) {
+    return false;
+  }
+  auto built = MegalodonKernelBuilder::cnfFormulaClauseStep(
+    "u" + std::to_string(unit->number()),
+    MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number())),
+    MegalodonKernelSyntax::formula(source),
+    clauseExtra->index,
+    clauseExtra->count,
+    projection,
+    MegalodonKernelSyntax::clause(clause));
+  result = built.rendered;
+  if (primitiveStep != nullptr) {
+    *primitiveStep = std::move(built);
+  }
   return true;
 }
 
@@ -10382,6 +10495,17 @@ bool MegalodonChecker::certificateNativeStepSexpr(
     };
     return true;
   };
+  auto certificateCnfPrimitiveStep = [&]() {
+    MegalodonKernelSyntax::PrimitiveStep primitiveStep;
+    if (!certificateCnfLiteralStepSexpr(unit, result, &primitiveStep)
+      && !certificateCnfFormulaClauseStepSexpr(unit, result, &primitiveStep)) {
+      return false;
+    }
+    _certificateNativePrimitiveStepsByUnit[unit->number()] = {
+      std::move(primitiveStep),
+    };
+    return true;
+  };
   try {
     return certificateInputStepSexpr(unit, result)
       || certificateFormulaInputStepSexpr(unit, result)
@@ -10393,8 +10517,7 @@ bool MegalodonChecker::certificateNativeStepSexpr(
       || certificateFoolFormulaStepSexpr(unit, result)
       || certificateEnnfFormulaStepSexpr(unit, result)
       || certificateSkolemFormulaStepSexpr(unit, result)
-      || certificateCnfLiteralStepSexpr(unit, result)
-      || certificateCnfFormulaClauseStepSexpr(unit, result)
+      || certificateCnfPrimitiveStep()
       || certificatePredicateDefinitionStepSexpr(unit, result)
       || certificatePredicateDefinitionFoldStepSexpr(unit, result)
       || certificateDefinitionInputStepSexpr(unit, result)
@@ -13224,6 +13347,26 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           cnfClause.clauseIndex = clauseExtra->index;
           cnfClause.hasClauseCount = true;
           cnfClause.clauseCount = clauseExtra->count;
+          if (!certificateCnfProjection(
+                clauseExtra->projection,
+                u->asClause(),
+                cnfClause.projection)) {
+            INVALID_OPERATION("exact CNF projection serialization failed");
+          }
+          cnfClause.hasProjection = true;
+        } else {
+          INVALID_OPERATION("CNF clause has no producer projection record");
+        }
+        kernelFields.push_back("selection_source=cnf_v1");
+        kernelFields.push_back("primitive_lowering_source=cnf_v1");
+        auto primitiveSteps =
+          _certificateNativePrimitiveStepsByUnit.find(u->number());
+        if (primitiveSteps == _certificateNativePrimitiveStepsByUnit.end()
+          || !MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
+            kernelFields,
+            primitiveSteps->second,
+            "u" + std::to_string(u->number()))) {
+          INVALID_OPERATION("typed CNF primitive serialization failed");
         }
         emitKernelV1(
           "cnf_clause",

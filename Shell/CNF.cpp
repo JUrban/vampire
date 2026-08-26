@@ -25,8 +25,211 @@
 #include "Shell/Options.hpp"
 #include "CNF.hpp"
 
+#include <set>
+#include <vector>
+
 using namespace Kernel;
 using namespace Shell;
+
+namespace {
+
+using Inferences::CNFProjection;
+using Inferences::CNFProjectionKind;
+
+std::vector<Formula*> cnfProjectionArguments(Formula* formula)
+{
+  std::vector<Formula*> result;
+  FormulaList::Iterator iterator(formula->args());
+  while (iterator.hasNext()) {
+    result.push_back(iterator.next());
+  }
+  return result;
+}
+
+std::size_t cnfProjectionClauseCount(Formula* formula)
+{
+  switch (formula->connective()) {
+  case LITERAL:
+  case FALSE:
+    return 1;
+  case FORALL:
+    return cnfProjectionClauseCount(formula->qarg());
+  case AND: {
+    std::size_t count = 0;
+    for (Formula* argument : cnfProjectionArguments(formula)) {
+      count += cnfProjectionClauseCount(argument);
+    }
+    return count;
+  }
+  case OR: {
+    std::size_t count = 1;
+    for (Formula* argument : cnfProjectionArguments(formula)) {
+      count *= cnfProjectionClauseCount(argument);
+    }
+    return count;
+  }
+  default:
+    ASSERTION_VIOLATION_REP(formula->toString());
+  }
+}
+
+CNFProjection cnfProjectionForFormula(
+  Formula* formula,
+  std::size_t clauseIndex,
+  const std::set<unsigned>& resultVariables);
+
+CNFProjection cnfProjectionForAndArguments(
+  const std::vector<Formula*>& arguments,
+  std::size_t first,
+  std::size_t selected,
+  std::size_t clauseIndex,
+  const std::set<unsigned>& resultVariables)
+{
+  ASS_L(first, arguments.size());
+  if (first + 1 == arguments.size()) {
+    ASS_EQ(first, selected);
+    return cnfProjectionForFormula(
+      arguments[first],
+      clauseIndex,
+      resultVariables);
+  }
+  if (first == selected) {
+    CNFProjection projection(CNFProjectionKind::AND_LEFT);
+    projection.children.push_back(cnfProjectionForFormula(
+      arguments[first],
+      clauseIndex,
+      resultVariables));
+    return projection;
+  }
+  CNFProjection projection(CNFProjectionKind::AND_RIGHT);
+  projection.children.push_back(cnfProjectionForAndArguments(
+    arguments,
+    first + 1,
+    selected,
+    clauseIndex,
+    resultVariables));
+  return projection;
+}
+
+CNFProjection cnfProjectionForOrArguments(
+  const std::vector<Formula*>& arguments,
+  std::size_t first,
+  std::size_t clauseIndex,
+  const std::set<unsigned>& resultVariables)
+{
+  ASS_L(first, arguments.size());
+  if (first + 1 == arguments.size()) {
+    return cnfProjectionForFormula(
+      arguments[first],
+      clauseIndex,
+      resultVariables);
+  }
+  const std::size_t leftCount =
+    cnfProjectionClauseCount(arguments[first]);
+  ASS_G(leftCount, 0);
+  CNFProjection projection(CNFProjectionKind::OR);
+  projection.children.push_back(cnfProjectionForFormula(
+    arguments[first],
+    clauseIndex % leftCount,
+    resultVariables));
+  projection.children.push_back(cnfProjectionForOrArguments(
+    arguments,
+    first + 1,
+    clauseIndex / leftCount,
+    resultVariables));
+  return projection;
+}
+
+CNFProjection cnfProjectionForFormula(
+  Formula* formula,
+  std::size_t clauseIndex,
+  const std::set<unsigned>& resultVariables)
+{
+  ASS_L(clauseIndex, cnfProjectionClauseCount(formula));
+  switch (formula->connective()) {
+  case FALSE:
+    ASS_EQ(clauseIndex, 0);
+    return CNFProjection(CNFProjectionKind::FALSE_FORMULA);
+  case LITERAL: {
+    ASS_EQ(clauseIndex, 0);
+    CNFProjection projection(CNFProjectionKind::LITERAL);
+    projection.sourceLiteral = formula->literal();
+    return projection;
+  }
+  case FORALL: {
+    CNFProjection projection = cnfProjectionForFormula(
+      formula->qarg(),
+      clauseIndex,
+      resultVariables);
+    std::vector<std::pair<unsigned, TermList>> variables;
+    VSList::Iterator iterator(formula->vars());
+    while (iterator.hasNext()) {
+      variables.push_back(iterator.next());
+    }
+    for (auto iterator = variables.rbegin(); iterator != variables.rend(); ++iterator) {
+      CNFProjection quantified(CNFProjectionKind::FORALL);
+      quantified.hasVariable = true;
+      quantified.variable = iterator->first;
+      quantified.variableSort = iterator->second;
+      if (resultVariables.find(iterator->first) != resultVariables.end()) {
+        quantified.hasWitnessTerm = true;
+        quantified.witnessTerm = TermList::var(iterator->first);
+      }
+      quantified.children.push_back(std::move(projection));
+      projection = std::move(quantified);
+    }
+    return projection;
+  }
+  case AND: {
+    const auto arguments = cnfProjectionArguments(formula);
+    std::size_t selected = 0;
+    std::size_t selectedIndex = clauseIndex;
+    while (selected < arguments.size()) {
+      const std::size_t count = cnfProjectionClauseCount(arguments[selected]);
+      if (selectedIndex < count) {
+        break;
+      }
+      selectedIndex -= count;
+      ++selected;
+    }
+    ASS_L(selected, arguments.size());
+    return cnfProjectionForAndArguments(
+      arguments,
+      0,
+      selected,
+      selectedIndex,
+      resultVariables);
+  }
+  case OR: {
+    const auto arguments = cnfProjectionArguments(formula);
+    return cnfProjectionForOrArguments(
+      arguments,
+      0,
+      clauseIndex,
+      resultVariables);
+  }
+  default:
+    ASSERTION_VIOLATION_REP(formula->toString());
+  }
+}
+
+CNFProjection cnfProjection(
+  Formula* formula,
+  std::size_t clauseIndex,
+  Clause* resultClause)
+{
+  std::set<unsigned> resultVariables;
+  auto variableIterator = resultClause->getVariableIterator();
+  while (variableIterator.hasNext()) {
+    resultVariables.insert(variableIterator.next());
+  }
+  return cnfProjectionForFormula(
+    formula,
+    clauseIndex,
+    resultVariables);
+}
+
+}
 
 /**
  * Initialise the CNF object.
@@ -62,7 +265,13 @@ void CNF::clausify (Unit* unit,Stack<Clause*>& stack)
       stack.push(Clause::empty(FormulaClauseTransformation(InferenceRule::CLAUSIFY,unit)));
       if(env.options->proofExtra() == Options::ProofExtra::LEAN){
         env.proofExtra.insert(unit, new Inferences::CNFTransformationInferenceExtra(1));
-        env.proofExtra.insert(stack[firstResult], new Inferences::CNFClauseInferenceExtra(unit->number(), 0, 1));
+        env.proofExtra.insert(
+          stack[firstResult],
+          new Inferences::CNFClauseInferenceExtra(
+            unit->number(),
+            0,
+            1,
+            cnfProjection(f, 0, stack[firstResult])));
       }
     }
     return;
@@ -73,7 +282,14 @@ void CNF::clausify (Unit* unit,Stack<Clause*>& stack)
     size_t count = _result->size() - firstResult;
     env.proofExtra.insert(unit, new Inferences::CNFTransformationInferenceExtra(count));
     for (size_t i = 0; i < count; ++i) {
-      env.proofExtra.insert((*_result)[firstResult + i], new Inferences::CNFClauseInferenceExtra(unit->number(), i, count));
+      Clause* clause = (*_result)[firstResult + i];
+      env.proofExtra.insert(
+        clause,
+        new Inferences::CNFClauseInferenceExtra(
+          unit->number(),
+          i,
+          count,
+          cnfProjection(f, i, clause)));
     }
   }
 } // CNF::clausify()

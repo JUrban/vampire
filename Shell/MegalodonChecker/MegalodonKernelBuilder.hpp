@@ -96,6 +96,20 @@ MegalodonKernelSyntax::PrimitiveStep rectifyFormulaStep(
   const MegalodonKernelSyntax::RenderedKernelFormula& result,
   const MegalodonKernelSyntax::RenderedKernelRectifyRenamings& renamings);
 
+MegalodonKernelSyntax::PrimitiveStep cnfLiteralStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelClause& result);
+
+MegalodonKernelSyntax::PrimitiveStep cnfFormulaClauseStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelFormula& source,
+  std::size_t index,
+  std::size_t count,
+  const MegalodonKernelSyntax::RenderedKernelCnfProjection& projection,
+  const MegalodonKernelSyntax::RenderedKernelClause& result);
+
 std::vector<MegalodonKernelSyntax::RenderedKernelSkolemBranchScopeSymbol>
 sourceSignatureScope(
   Kernel::Formula* formula,

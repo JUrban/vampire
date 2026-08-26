@@ -7,6 +7,27 @@
 namespace Shell {
 namespace MegalodonKernelSyntax {
 
+namespace {
+
+std::string quoteCnfAtom(const std::string& value)
+{
+  std::string result = "\"";
+  for (char ch : value) {
+    switch (ch) {
+    case '\\': result += "\\\\"; break;
+    case '"': result += "\\\""; break;
+    case '\n': result += "\\n"; break;
+    case '\r': result += "\\r"; break;
+    case '\t': result += "\\t"; break;
+    default: result += ch; break;
+    }
+  }
+  result += '"';
+  return result;
+}
+
+}
+
 const std::string& schema()
 {
   static const std::string value = "prover9-small-kernel-v1";
@@ -88,6 +109,35 @@ std::vector<std::string> requiredPrimitivesForRule(const std::string& rule)
     }
   }
   return {};
+}
+
+std::string renderCnfProjection(const RenderedKernelCnfProjection& projection)
+{
+  if (projection.kind == "false") {
+    return "(false)";
+  }
+  if (projection.kind == "literal") {
+    return "(literal (source " + projection.sourceLiteral.sexpr + ")"
+      + " (result_index "
+      + std::to_string(projection.resultLiteralIndex) + "))";
+  }
+  if (projection.kind == "forall") {
+    const std::string witness = projection.hasWitnessTerm
+      ? "(witness (term " + projection.witnessTerm.sexpr + "))"
+      : "(witness canonical)";
+    return "(forall (variable " + quoteCnfAtom(projection.variable) + ")"
+      + " (type " + projection.variableType.sexpr + ") "
+      + witness + " " + renderCnfProjection(projection.children.at(0)) + ")";
+  }
+  if (projection.kind == "and_left" || projection.kind == "and_right") {
+    return "(" + projection.kind + " "
+      + renderCnfProjection(projection.children.at(0)) + ")";
+  }
+  if (projection.kind == "or") {
+    return "(or " + renderCnfProjection(projection.children.at(0))
+      + " " + renderCnfProjection(projection.children.at(1)) + ")";
+  }
+  return "(invalid_cnf_projection)";
 }
 
 std::vector<std::string> supportedRules()
@@ -1259,6 +1309,10 @@ void appendCnfClauseFields(
   }
   if (cnfClause.hasClauseCount) {
     fields.push_back("clause_count=" + std::to_string(cnfClause.clauseCount));
+  }
+  if (cnfClause.hasProjection) {
+    fields.push_back(
+      "cnf_projection=" + renderCnfProjection(cnfClause.projection));
   }
 }
 
