@@ -602,3 +602,33 @@ through the extracted boundary, typed traces must be mandatory in qualifying
 mode, and constructor-complete mutation tests must pass. The next producer
 object after that is scoped Skolemization; no consumer-side proof-tree
 expansion is approved as a substitute.
+
+## ENNF Consumer Extraction Complete, 2026-08-26
+
+The four remaining ENNF conditions in the preceding paragraph are now
+satisfied. Megalodon's extracted checker owns deterministic ENNF result and
+trace validation, and its extracted elaborator owns the proof-term constructor.
+The compatibility importer delegates through a thin callback adapter. Qualifying
+typed-builder mode requires exact source plus trace and rejects legacy pair
+records. The extracted unit suite has positive and mutation coverage for all
+twelve trace constructors.
+
+The final gate regenerated all 100 certificates from the source-linked THF
+corpus using 20 Vampire workers and a ten-second limit. All 100 passed
+builder-strict checking, all 100 then passed Megalodon preprocessing proof-term
+checking with 20 workers, and all primitive/metadata audits passed. The corpus
+contains 169 ENNF records, all compact traces, with no legacy ENNF pair lists
+and no Vampire-derived source assumptions:
+
+```text
+/project/tmp/ennf-trace-source-linked-100-20260826
+/project/tmp/ennf-trace-source-linked-100-pfcheck-final2-20260826
+```
+
+This closes the ENNF E2/E3 gate, not the original-development E1 gate. Work now
+moves to the scoped Skolem producer object. Its acceptance condition remains:
+the producer records the existential source, dependency context, witness,
+choice justification, and continuation boundary; the consumer checks that the
+exported block conclusion contains no local witness. AVATAR scope discharge
+follows. No additional ENNF semantics or Skolem search may be added to the
+Megalodon compatibility monoliths.
