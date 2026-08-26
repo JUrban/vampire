@@ -370,6 +370,12 @@ struct RenderedKernelSkolemBranchProposition {
   RenderedKernelFormula formula;
 };
 
+struct RenderedKernelSkolemBranchScopeSymbol {
+  std::size_t index = 0;
+  std::string symbol;
+  std::string role;
+};
+
 struct RenderedKernelSkolemBranchChoice {
   std::size_t index = 0;
   std::string symbol;
@@ -383,6 +389,7 @@ struct RenderedKernelSkolemBranchChoice {
   std::string transportRule;
   bool hasWitnessedBody = false;
   RenderedKernelFormula witnessedBody;
+  std::vector<RenderedKernelSkolemBranchScopeSymbol> scopeSymbols;
 };
 
 struct RenderedKernelSkolemMacroEdge {
@@ -432,6 +439,7 @@ struct RenderedKernelSkolemMacroEdge {
   std::vector<RenderedKernelSkolemIntroducedSymbol> contractIntroducedSymbols;
   std::vector<RenderedKernelSkolemBranchProposition> contractBranchPropositions;
   std::vector<RenderedKernelSkolemBranchChoice> contractBranchChoices;
+  std::vector<RenderedKernelSkolemBranchScopeSymbol> sourceScopeSymbols;
 };
 
 struct RenderedKernelSkolemProofContract {

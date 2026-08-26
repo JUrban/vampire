@@ -27,6 +27,7 @@
 #include "Saturation/Splitter.hpp"
 #include "Shell/InferenceRecorder.hpp"
 #include "Shell/Options.hpp"
+#include "Shell/MegalodonChecker/MegalodonKernelBuilder.hpp"
 #include "Shell/MegalodonChecker/MegalodonKernelSyntax.hpp"
 #include "Shell/TPTPPrinter.hpp"
 #include "Shell/TweeGoalTransformation.hpp"
@@ -15235,6 +15236,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                 if (certificateFormulaTermSexpr(edgeBody->left(), edgeSource)) {
                   edge.hasSource = true;
                   edge.source = MegalodonKernelSyntax::formula(edgeSource);
+                  edge.sourceScopeSymbols =
+                    MegalodonKernelBuilder::sourceSignatureScope(
+                      edgeBody->left(),
+                      [&](unsigned functor) { return functionName(functor); },
+                      [&](unsigned predicate) { return predicateName(predicate); });
                   setSkolemMacroEdgeSourceShape(edge, edgeBody->left());
                   edge.sourceQuantifiedVariables = quantifiedVariables(edgeBody->left());
                   edge.sourceFreeVariables = freeVariables(edgeBody->left());
@@ -15659,6 +15665,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             choice.transportRule = "choice_witness_substitution";
             choice.hasWitnessedBody = true;
             choice.witnessedBody = MegalodonKernelSyntax::formula(witnessedBody);
+            choice.scopeSymbols = edge.sourceScopeSymbols;
             edge.contractBranchChoices.push_back(choice);
             earlierChoiceReplacements.push_back(
               std::make_pair(

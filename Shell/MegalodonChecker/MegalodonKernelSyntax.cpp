@@ -1084,6 +1084,17 @@ void appendSkolemMacroEdgeFields(
         if (choice.hasWitnessedBody) {
           fields.push_back(choicePrefix + "_witnessed_body=" + choice.witnessedBody.sexpr);
         }
+        fields.push_back(
+          choicePrefix + "_scope_symbol_count="
+          + std::to_string(choice.scopeSymbols.size()));
+        for (const RenderedKernelSkolemBranchScopeSymbol& scopeSymbol :
+             choice.scopeSymbols) {
+          const std::string scopePrefix =
+            choicePrefix + "_scope_symbol_"
+            + std::to_string(scopeSymbol.index);
+          fields.push_back(scopePrefix + "_symbol=" + scopeSymbol.symbol);
+          fields.push_back(scopePrefix + "_role=" + scopeSymbol.role);
+        }
       }
       if (edge.hasSource) {
         fields.push_back(prefix + "_contract_source_formula=" + edge.source.sexpr);
