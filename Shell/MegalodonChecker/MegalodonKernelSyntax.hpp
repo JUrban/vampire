@@ -518,6 +518,12 @@ struct RenderedKernelCnfProjection {
   std::vector<RenderedKernelCnfProjection> children;
 };
 
+struct RenderedKernelEnnfTrace {
+  std::string sourceConnective;
+  bool polarity = true;
+  std::vector<RenderedKernelEnnfTrace> children;
+};
+
 struct RenderedKernelCnfClause {
   RenderedKernelUnitRef sourceUnit;
   std::string sourceKind;
@@ -647,6 +653,7 @@ RenderedKernelSubstitution substitution(const std::string& sexpr);
 RenderedKernelPosition position(const std::string& sexpr);
 RenderedKernelType type(const std::string& sexpr);
 std::string renderCnfProjection(const RenderedKernelCnfProjection& projection);
+std::string renderEnnfTrace(const RenderedKernelEnnfTrace& trace);
 std::vector<RenderedKernelLiteral> literals(const std::vector<std::string>& sexprs);
 MigrationField migrationField(const std::string& rendered);
 RenderedKernelPrimitiveParentSubstitution primitiveParentSubstitution(

@@ -35,6 +35,61 @@ InferenceRecorder *InferenceRecorder::instance()
   return _inst;
 }
 
+void InferenceRecorder::startEnnfRecording(Formula* sourceFormula)
+{
+  _lastInferenceId = 0;
+  auto recording = std::make_unique<EnnfInferenceExtra>();
+  recording->sourceFormula = sourceFormula;
+  _currentRecording = std::move(recording);
+}
+
+std::size_t InferenceRecorder::startEnnfTraceNode(
+  Formula* sourceFormula,
+  bool polarity)
+{
+  auto* recording = static_cast<EnnfInferenceExtra*>(_currentRecording.get());
+  ASS(recording);
+  const std::size_t index = recording->trace.size();
+  recording->trace.push_back({sourceFormula, nullptr, polarity, {}});
+  if (!recording->activeTrace.empty()) {
+    recording->trace[recording->activeTrace.back()].children.push_back(index);
+  }
+  recording->activeTrace.push_back(index);
+  return index;
+}
+
+void InferenceRecorder::finishEnnfTraceNode(
+  std::size_t index,
+  Formula* resultFormula)
+{
+  auto* recording = static_cast<EnnfInferenceExtra*>(_currentRecording.get());
+  ASS(recording);
+  ASS(!recording->activeTrace.empty());
+  ASS_EQ(recording->activeTrace.back(), index);
+  recording->trace[index].resultFormula = resultFormula;
+  recording->activeTrace.pop_back();
+}
+
+void InferenceRecorder::endEnnfRecording(
+  unsigned int id,
+  Formula* sourceFormula,
+  Formula* resultFormula)
+{
+  auto* recording = static_cast<EnnfInferenceExtra*>(_currentRecording.get());
+  ASS(recording);
+  ASS(recording->activeTrace.empty());
+  recording->sourceFormula = sourceFormula;
+  recording->resultFormula = resultFormula;
+  _lastInferenceId = id;
+  _inferences[id] = std::move(_currentRecording);
+}
+
+void InferenceRecorder::discardEnnfRecording()
+{
+  _currentRecording.reset();
+  _lastInferenceId = 0;
+}
+
 void InferenceRecorder::populateSubstitutions(std::vector<Substitution> &substMap,
                                               const std::unordered_map<unsigned int, unsigned int> &varMap,
                                               const std::vector<Clause *> premises,

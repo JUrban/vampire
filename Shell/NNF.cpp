@@ -20,6 +20,7 @@
 #include "Kernel/Term.hpp"
 
 #include "Shell/Options.hpp"
+#include "Shell/InferenceRecorder.hpp"
 
 #include "NNF.hpp"
 
@@ -37,12 +38,21 @@ FormulaUnit* NNF::ennf(FormulaUnit* unit)
   ASS(! unit->isClause());
 
   Formula* f = unit->formula();
+  if (env.reconstruction) {
+    InferenceRecorder::instance()->startEnnfRecording(f);
+  }
   Formula* g = ennf(f,true);
   if (f == g) { // not changed
+    if (env.reconstruction) {
+      InferenceRecorder::instance()->discardEnnfRecording();
+    }
     return unit;
   }
 
   FormulaUnit* res = new FormulaUnit(g,FormulaClauseTransformation(InferenceRule::ENNF,unit));
+  if (env.reconstruction) {
+    InferenceRecorder::instance()->endEnnfRecording(res->number(), f, g);
+  }
 
   if (env.options->showPreprocessing()) {
     std::cout << "[PP] ennf in: " << unit->toString() << std::endl;
@@ -90,6 +100,16 @@ FormulaUnit* NNF::nnf(FormulaUnit* unit)
  */
 Formula* NNF::ennf (Formula* f, bool polarity)
 {
+  const bool recording = env.reconstruction;
+  const std::size_t traceIndex = recording
+    ? InferenceRecorder::instance()->startEnnfTraceNode(f, polarity)
+    : 0;
+  auto finish = [&](Formula* result) {
+    if (recording) {
+      InferenceRecorder::instance()->finishEnnfTraceNode(traceIndex, result);
+    }
+    return result;
+  };
   Connective c = f->connective();
   switch (c) {
   case LITERAL:
@@ -104,9 +124,9 @@ Formula* NNF::ennf (Formula* f, bool polarity)
       newLit = polarity ? newLit : Literal::complementaryLiteral(newLit);
 
       if (newLit == lit) {
-        return f;
+        return finish(f);
       } else {
-        return new AtomicFormula(newLit);
+        return finish(new AtomicFormula(newLit));
       }
     }
 
@@ -116,12 +136,12 @@ Formula* NNF::ennf (Formula* f, bool polarity)
       FormulaList* fs = f->args();
       FormulaList* gs = ennf(fs,polarity);
       if (fs == gs) {
-	return f;
+	return finish(f);
       }
       if (polarity) {
- 	return new JunctionFormula(c,gs);
+	return finish(new JunctionFormula(c,gs));
       }
-      return new JunctionFormula(c == AND ? OR : AND,gs);
+      return finish(new JunctionFormula(c == AND ? OR : AND,gs));
     }
       
   case IMP: 
@@ -129,7 +149,7 @@ Formula* NNF::ennf (Formula* f, bool polarity)
       Formula* l = ennf(f->left(),! polarity);
       Formula* r = ennf(f->right(),polarity);
       FormulaList* args = new FormulaList(l,new FormulaList(r));
-      return new JunctionFormula(polarity ? OR : AND,args);
+      return finish(new JunctionFormula(polarity ? OR : AND,args));
     }
     
   case IFF: 
@@ -141,15 +161,15 @@ Formula* NNF::ennf (Formula* f, bool polarity)
       Formula* rr = ennf(r,true);
       if (polarity) {
 	if (l == ll && r == rr) { // nothing has changed
-	  return f;
+		  return finish(f);
 	}
-	return new BinaryFormula(c, ll, rr);
+		return finish(new BinaryFormula(c, ll, rr));
       }
-      return new BinaryFormula(c == XOR ? IFF : XOR, ll, rr);
+      return finish(new BinaryFormula(c == XOR ? IFF : XOR, ll, rr));
     }
 
     case NOT:
-      return ennf(f->uarg(),!polarity);
+      return finish(ennf(f->uarg(),!polarity));
 
   case FORALL:
   case EXISTS: 
@@ -157,13 +177,13 @@ Formula* NNF::ennf (Formula* f, bool polarity)
       Formula* g = f->qarg();
       Formula* gg = ennf(g,polarity);
       if (g == gg) {
-	return f;
+		return finish(f);
       }
       if (polarity) {
-	return new QuantifiedFormula(c, f->vars(), gg);
+		return finish(new QuantifiedFormula(c, f->vars(), gg));
       }
-      return new QuantifiedFormula(c == EXISTS ? FORALL : EXISTS,
-				   f->vars(), gg);
+      return finish(new QuantifiedFormula(c == EXISTS ? FORALL : EXISTS,
+				   f->vars(), gg));
     }
 
   case BOOL_TERM: {
@@ -171,26 +191,26 @@ Formula* NNF::ennf (Formula* f, bool polarity)
     TermList ennfTf = ennf(ts, polarity);
     if (ts == ennfTf) {
       if (polarity) {
-        return f;
+        return finish(f);
       } else {
-        return new NegatedFormula(f);
+        return finish(new NegatedFormula(f));
       }
     } else {
-      return new BoolTermFormula(ennfTf);
+      return finish(new BoolTermFormula(ennfTf));
     }
   }
 
   case TRUE:
   case FALSE:
     if(polarity) {
-      return f;
+      return finish(f);
     }
     else {
       if(c==TRUE) {
-	return Formula::falseFormula();
+		return finish(Formula::falseFormula());
       }
       else {
-	return Formula::trueFormula();
+		return finish(Formula::trueFormula());
       }
     }
   default:
@@ -521,5 +541,3 @@ FormulaList* NNF::nnf (FormulaList* fs, bool polarity)
   FormulaList::destroy(result.list());
   return fs;
 } // NNF::nnf(FormulaList...)
-
-

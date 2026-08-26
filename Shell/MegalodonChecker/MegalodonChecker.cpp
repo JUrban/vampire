@@ -220,6 +220,7 @@ bool MegalodonChecker::inferenceNeedsReplayInformation(const Kernel::InferenceRu
       return true;
     case Kernel::InferenceRule::FORWARD_DEMODULATION:
     case Kernel::InferenceRule::RECTIFY:
+    case Kernel::InferenceRule::ENNF:
       return true;
     case Kernel::InferenceRule::BACKWARD_DEMODULATION:
       // Replaying backward demodulation can re-enter substitution-tree
@@ -253,6 +254,8 @@ std::string MegalodonChecker::replayKind(const Kernel::InferenceRule& rule) cons
       return "backward_demodulation";
     case Kernel::InferenceRule::RECTIFY:
       return "rectify";
+    case Kernel::InferenceRule::ENNF:
+      return "ennf";
     case Kernel::InferenceRule::REMOVE_DUPLICATE_LITERALS:
     case Kernel::InferenceRule::REORIENT_EQUATIONS:
     case Kernel::InferenceRule::TRIVIAL_INEQUALITY_REMOVAL:
@@ -273,7 +276,6 @@ std::string MegalodonChecker::replayKind(const Kernel::InferenceRule& rule) cons
     case Kernel::InferenceRule::FOOL_ELIMINATION:
       return "fool";
     case Kernel::InferenceRule::NNF:
-    case Kernel::InferenceRule::ENNF:
     case Kernel::InferenceRule::FLATTEN:
     case Kernel::InferenceRule::REDUCE_FALSE_TRUE:
     case Kernel::InferenceRule::THEORY_NORMALIZATION:
@@ -1412,6 +1414,22 @@ bool MegalodonChecker::certificateCondensationStepSexpr(Kernel::Unit* unit, std:
       return false;
     }
     steps.push_back(substituteStep);
+    const std::string variablePrefix =
+      "(step_variable_sorts " + sexprQuote(currentParentId) + " ";
+    const std::string freeVariablePrefix =
+      "(step_free_variable_sorts " + sexprQuote(currentParentId) + " ";
+    const std::string extraPrefix =
+      "(step_extra " + sexprQuote(currentParentId) + " ";
+    _certificateNativeMetadata.erase(
+      std::remove_if(
+        _certificateNativeMetadata.begin(),
+        _certificateNativeMetadata.end(),
+        [&](const std::string& metadata) {
+          return metadata.rfind(variablePrefix, 0) == 0
+            || metadata.rfind(freeVariablePrefix, 0) == 0
+            || metadata.rfind(extraPrefix, 0) == 0;
+        }),
+      _certificateNativeMetadata.end());
     _certificateNativeMetadata.insert(
       _certificateNativeMetadata.end(),
       substituteMetadata.begin(),
@@ -2438,7 +2456,10 @@ bool MegalodonChecker::certificateFoolFormulaStepSexpr(Kernel::Unit* unit, std::
   return true;
 }
 
-bool MegalodonChecker::certificateEnnfFormulaStepSexpr(Kernel::Unit* unit, std::string& result)
+bool MegalodonChecker::certificateEnnfFormulaStepSexpr(
+  Kernel::Unit* unit,
+  std::string& result,
+  MegalodonKernelSyntax::PrimitiveStep* primitiveStep)
 {
   if (unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::ENNF) {
     return false;
@@ -2451,199 +2472,103 @@ bool MegalodonChecker::certificateEnnfFormulaStepSexpr(Kernel::Unit* unit, std::
   if (parent->isClause()) {
     return false;
   }
-  std::string sourceFormula;
-  std::string resultFormula;
-  Kernel::Formula* source = static_cast<Kernel::FormulaUnit*>(parent)->formula();
-  Kernel::Formula* target = static_cast<Kernel::FormulaUnit*>(unit)->formula();
-  if (!certificateFormulaTermSexpr(source, sourceFormula)
-    || !certificateFormulaTermSexpr(target, resultFormula)) {
+  const auto* recording = static_cast<const InferenceRecorder::EnnfInferenceExtra*>(
+    InferenceRecorder::instance()->getGenericInferenceInformation(unit->number()));
+  if (recording == nullptr
+    || recording->trace.empty()
+    || !recording->activeTrace.empty()) {
     return false;
   }
 
-  auto formulaArgs = [](Kernel::Formula* formula) {
-    std::vector<Kernel::Formula*> result;
-    Kernel::FormulaList::Iterator args(formula->args());
-    while (args.hasNext()) {
-      result.push_back(args.next());
-    }
-    return result;
-  };
-  auto negatedFormula = [](Kernel::Formula* formula) -> Kernel::Formula* {
-    return new Kernel::BinaryFormula(Kernel::IMP, formula, Kernel::Formula::falseFormula());
-  };
-  auto negatedBody = [](Kernel::Formula* formula) -> Kernel::Formula* {
-    if (formula->connective() == Kernel::NOT) {
-      return formula->uarg();
-    }
-    if (formula->connective() == Kernel::IMP && formula->right()->connective() == Kernel::FALSE) {
-      return formula->left();
-    }
-    return nullptr;
-  };
+  Kernel::Formula* source = static_cast<Kernel::FormulaUnit*>(parent)->formula();
+  Kernel::Formula* target = static_cast<Kernel::FormulaUnit*>(unit)->formula();
+  if (recording->sourceFormula == nullptr
+    || recording->resultFormula == nullptr
+    || recording->trace.front().sourceFormula == nullptr
+    || recording->trace.front().resultFormula == nullptr) {
+    return false;
+  }
 
-  unsigned pairCount = 0;
-  const unsigned pairLimit = 32;
-  std::vector<std::tuple<std::string, std::string, std::string, std::string>> pairs;
-  auto connectiveKind = [](Kernel::Connective connective) {
+  auto connectiveName = [](Kernel::Connective connective) {
     switch (connective) {
-      case Kernel::IMP: return std::string("imp");
-      case Kernel::FORALL: return std::string("forall");
-      case Kernel::EXISTS: return std::string("exists");
+      case Kernel::LITERAL: return std::string("literal");
       case Kernel::AND: return std::string("and");
       case Kernel::OR: return std::string("or");
-      case Kernel::NOT: return std::string("not");
+      case Kernel::IMP: return std::string("imp");
       case Kernel::IFF: return std::string("iff");
       case Kernel::XOR: return std::string("xor");
-      default: return std::string("other");
+      case Kernel::NOT: return std::string("not");
+      case Kernel::FORALL: return std::string("forall");
+      case Kernel::EXISTS: return std::string("exists");
+      case Kernel::BOOL_TERM: return std::string("bool_term");
+      case Kernel::TRUE: return std::string("true");
+      case Kernel::FALSE: return std::string("false");
+      default: return std::string("unsupported");
     }
-  };
-  auto pairKind = [&](Kernel::Formula* left, Kernel::Formula* right) {
-    if (left == nullptr || right == nullptr) {
-      return std::string("unknown");
-    }
-    if (left->connective() == right->connective()) {
-      return std::string("context_") + connectiveKind(left->connective());
-    }
-    std::vector<Kernel::Formula*> rightArgs;
-    if (right->connective() == Kernel::AND || right->connective() == Kernel::OR) {
-      rightArgs = formulaArgs(right);
-    }
-    if (left->connective() == Kernel::IMP && right->connective() == Kernel::OR && rightArgs.size() == 2) {
-      return std::string("imp_to_or");
-    }
-    Kernel::Formula* negated = negatedBody(left);
-    if (negated == nullptr) {
-      return std::string("unknown");
-    }
-    if (negated->connective() == Kernel::IMP && right->connective() == Kernel::AND && rightArgs.size() == 2) {
-      return std::string("not_imp_to_and");
-    }
-    if (negated->connective() == Kernel::FORALL && right->connective() == Kernel::EXISTS) {
-      return std::string("not_forall_to_exists");
-    }
-    if (negated->connective() == Kernel::AND && right->connective() == Kernel::OR) {
-      return std::string("not_and_to_or");
-    }
-    if (negated->connective() == Kernel::OR && right->connective() == Kernel::AND) {
-      return std::string("not_or_to_and");
-    }
-    return std::string("unknown");
-  };
-  auto emitPair = [&](Kernel::Formula* left, Kernel::Formula* right, const std::string& path) {
-    if (left == nullptr || right == nullptr || pairCount >= pairLimit) {
-      return false;
-    }
-    std::string leftText;
-    std::string rightText;
-    if (!certificateFormulaTermSexpr(left, leftText)
-      || !certificateFormulaTermSexpr(right, rightText)
-      || leftText == rightText) {
-      return false;
-    }
-    pairs.push_back(std::make_tuple(path, leftText, rightText, pairKind(left, right)));
-    ++pairCount;
-    return true;
   };
 
-  std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned, std::string)> collectPairs;
-  std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned, std::string)> collectEnnfPairs;
-  collectPairs =
-    [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth, std::string path) {
-      if (left == nullptr || right == nullptr || depth > 16 || pairCount >= pairLimit) {
-        return;
+  std::set<std::size_t> visited;
+  std::function<bool(
+    std::size_t,
+    MegalodonKernelSyntax::RenderedKernelEnnfTrace&)> renderTrace;
+  renderTrace =
+    [&](std::size_t index,
+        MegalodonKernelSyntax::RenderedKernelEnnfTrace& rendered) {
+      if (index >= recording->trace.size() || !visited.insert(index).second) {
+        return false;
       }
-      emitPair(left, right, path);
-      if (left->connective() != right->connective()) {
-        collectEnnfPairs(left, right, depth + 1, path);
-        return;
+      const auto& node = recording->trace[index];
+      if (node.sourceFormula == nullptr || node.resultFormula == nullptr) {
+        return false;
       }
-      switch (left->connective()) {
-        case Kernel::IMP:
-        case Kernel::IFF:
-        case Kernel::XOR:
-          collectPairs(left->left(), right->left(), depth + 1, path + ".left");
-          collectPairs(left->right(), right->right(), depth + 1, path + ".right");
-          return;
-        case Kernel::NOT:
-          collectPairs(left->uarg(), right->uarg(), depth + 1, path + ".not");
-          return;
-        case Kernel::FORALL:
-        case Kernel::EXISTS:
-          collectPairs(left->qarg(), right->qarg(), depth + 1, path + ".body");
-          return;
-        case Kernel::AND:
-        case Kernel::OR: {
-          std::vector<Kernel::Formula*> leftArgs = formulaArgs(left);
-          std::vector<Kernel::Formula*> rightArgs = formulaArgs(right);
-          const std::size_t argCount = std::min(leftArgs.size(), rightArgs.size());
-          for (std::size_t index = 0; index < argCount; ++index) {
-            collectPairs(leftArgs[index], rightArgs[index], depth + 1,
-              path + "." + (left->connective() == Kernel::AND ? "and" : "or")
-              + "[" + std::to_string(index) + "]");
-          }
-          return;
+      rendered.sourceConnective = connectiveName(node.sourceFormula->connective());
+      if (rendered.sourceConnective == "unsupported") {
+        return false;
+      }
+      rendered.polarity = node.polarity;
+      for (std::size_t child : node.children) {
+        MegalodonKernelSyntax::RenderedKernelEnnfTrace renderedChild;
+        if (!renderTrace(child, renderedChild)) {
+          return false;
         }
-        default:
-          return;
+        rendered.children.push_back(std::move(renderedChild));
       }
+      return true;
     };
-  collectEnnfPairs =
-    [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth, std::string path) {
-      if (left == nullptr || right == nullptr || depth > 16 || pairCount >= pairLimit) {
-        return;
-      }
-      std::vector<Kernel::Formula*> rightArgs;
-      if (right->connective() == Kernel::AND || right->connective() == Kernel::OR) {
-        rightArgs = formulaArgs(right);
-      }
-      if (left->connective() == Kernel::IMP && right->connective() == Kernel::OR && rightArgs.size() == 2) {
-        collectPairs(negatedFormula(left->left()), rightArgs[0], depth + 1, path + ".ennf_imp_left");
-        collectPairs(left->right(), rightArgs[1], depth + 1, path + ".ennf_imp_right");
-        return;
-      }
-      Kernel::Formula* negated = negatedBody(left);
-      if (negated == nullptr) {
-        return;
-      }
-      if (negated->connective() == Kernel::FORALL && right->connective() == Kernel::EXISTS) {
-        collectPairs(negatedFormula(negated->qarg()), right->qarg(), depth + 1, path + ".ennf_neg_forall_body");
-        return;
-      }
-      if (negated->connective() == Kernel::IMP && right->connective() == Kernel::AND && rightArgs.size() == 2) {
-        collectPairs(negated->left(), rightArgs[0], depth + 1, path + ".ennf_neg_imp_left");
-        collectPairs(negatedFormula(negated->right()), rightArgs[1], depth + 1, path + ".ennf_neg_imp_right");
-        return;
-      }
-      if ((negated->connective() == Kernel::AND || negated->connective() == Kernel::OR)
-        && right->connective() == (negated->connective() == Kernel::AND ? Kernel::OR : Kernel::AND)) {
-        std::vector<Kernel::Formula*> leftArgs = formulaArgs(negated);
-        const std::size_t argCount = std::min(leftArgs.size(), rightArgs.size());
-        for (std::size_t index = 0; index < argCount; ++index) {
-          collectPairs(
-            negatedFormula(leftArgs[index]),
-            rightArgs[index],
-            depth + 1,
-            path + ".ennf_neg_junction[" + std::to_string(index) + "]");
-        }
-      }
-    };
-  collectPairs(source, target, 0, "root");
 
-  std::ostringstream pairsOut;
-  pairsOut << "(pairs";
-  for (const auto& [path, leftText, rightText, kind] : pairs) {
-    pairsOut << " (pair (path " << sexprQuote(path) << ")"
-             << " (kind " << sexprQuote(kind) << ")"
-             << " (source (formula " << leftText << "))"
-             << " (target (formula " << rightText << ")))";
+  MegalodonKernelSyntax::RenderedKernelEnnfTrace trace;
+  if (!renderTrace(0, trace) || visited.size() != recording->trace.size()) {
+    return false;
   }
-  pairsOut << ")";
 
-  result = "(ennf_formula " + sexprQuote("u" + std::to_string(unit->number()))
-    + " (parent " + sexprQuote("u" + std::to_string(parent->number())) + ")"
-    + " (source (formula " + sourceFormula + "))"
-    + " " + pairsOut.str()
-    + " (result (formula " + resultFormula + ")))";
+  std::string sourceFormula;
+  std::string resultFormula;
+  std::string recordedSourceFormula;
+  std::string recordedResultFormula;
+  std::string rootSourceFormula;
+  std::string rootResultFormula;
+  if (!certificateFormulaTermSexpr(source, sourceFormula)
+    || !certificateFormulaTermSexpr(target, resultFormula)
+    || !certificateFormulaTermSexpr(recording->sourceFormula, recordedSourceFormula)
+    || !certificateFormulaTermSexpr(recording->resultFormula, recordedResultFormula)
+    || !certificateFormulaTermSexpr(recording->trace.front().sourceFormula, rootSourceFormula)
+    || !certificateFormulaTermSexpr(recording->trace.front().resultFormula, rootResultFormula)
+    || sourceFormula != recordedSourceFormula
+    || resultFormula != recordedResultFormula
+    || sourceFormula != rootSourceFormula
+    || resultFormula != rootResultFormula) {
+    return false;
+  }
+  auto built = MegalodonKernelBuilder::ennfFormulaStep(
+    "u" + std::to_string(unit->number()),
+    MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number())),
+    MegalodonKernelSyntax::formula(sourceFormula),
+    trace,
+    MegalodonKernelSyntax::formula(resultFormula));
+  result = built.rendered;
+  if (primitiveStep != nullptr) {
+    *primitiveStep = std::move(built);
+  }
   return true;
 }
 
@@ -4589,10 +4514,12 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
     return true;
   };
   std::vector<std::string> syntheticMetadata;
+  std::set<std::string> syntheticStepIds;
   auto addSyntheticVariableSorts = [&](const std::string& stepId, const std::vector<Kernel::Literal*>& literals) {
     if (!recordSyntheticMetadata) {
       return;
     }
+    syntheticStepIds.insert(stepId);
     Lib::DHMap<unsigned, Kernel::TermList> varSorts;
     for (Kernel::Literal* literal : literals) {
       Kernel::SortHelper::collectVariableSorts(literal, varSorts);
@@ -4638,6 +4565,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
       if (!recordSyntheticMetadata) {
         return;
       }
+      syntheticStepIds.insert(stepId);
       std::string renderedMetadata;
       if (certificateInstantiationKernelMetadataSexpr(
             stepId,
@@ -5101,15 +5029,13 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
       return fail("unit substitution render failed");
     }
     std::vector<Kernel::Literal*> unitLiterals = { applyLiteralPreservingEquality(unitLiteral, unitSubstitution) };
+    std::vector<std::string> unitSourceRendered;
     std::vector<std::string> unitRendered;
     if (nonIdentity) {
-      std::vector<std::string> unitSourceRendered;
       if (!renderedLiterals(std::vector<Kernel::Literal*>{unitLiteral}, unitSourceRendered)
+        || !appendCertificateSplitLiteralsSexpr(unitParent, unitSourceRendered)
         || !applyRenderedSubstitution(unitSourceRendered, unitSubstitution, unitRendered)) {
         return fail("unit substituted clause render failed");
-      }
-      if (!appendCertificateSplitLiteralsSexpr(unitParent, unitRendered)) {
-        return fail("unit split literal render failed");
       }
     } else {
       if (!appendCertificateClauseLiteralsSexpr(unitParent, unitRendered)) {
@@ -5133,6 +5059,12 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         unitParentId,
         subst,
         certificateClauseSexprFromRenderedLiterals(unitRendered));
+      addSyntheticInstantiationMetadata(
+        substituteId,
+        unitParentId,
+        unitSourceRendered,
+        subst,
+        unitRendered);
       addSyntheticVariableSorts(substituteId, unitLiterals);
       unitParentId = substituteId;
     }
@@ -5390,6 +5322,24 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
     *primitiveSteps = localPrimitiveSteps;
   }
   if (recordSyntheticMetadata) {
+    for (const std::string& id : syntheticStepIds) {
+      const std::string variablePrefix =
+        "(step_variable_sorts " + sexprQuote(id) + " ";
+      const std::string freeVariablePrefix =
+        "(step_free_variable_sorts " + sexprQuote(id) + " ";
+      const std::string extraPrefix =
+        "(step_extra " + sexprQuote(id) + " ";
+      _certificateNativeMetadata.erase(
+        std::remove_if(
+          _certificateNativeMetadata.begin(),
+          _certificateNativeMetadata.end(),
+          [&](const std::string& metadata) {
+            return metadata.rfind(variablePrefix, 0) == 0
+              || metadata.rfind(freeVariablePrefix, 0) == 0
+              || metadata.rfind(extraPrefix, 0) == 0;
+          }),
+        _certificateNativeMetadata.end());
+    }
     _certificateNativeMetadata.insert(
       _certificateNativeMetadata.end(),
       syntheticMetadata.begin(),
@@ -10226,6 +10176,7 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
     steps.push_back(primitiveChain.render(std::move(primitive)));
     syntheticMetadata.insert(
       syntheticMetadata.end(), metadata.begin(), metadata.end());
+    emittedVariableSorts.insert(substituteId);
     parentIds[parentIndex] = substituteId;
   }
 
@@ -10473,6 +10424,21 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
     out << steps[index];
   }
   result = out.str();
+  for (const std::string& id : emittedVariableSorts) {
+    const std::string variablePrefix =
+      "(step_variable_sorts " + sexprQuote(id) + " ";
+    const std::string freeVariablePrefix =
+      "(step_free_variable_sorts " + sexprQuote(id) + " ";
+    _certificateNativeMetadata.erase(
+      std::remove_if(
+        _certificateNativeMetadata.begin(),
+        _certificateNativeMetadata.end(),
+        [&](const std::string& metadata) {
+          return metadata.rfind(variablePrefix, 0) == 0
+            || metadata.rfind(freeVariablePrefix, 0) == 0;
+        }),
+      _certificateNativeMetadata.end());
+  }
   _certificateNativeMetadata.insert(
     _certificateNativeMetadata.end(),
     syntheticMetadata.begin(),
@@ -10519,6 +10485,16 @@ bool MegalodonChecker::certificateNativeStepSexpr(
     };
     return true;
   };
+  auto certificateEnnfPrimitiveStep = [&]() {
+    MegalodonKernelSyntax::PrimitiveStep primitiveStep;
+    if (!certificateEnnfFormulaStepSexpr(unit, result, &primitiveStep)) {
+      return false;
+    }
+    _certificateNativePrimitiveStepsByUnit[unit->number()] = {
+      std::move(primitiveStep),
+    };
+    return true;
+  };
   try {
     return certificateInputStepSexpr(unit, result)
       || certificateFormulaInputStepSexpr(unit, result)
@@ -10528,7 +10504,7 @@ bool MegalodonChecker::certificateNativeStepSexpr(
       || certificateFormulaTermCopyStepSexpr(unit, result)
       || certificateFoolBoolStepSexpr(unit, result)
       || certificateFoolFormulaStepSexpr(unit, result)
-      || certificateEnnfFormulaStepSexpr(unit, result)
+      || certificateEnnfPrimitiveStep()
       || certificateSkolemFormulaStepSexpr(unit, result)
       || certificateCnfPrimitiveStep()
       || certificatePredicateDefinitionStepSexpr(unit, result)
@@ -12623,6 +12599,37 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             &transform);
         }
 
+        if (u->inference().rule() == Kernel::InferenceRule::ENNF
+          && !sourceFormula.empty()
+          && !resultFormula.empty()
+          && sourceFormula != resultFormula) {
+          std::vector<std::string> kernelFields;
+          kernelFields.push_back("selection_source=nnf_v1");
+          kernelFields.push_back("primitive_lowering_source=nnf_v1");
+          auto primitiveSteps =
+            _certificateNativePrimitiveStepsByUnit.find(u->number());
+          if (primitiveSteps == _certificateNativePrimitiveStepsByUnit.end()
+            || !MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
+              kernelFields,
+              primitiveSteps->second,
+              "u" + std::to_string(u->number()))) {
+            INVALID_OPERATION("typed ENNF primitive serialization failed");
+          }
+          MegalodonKernelSyntax::RenderedKernelSourceFormulaTransform transform;
+          transform.sourceUnit =
+            MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number()));
+          transform.sourceFormula = MegalodonKernelSyntax::formula(sourceFormula);
+          transform.resultFormula = MegalodonKernelSyntax::formula(resultFormula);
+          transform.hasNormalFormRule = true;
+          transform.normalFormRule = std::string(Kernel::ruleName(u->inference().rule()));
+          emitKernelV1(
+            "formula_normalize",
+            kernelFields,
+            false,
+            nullptr,
+            nullptr,
+            &transform);
+        } else if (u->inference().rule() != Kernel::InferenceRule::ENNF) {
         unsigned pairCount = 0;
         std::size_t totalPairText = 0;
         const unsigned pairLimit = 32;
@@ -12685,20 +12692,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         };
 
         std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned, std::string)> collectPairs;
-        std::function<void(Kernel::Formula*, Kernel::Formula*, unsigned, std::string)> collectEnnfPairs;
         std::function<void(const std::vector<Kernel::Formula*>&, std::size_t, std::size_t, const std::vector<Kernel::Formula*>&, std::size_t, std::size_t, Kernel::Connective, unsigned, std::string)> collectSlicePairs;
-        auto negatedFormula = [](Kernel::Formula* formula) -> Kernel::Formula* {
-          return new Kernel::BinaryFormula(Kernel::IMP, formula, Kernel::Formula::falseFormula());
-        };
-        auto negatedBody = [](Kernel::Formula* formula) -> Kernel::Formula* {
-          if (formula->connective() == Kernel::NOT) {
-            return formula->uarg();
-          }
-          if (formula->connective() == Kernel::IMP && formula->right()->connective() == Kernel::FALSE) {
-            return formula->left();
-          }
-          return nullptr;
-        };
         auto connectiveKind = [](Kernel::Connective connective) {
           switch (connective) {
             case Kernel::IMP: return std::string("imp");
@@ -12719,29 +12713,6 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           if (left->connective() == right->connective()) {
             return std::string("context_") + connectiveKind(left->connective());
           }
-          std::vector<Kernel::Formula*> rightArgs;
-          if (right->connective() == Kernel::AND || right->connective() == Kernel::OR) {
-            rightArgs = formulaArgs(right);
-          }
-          if (left->connective() == Kernel::IMP && right->connective() == Kernel::OR && rightArgs.size() == 2) {
-            return std::string("imp_to_or");
-          }
-          Kernel::Formula* negated = negatedBody(left);
-          if (negated == nullptr) {
-            return std::string("unknown");
-          }
-          if (negated->connective() == Kernel::IMP && right->connective() == Kernel::AND && rightArgs.size() == 2) {
-            return std::string("not_imp_to_and");
-          }
-          if (negated->connective() == Kernel::FORALL && right->connective() == Kernel::EXISTS) {
-            return std::string("not_forall_to_exists");
-          }
-          if (negated->connective() == Kernel::AND && right->connective() == Kernel::OR) {
-            return std::string("not_and_to_or");
-          }
-          if (negated->connective() == Kernel::OR && right->connective() == Kernel::AND) {
-            return std::string("not_or_to_and");
-          }
           return std::string("unknown");
         };
         collectPairs =
@@ -12756,9 +12727,6 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             }
             emitPair(leftText, rightText, path, pairKind(left, right));
             if (left->connective() != right->connective()) {
-              if (u->inference().rule() == Kernel::InferenceRule::ENNF) {
-                collectEnnfPairs(left, right, depth + 1, path);
-              }
               return;
             }
             switch (left->connective()) {
@@ -12787,48 +12755,6 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
                 return;
               default:
                 return;
-            }
-          };
-        collectEnnfPairs =
-          [&](Kernel::Formula* left, Kernel::Formula* right, unsigned depth, std::string path) {
-            if (left == nullptr || right == nullptr || depth > 16 || pairCount >= pairLimit || totalPairText >= textLimit) {
-              return;
-            }
-            std::vector<Kernel::Formula*> rightArgs;
-            if (right->connective() == Kernel::AND || right->connective() == Kernel::OR) {
-              rightArgs = formulaArgs(right);
-            }
-            if (left->connective() == Kernel::IMP && right->connective() == Kernel::OR && rightArgs.size() == 2) {
-              collectPairs(negatedFormula(left->left()), rightArgs[0], depth + 1, path + ".ennf_imp_left");
-              collectPairs(left->right(), rightArgs[1], depth + 1, path + ".ennf_imp_right");
-              return;
-            }
-            Kernel::Formula* negated = negatedBody(left);
-            if (negated == nullptr) {
-              return;
-            }
-            if (negated->connective() == Kernel::FORALL && right->connective() == Kernel::EXISTS) {
-              collectPairs(negatedFormula(negated->qarg()), right->qarg(), depth + 1, path + ".ennf_neg_forall_body");
-              return;
-            }
-            if (negated->connective() == Kernel::IMP && right->connective() == Kernel::AND && rightArgs.size() == 2) {
-              collectPairs(negated->left(), rightArgs[0], depth + 1, path + ".ennf_neg_imp_left");
-              collectPairs(negatedFormula(negated->right()), rightArgs[1], depth + 1, path + ".ennf_neg_imp_right");
-              return;
-            }
-            if ((negated->connective() == Kernel::AND || negated->connective() == Kernel::OR)
-              && right->connective() == (negated->connective() == Kernel::AND ? Kernel::OR : Kernel::AND)) {
-              std::vector<Kernel::Formula*> leftArgs = formulaArgs(negated);
-              if (leftArgs.size() != rightArgs.size() || leftArgs.size() < 2) {
-                return;
-              }
-              for (std::size_t index = 0; index < leftArgs.size() && index < 2; ++index) {
-                collectPairs(
-                  negatedFormula(leftArgs[index]),
-                  rightArgs[index],
-                  depth + 1,
-                  path + ".ennf_neg_junction[" + std::to_string(index) + "]");
-              }
             }
           };
         collectSlicePairs =
@@ -12905,6 +12831,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             nullptr,
             nullptr,
             &transform);
+        }
         }
         emit("normal_form", fields);
       }
@@ -25269,7 +25196,8 @@ void MegalodonChecker::printStep(Kernel::Unit* u)
     }
     try {
       _replayer.replayInference(u);
-      if (rule == Kernel::InferenceRule::RECTIFY) {
+      if (rule == Kernel::InferenceRule::RECTIFY
+        || rule == Kernel::InferenceRule::ENNF) {
         replayed =
           InferenceRecorder::instance()->getGenericInferenceInformation(
             u->number()) != nullptr;

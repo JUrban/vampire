@@ -12,6 +12,7 @@
 #include "Kernel/Inference.hpp"
 #include "Shell/EqResWithDeletion.hpp"
 #include "Shell/InferenceRecorder.hpp"
+#include "Shell/NNF.hpp"
 #include "Shell/Rectify.hpp"
 
 namespace Shell {
@@ -73,6 +74,11 @@ void InferenceReplayer::replayInference(Kernel::Unit *u)
   } else if (u->inference().rule() == InferenceRule::RECTIFY) {
     FormulaUnit *fu = static_cast<FormulaUnit *>(u->getParents().next());
     Rectify::rectify(fu);
+    InferenceRecorder::instance()->reassignLastInferenceInformation(u->number());
+  }
+  else if (u->inference().rule() == InferenceRule::ENNF) {
+    FormulaUnit *fu = static_cast<FormulaUnit *>(u->getParents().next());
+    NNF::ennf(fu);
     InferenceRecorder::instance()->reassignLastInferenceInformation(u->number());
   }
   else {

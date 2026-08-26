@@ -62,6 +62,20 @@ public:
       std::map<unsigned, unsigned> freeVariableRenaming;
   };
 
+  class EnnfInferenceExtra : public GenericInferenceInformation {
+    public:
+      struct TraceNode {
+        Kernel::Formula* sourceFormula = nullptr;
+        Kernel::Formula* resultFormula = nullptr;
+        bool polarity = true;
+        std::vector<std::size_t> children;
+      };
+      Kernel::Formula* sourceFormula = nullptr;
+      Kernel::Formula* resultFormula = nullptr;
+      std::vector<TraceNode> trace;
+      std::vector<std::size_t> activeTrace;
+  };
+
   // Returns the singleton instance (lazily initialized, thread-safe)
   static InferenceRecorder *instance();
   // Optional: destroy the singleton (if you need controlled teardown)
@@ -127,6 +141,15 @@ public:
     _currentRecording.reset();
     _lastInferenceId = 0;
   }
+
+  void startEnnfRecording(Kernel::Formula* sourceFormula);
+  std::size_t startEnnfTraceNode(Kernel::Formula* sourceFormula, bool polarity);
+  void finishEnnfTraceNode(std::size_t index, Kernel::Formula* resultFormula);
+  void endEnnfRecording(
+    unsigned int id,
+    Kernel::Formula* sourceFormula,
+    Kernel::Formula* resultFormula);
+  void discardEnnfRecording();
 
   bool reassignLastInferenceInformation(unsigned int id){
     auto source = _inferences.find(_lastInferenceId);

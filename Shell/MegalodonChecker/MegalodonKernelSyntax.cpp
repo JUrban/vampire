@@ -140,6 +140,19 @@ std::string renderCnfProjection(const RenderedKernelCnfProjection& projection)
   return "(invalid_cnf_projection)";
 }
 
+std::string renderEnnfTrace(const RenderedKernelEnnfTrace& trace)
+{
+  std::string result =
+    "(node (source " + quoteCnfAtom(trace.sourceConnective) + ")"
+    + " (polarity " + std::string(trace.polarity ? "positive" : "negative") + ")"
+    + " (children";
+  for (const auto& child : trace.children) {
+    result += " " + renderEnnfTrace(child);
+  }
+  result += "))";
+  return result;
+}
+
 std::vector<std::string> supportedRules()
 {
   std::vector<std::string> rules = structuralRules();

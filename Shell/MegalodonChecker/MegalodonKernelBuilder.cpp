@@ -359,6 +359,38 @@ MegalodonKernelSyntax::PrimitiveStep cnfLiteralStep(
       + " (result " + result.sexpr + "))");
 }
 
+MegalodonKernelSyntax::PrimitiveStep ennfFormulaStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelFormula& source,
+  const MegalodonKernelSyntax::RenderedKernelEnnfTrace& trace,
+  const MegalodonKernelSyntax::RenderedKernelFormula& result)
+{
+  MegalodonKernelSyntax::PrimitiveStep step;
+  const std::string renderedTrace =
+    MegalodonKernelSyntax::renderEnnfTrace(trace);
+  step.rule = "ennf_formula";
+  step.id = id;
+  step.builderOwned = true;
+  step.parentIds = {parent.value};
+  step.hasResultFormula = true;
+  step.resultFormula = result.sexpr;
+  step.fields = {
+    {"source_formula", source.sexpr},
+    {"ennf_trace", renderedTrace},
+    {"selection_source", "nnf_v1"},
+    {"primitive_lowering_source", "nnf_v1"},
+  };
+  step.rendered =
+    "(ennf_formula " + quote(id)
+    + " (parent " + quote(parent.value) + ")"
+    + " (source (formula " + source.sexpr + "))"
+    + " (trace " + renderedTrace + ")"
+    + " (result (formula " + result.sexpr + "))"
+    + " (builder \"typed_v1\"))";
+  return step;
+}
+
 MegalodonKernelSyntax::PrimitiveStep cnfFormulaClauseStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,

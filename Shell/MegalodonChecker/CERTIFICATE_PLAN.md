@@ -537,3 +537,68 @@ choice substitutions are inputs to a scoped producer object. The consumer
 must discharge each witness at a DAG block boundary, and the block conclusion
 must be checked not to contain the local witness. Expanding a complete proof
 tree to remove Skolem symbols is not an approved qualifying implementation.
+
+## Compact Producer-Recorded ENNF Implemented, 2026-08-26
+
+The producer half of the ENNF gate above is now implemented. `NNF::ennf`
+records the actual recursive call tree while it transforms Vampire formulas.
+Each node records the source connective, input polarity, and ordered children.
+The recorder owns the trace until inference replay associates it with the
+corresponding ENNF unit; no printed formula is reparsed to recover the tree.
+
+`MegalodonKernelBuilder::ennfFormulaStep` is the only constructor for fresh
+ENNF output. It serializes the source and result formulas once together with
+the compact trace and `typed_v1` ownership. The direct collector requires the
+producer record and checks that its source and result are the formulas being
+serialized. The former bounded source/target-pair reconstruction and its
+duplicated ENNF metadata were deleted. Other legacy normal-form records still
+use pair metadata and remain migration work.
+
+On the consumer side, `vampire_kernel_syntax.ml` owns the trace type and
+`vampire_kernel_check.ml` validates source-connective shape, child arity, and
+the polarity recurrence. The compatibility parser only decodes and dispatches
+the object. The existing deterministic ENNF result check remains as a second
+semantic check. Root-polarity and root-connective mutations are rejected by
+the extracted checker.
+
+The focused artifact is:
+
+```text
+/project/tmp/ennf-trace-focus-20260826/and7-compact.cert
+```
+
+It contains 58 logical trace nodes. Builder-strict checking takes about 0.20
+seconds and 59 MB in the measured run. Removing the duplicated ENNF pair
+metadata reduced this certificate from 1,226,653 to 1,194,987 bytes. The
+maintained fixture and its two mutations are under
+`/project/tmp/ennf-trace-fixture-20260826`.
+
+The broad gate used the existing one-time solvability list
+`known_solvable_strict_100.list`; Vampire was capped at ten seconds and run
+with 20 workers. The generated corpus reported 100/100 builder-strict passes
+and 248 `ennf_formula` primitives. Two unit-resulting-resolution substitutions
+initially lacked exact instantiation metadata. Vampire now records the full
+certificate premise, including AVATAR split literals, for those substitutions.
+Only those two known-solvable proofs were regenerated in parallel. The merged
+100-certificate audits are:
+
+```text
+/project/tmp/ennf-trace-known100-audited-20260826-2
+/project/tmp/ennf-trace-known100-metadata-audit-20260826
+/project/tmp/ennf-trace-known100-primitive-audit-20260826
+```
+
+They pass with 8,916 `kernel_v1` records, 248 ENNF primitives, and complete
+metadata for every nonidentity substitution. This remains detached E2/E3
+evidence. It neither extends the original-development Qed frontier nor solves
+certificate-local Skolem and AVATAR discharge.
+
+The ENNF migration is not yet architecturally complete. ENNF proof-term
+construction still lives in compatibility code in `vampire_cert_v1.ml`, and
+mutation coverage does not yet exercise every trace constructor. Before ENNF
+can be counted on an Ivy-only E1 route, the proof constructor must move to
+`vampire_kernel_elab.ml`, the semantic result computation must be exposed
+through the extracted boundary, typed traces must be mandatory in qualifying
+mode, and constructor-complete mutation tests must pass. The next producer
+object after that is scoped Skolemization; no consumer-side proof-tree
+expansion is approved as a substitute.

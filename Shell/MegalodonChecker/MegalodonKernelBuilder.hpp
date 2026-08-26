@@ -96,6 +96,13 @@ MegalodonKernelSyntax::PrimitiveStep rectifyFormulaStep(
   const MegalodonKernelSyntax::RenderedKernelFormula& result,
   const MegalodonKernelSyntax::RenderedKernelRectifyRenamings& renamings);
 
+MegalodonKernelSyntax::PrimitiveStep ennfFormulaStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelFormula& source,
+  const MegalodonKernelSyntax::RenderedKernelEnnfTrace& trace,
+  const MegalodonKernelSyntax::RenderedKernelFormula& result);
+
 MegalodonKernelSyntax::PrimitiveStep cnfLiteralStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
