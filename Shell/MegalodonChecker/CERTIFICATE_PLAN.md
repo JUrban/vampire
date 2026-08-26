@@ -190,6 +190,13 @@ check the constructor without guessing:
 No constructor should depend on pretty-printed de-Bruijn names, hidden Vampire
 state, or library-specific Megalodon names.
 
+For `skolem_branch` records, each choice additionally carries an ordered typed
+`context_variable` vector. Vampire derives it from the helper edge's leading
+binders that remain preserved parent variables. Variables quantified inside
+the existential body are not part of this vector. A checker can therefore
+close the emitted predicate, body, and witnessed body without rediscovering
+scope from printed names or from all variables occurring in the formula.
+
 ## Current Export Checkpoint
 
 The old JSON/rich-export path is a diagnostic prototype only. It is not printed

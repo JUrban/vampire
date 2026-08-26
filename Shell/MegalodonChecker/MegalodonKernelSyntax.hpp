@@ -390,6 +390,7 @@ struct RenderedKernelSkolemBranchChoice {
   std::string transportRule;
   bool hasWitnessedBody = false;
   RenderedKernelFormula witnessedBody;
+  std::vector<RenderedKernelTypedVariable> contextVariables;
   std::vector<RenderedKernelSkolemBranchScopeSymbol> scopeSymbols;
 };
 

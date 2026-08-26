@@ -1066,6 +1066,8 @@ void appendSkolemMacroEdgeFields(
         if (choice.hasWitnessedBody) {
           fields.push_back(choicePrefix + "_witnessed_body=" + choice.witnessedBody.sexpr);
         }
+        appendTypedVariableFields(
+          fields, choicePrefix, "context_variable", choice.contextVariables);
         fields.push_back(
           choicePrefix + "_scope_symbol_count="
           + std::to_string(choice.scopeSymbols.size()));

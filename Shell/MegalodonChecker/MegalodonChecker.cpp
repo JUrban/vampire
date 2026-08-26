@@ -15523,6 +15523,22 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             choice.transportRule = "choice_witness_substitution";
             choice.hasWitnessedBody = true;
             choice.witnessedBody = MegalodonKernelSyntax::formula(witnessedBody);
+            for (const auto& binder : edge.binders) {
+              const auto instantiation =
+                std::find_if(
+                  edge.contractParentInstantiations.begin(),
+                  edge.contractParentInstantiations.end(),
+                  [&](const auto& candidate) {
+                    return candidate.variable == binder.first
+                           && candidate.type.sexpr == binder.second.sexpr
+                           && candidate.role == "preserved_variable";
+                  });
+              if (instantiation != edge.contractParentInstantiations.end()) {
+                choice.contextVariables.push_back({
+                  binder.first,
+                  binder.second});
+              }
+            }
             choice.scopeSymbols = edge.sourceScopeSymbols;
             edge.contractBranchChoices.push_back(choice);
             earlierChoiceReplacements.push_back(
