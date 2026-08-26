@@ -930,69 +930,6 @@ bool MegalodonChecker::certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, 
     return false;
   }
 
-  auto satClauseSexpr = [](SAT::SATClause* clause) {
-    std::ostringstream out;
-    out << "(sat_clause";
-    for (SATLiteral literal : clause->iter()) {
-      out << " (lit " << literal.var() << ' ' << (literal.positive() ? "true" : "false") << ')';
-    }
-    out << ')';
-    return out.str();
-  };
-
-  auto satProofSexpr = [&](SAT::SATClause* root) {
-    struct CompareSATClauses {
-      bool operator()(SAT::SATClause* left, SAT::SATClause* right) const
-      {
-        return left->number < right->number;
-      }
-    };
-
-    std::set<SAT::SATClause*, CompareSATClauses> proof;
-    std::vector<SAT::SATClause*> todo;
-    todo.push_back(root);
-    while (!todo.empty()) {
-      SAT::SATClause* current = todo.back();
-      todo.pop_back();
-      if (current == nullptr || !proof.insert(current).second) {
-        continue;
-      }
-      SAT::SATInference* inference = current->inference();
-      if (inference == nullptr || inference->getType() != SAT::SATInference::PROP_INF) {
-        continue;
-      }
-      SAT::PropInference* prop = static_cast<SAT::PropInference*>(inference);
-      for (SAT::SATClause* parent : iterTraits(prop->getPremises()->iter())) {
-        todo.push_back(parent);
-      }
-    }
-
-    std::ostringstream out;
-    out << "(sat_proof";
-    for (SAT::SATClause* clause : proof) {
-      SAT::SATInference* inference = clause->inference();
-      if (inference == nullptr) {
-        return std::string();
-      }
-      switch (inference->getType()) {
-        case SAT::SATInference::FO_CONVERSION:
-          out << " (sat_input " << clause->number << ' ' << satClauseSexpr(clause) << ')';
-          break;
-        case SAT::SATInference::PROP_INF: {
-          SAT::PropInference* prop = static_cast<SAT::PropInference*>(inference);
-          out << " (sat_rup " << clause->number << " (parents";
-          for (SAT::SATClause* parent : iterTraits(prop->getPremises()->iter())) {
-            out << ' ' << parent->number;
-          }
-          out << ") (result " << satClauseSexpr(clause) << "))";
-          break;
-        }
-      }
-    }
-    out << ')';
-    return out.str();
-  };
-
   auto satClauseAsSplitClauseSexpr = [&](SAT::SATClause* clause, std::string& rendered) {
     if (clause == nullptr) {
       return false;
@@ -1028,19 +965,18 @@ bool MegalodonChecker::certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, 
     return true;
   };
 
-  std::vector<std::string> satClauses;
-  std::vector<std::string> parentIds;
   std::vector<std::string> originSteps;
-  std::string satProof;
-  if (SAT::SATClause* refutation = unit->inference().satPremise()) {
-    satProof = satProofSexpr(refutation);
-    SAT::SATInference::visitFOConversions(refutation, [&](SAT::SATClause* clause) {
+  MegalodonKernelSyntax::RenderedKernelAvatarRefutation satTrace;
+  SAT::SATClause* refutation = unit->inference().satPremise();
+  if (refutation == nullptr
+    || !MegalodonKernelBuilder::collectAvatarSatProof(refutation, &satTrace)) {
+    return false;
+  }
+  SAT::SATInference::visitFOConversions(refutation, [&](SAT::SATClause* clause) {
       Kernel::Unit* origin = clause->inference()->foConversion()->getOrigin();
       if (origin == nullptr) {
         return;
       }
-      parentIds.push_back("u" + std::to_string(origin->number()));
-      satClauses.push_back(satClauseSexpr(clause));
       if (origin != nullptr
         && origin != unit
         && _certificateNativeStepIds.find(origin->number()) == _certificateNativeStepIds.end()) {
@@ -1063,41 +999,13 @@ bool MegalodonChecker::certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, 
         }
       }
     });
-  }
-
-  if (satClauses.empty()) {
-    for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
-      const auto* extra = env.proofExtra.find(parent);
-      if (extra == nullptr) {
-        continue;
-      }
-      const auto* satExtra = static_cast<const Indexing::SATClauseExtra*>(extra);
-      if (satExtra->clause == nullptr) {
-        continue;
-      }
-      parentIds.push_back("u" + std::to_string(parent->number()));
-      satClauses.push_back(satClauseSexpr(satExtra->clause));
-    }
-  }
-  if (satClauses.empty()) {
+  satTrace.hasResultClause = true;
+  satTrace.resultClause = MegalodonKernelSyntax::clause("(clause)");
+  MegalodonKernelSyntax::PrimitiveStep refutationStep;
+  if (!MegalodonKernelBuilder::avatarRefutationStep(
+        "u" + std::to_string(unit->number()), satTrace, &refutationStep)) {
     return false;
   }
-
-  std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef> renderedParents;
-  for (const std::string& parentId : parentIds) {
-    renderedParents.push_back(MegalodonKernelSyntax::unitRef(parentId));
-  }
-  std::vector<MegalodonKernelSyntax::RenderedKernelClause> renderedSatClauses;
-  for (const std::string& clause : satClauses) {
-    renderedSatClauses.push_back(MegalodonKernelSyntax::clause(clause));
-  }
-  const auto refutationStep =
-    MegalodonKernelBuilder::avatarRefutationStep(
-      "u" + std::to_string(unit->number()),
-      renderedParents,
-      renderedSatClauses,
-      satProof,
-      MegalodonKernelSyntax::clause("(clause)"));
   std::ostringstream out;
   for (const std::string& originStep : originSteps) {
     out << originStep << "\n  ";
@@ -11236,82 +11144,6 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       }
     }
   };
-  auto populateKernelSatProofSteps = [&](MegalodonKernelSyntax::RenderedKernelAvatarRefutation& refutation, SAT::SATClause* root) {
-    struct CompareSATClauses {
-      bool operator()(SAT::SATClause* left, SAT::SATClause* right) const
-      {
-        return left->number < right->number;
-      }
-    };
-
-    std::set<SAT::SATClause*, CompareSATClauses> proof;
-    std::vector<SAT::SATClause*> todo;
-    todo.push_back(root);
-    while (!todo.empty()) {
-      SAT::SATClause* current = todo.back();
-      todo.pop_back();
-      if (current == nullptr || !proof.insert(current).second) {
-        continue;
-      }
-      SAT::SATInference* inference = current->inference();
-      if (inference == nullptr || inference->getType() != SAT::SATInference::PROP_INF) {
-        continue;
-      }
-      SAT::PropInference* prop = static_cast<SAT::PropInference*>(inference);
-      for (SAT::SATClause* parent : iterTraits(prop->getPremises()->iter())) {
-        todo.push_back(parent);
-      }
-    }
-
-    std::size_t proofIndex = 0;
-    for (SAT::SATClause* clause : proof) {
-      MegalodonKernelSyntax::RenderedKernelSatProofStep step;
-      step.index = proofIndex;
-      step.id = clause->number;
-      std::string rendered;
-      if (satClauseSexprForKernel(clause, rendered)) {
-        step.hasClause = true;
-        step.clause = MegalodonKernelSyntax::clause(rendered);
-      }
-      SAT::SATInference* inference = clause->inference();
-      if (inference == nullptr) {
-        step.kind = "unknown";
-        refutation.proofSteps.push_back(step);
-        ++proofIndex;
-        continue;
-      }
-      switch (inference->getType()) {
-        case SAT::SATInference::FO_CONVERSION: {
-          step.kind = "input";
-          Kernel::Unit* origin = inference->foConversion()->getOrigin();
-          if (origin != nullptr) {
-            step.hasOriginUnit = true;
-            step.originUnit = MegalodonKernelSyntax::unitRef("u" + std::to_string(origin->number()));
-          }
-          break;
-        }
-        case SAT::SATInference::PROP_INF: {
-          step.kind = "rup";
-          SAT::PropInference* prop = static_cast<SAT::PropInference*>(inference);
-          unsigned parentIndex = 0;
-          for (SAT::SATClause* parent : iterTraits(prop->getPremises()->iter())) {
-            MegalodonKernelSyntax::RenderedKernelSatProofParent renderedParent;
-            renderedParent.index = parentIndex;
-            renderedParent.id = parent->number;
-            if (satClauseSexprForKernel(parent, rendered)) {
-              renderedParent.hasClause = true;
-              renderedParent.clause = MegalodonKernelSyntax::clause(rendered);
-            }
-            step.parents.push_back(renderedParent);
-            ++parentIndex;
-          }
-          break;
-        }
-      }
-      refutation.proofSteps.push_back(step);
-      ++proofIndex;
-    }
-  };
   auto addKernelSuperpositionRewriteFields =
     [&](std::vector<std::string>& fields,
         Kernel::Literal* targetLiteral,
@@ -12538,29 +12370,7 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     avatarRefutation.hasResultClause = true;
     avatarRefutation.resultClause = MegalodonKernelSyntax::clause("(clause)");
     if (SAT::SATClause* refutation = u->inference().satPremise()) {
-      std::string refutationClause;
-      if (satClauseSexprForKernel(refutation, refutationClause)) {
-        avatarRefutation.hasSatRefutationClause = true;
-        avatarRefutation.satRefutationClause = MegalodonKernelSyntax::clause(refutationClause);
-      }
-      unsigned satInputIndex = 0;
-      SAT::SATInference::visitFOConversions(refutation, [&](SAT::SATClause* clause) {
-        MegalodonKernelSyntax::RenderedKernelSatInput input;
-        input.index = satInputIndex;
-        std::string rendered;
-        if (satClauseSexprForKernel(clause, rendered)) {
-          input.hasClause = true;
-          input.clause = MegalodonKernelSyntax::clause(rendered);
-        }
-        Kernel::Unit* origin = clause->inference()->foConversion()->getOrigin();
-        if (origin != nullptr) {
-          input.hasOriginUnit = true;
-          input.originUnit = MegalodonKernelSyntax::unitRef("u" + std::to_string(origin->number()));
-        }
-        avatarRefutation.inputs.push_back(input);
-        ++satInputIndex;
-      });
-      populateKernelSatProofSteps(avatarRefutation, refutation);
+      MegalodonKernelBuilder::collectAvatarSatProof(refutation, &avatarRefutation);
     } else {
       unsigned satInputIndex = 0;
       for (Kernel::Unit* parent : iterTraits(u->getParents())) {

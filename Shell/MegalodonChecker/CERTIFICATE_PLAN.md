@@ -693,3 +693,47 @@ refutation, serialize it through the typed builder, and move deterministic
 chain validation/elaboration into the extracted checker and elaborator
 modules. Qualifying replay must fail when the chain is absent or malformed and
 must never enumerate candidate pivots, parent orders, or substitutions.
+
+### Exact AVATAR SAT kernel, 2026-08-26
+
+That producer task is complete for the measured AVATAR refutations. Vampire's
+typed builder now expands each SAT-layer RUP antecedent list into explicit
+`sat_resolve`, `sat_factor`, and `sat_permute` records. Pivot exploration occurs
+only during this producer-side proof transformation; the successful parent and
+literal indices are serialized. Synthetic operation ids lie above all source
+SAT ids, while the last operation keeps the source RUP id. Fresh native output
+contains no `sat_rup` macro.
+
+The native scope record marks `sat_proof_format=resolution_v1` and
+`sat_lowering_source=rup_resolution_v1`. Typed-builder strict replay requires
+both. The extracted OCaml checker validates the exact chain without search,
+and the extracted elaborator constructs the full chain proof from source input
+proofs and the emitted indices. The compatibility importer is a callback
+adapter; exact failures cannot enter its legacy RUP or two-parent fallback.
+
+The original ten-command gate passes with nine exact AVATAR refutations. A
+fresh 20-worker producer batch emitted 100/100 source-linked certificates in
+one phase, including 27 exact AVATAR certificates. Their 96 resolutions, 13
+factors, and 2 permutations all pass strict structural replay; no native RUP
+record remains. Cached native proof-term replay is 95 pass, three existing
+preprocessing type failures, and two ten-second timeouts. Mutation tests reject
+wrong parents, pivots, resolvents, factor/permutation records, residual RUP,
+and ownership metadata.
+
+Evidence:
+
+```text
+/project/tmp/live-hammer-prefix10-avatar-sat-resolution-v1b-20260826
+/project/tmp/avatar-sat-resolution-v1-source-linked-100-produce-20260826
+/project/tmp/avatar-sat-resolution-v1-source-linked-100-structural-20260826
+/project/tmp/avatar-sat-resolution-v1-source-linked-100-check-extracted-20260826
+/project/tmp/avatar-sat-resolution-v1-mutations-extracted-10693-20260826
+```
+
+Do not add another Megalodon SAT heuristic. Next, reduce the three saved
+preprocessing elaboration failures from their typed producer records and
+profile the two timeout cases. Migrate legacy fixtures to exact SAT records,
+then delete the nonqualifying RUP-search compatibility branch. The separate
+declarative script emitter still has broad formula/Skolem rendering failures;
+repair that renderer independently if checked human-readable scripts become a
+required output surface.

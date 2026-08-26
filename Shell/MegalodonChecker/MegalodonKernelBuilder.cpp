@@ -3,8 +3,13 @@
 #include "Kernel/Formula.hpp"
 #include "Kernel/Signature.hpp"
 #include "Kernel/Term.hpp"
+#include "Kernel/Unit.hpp"
 #include "Lib/Environment.hpp"
+#include "SAT/SATClause.hpp"
+#include "SAT/SATInference.hpp"
 
+#include <algorithm>
+#include <limits>
 #include <map>
 #include <set>
 #include <utility>
@@ -657,40 +662,379 @@ MegalodonKernelSyntax::PrimitiveStep avatarSplitStep(
       + " (result " + result.sexpr + "))");
 }
 
-MegalodonKernelSyntax::PrimitiveStep avatarRefutationStep(
-  const std::string& id,
-  const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& parents,
-  const std::vector<MegalodonKernelSyntax::RenderedKernelClause>& satClauses,
-  const std::string& satProof,
-  const MegalodonKernelSyntax::RenderedKernelClause& result)
+namespace {
+
+using SatLiteral = MegalodonKernelSyntax::RenderedKernelSatLiteral;
+using SatClause = std::vector<SatLiteral>;
+
+enum class ExactSatOperationKind {
+  Resolve,
+  Factor,
+  Permute,
+};
+
+struct ExactSatOperation {
+  ExactSatOperationKind kind = ExactSatOperationKind::Permute;
+  unsigned rightParent = 0;
+  std::size_t leftIndex = 0;
+  std::size_t rightIndex = 0;
+  SatClause result;
+};
+
+std::string renderSatClause(const SatClause& clause)
 {
+  std::string rendered = "(sat_clause";
+  for (const SatLiteral& literal : clause) {
+    rendered +=
+      " (lit " + std::to_string(literal.variable)
+      + " " + (literal.positive ? "true" : "false") + ")";
+  }
+  return rendered + ")";
+}
+
+bool satLiteralLess(const SatLiteral& left, const SatLiteral& right)
+{
+  if (left.variable != right.variable) {
+    return left.variable < right.variable;
+  }
+  return left.positive < right.positive;
+}
+
+bool sameSatClauseMultiset(SatClause left, SatClause right)
+{
+  std::sort(left.begin(), left.end(), satLiteralLess);
+  std::sort(right.begin(), right.end(), satLiteralLess);
+  return left == right;
+}
+
+bool complementarySatLiterals(const SatLiteral& left, const SatLiteral& right)
+{
+  return left.variable == right.variable && left.positive != right.positive;
+}
+
+SatClause removeSatLiteral(const SatClause& clause, std::size_t index)
+{
+  SatClause result;
+  result.reserve(clause.size() - 1);
+  for (std::size_t current = 0; current < clause.size(); ++current) {
+    if (current != index) {
+      result.push_back(clause[current]);
+    }
+  }
+  return result;
+}
+
+void factorSatClause(SatClause& clause, std::vector<ExactSatOperation>& operations)
+{
+  while (true) {
+    bool found = false;
+    for (std::size_t left = 0; left < clause.size() && !found; ++left) {
+      for (std::size_t right = left + 1; right < clause.size(); ++right) {
+        if (clause[left] != clause[right]) {
+          continue;
+        }
+        clause = removeSatLiteral(clause, right);
+        ExactSatOperation operation;
+        operation.kind = ExactSatOperationKind::Factor;
+        operation.leftIndex = left;
+        operation.rightIndex = right;
+        operation.result = clause;
+        operations.push_back(std::move(operation));
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return;
+    }
+  }
+}
+
+bool lowerOrderedSatResolution(
+  const SatClause& current,
+  const std::vector<std::pair<unsigned, SatClause>>& parents,
+  std::size_t parentIndex,
+  const SatClause& target,
+  std::vector<ExactSatOperation>& operations)
+{
+  if (parentIndex == parents.size()) {
+    return sameSatClauseMultiset(current, target);
+  }
+  const auto& [rightParent, rightClause] = parents[parentIndex];
+  for (std::size_t leftIndex = 0; leftIndex < current.size(); ++leftIndex) {
+    for (std::size_t rightIndex = 0; rightIndex < rightClause.size(); ++rightIndex) {
+      if (!complementarySatLiterals(current[leftIndex], rightClause[rightIndex])) {
+        continue;
+      }
+      const std::size_t checkpoint = operations.size();
+      SatClause next = removeSatLiteral(current, leftIndex);
+      SatClause rightRest = removeSatLiteral(rightClause, rightIndex);
+      next.insert(next.end(), rightRest.begin(), rightRest.end());
+      ExactSatOperation operation;
+      operation.kind = ExactSatOperationKind::Resolve;
+      operation.rightParent = rightParent;
+      operation.leftIndex = leftIndex;
+      operation.rightIndex = rightIndex;
+      operation.result = next;
+      operations.push_back(std::move(operation));
+      factorSatClause(next, operations);
+      if (lowerOrderedSatResolution(
+            next, parents, parentIndex + 1, target, operations)) {
+        return true;
+      }
+      operations.resize(checkpoint);
+    }
+  }
+  return false;
+}
+
+bool lowerAvatarSatProof(
+  const std::vector<MegalodonKernelSyntax::RenderedKernelSatProofStep>& sourceSteps,
+  std::string& rendered,
+  std::size_t& exactStepCount,
+  std::size_t& rupStepCount)
+{
+  unsigned maximumSourceId = 0;
+  for (const auto& step : sourceSteps) {
+    maximumSourceId = std::max(maximumSourceId, step.id);
+  }
+  if (maximumSourceId == std::numeric_limits<unsigned>::max()) {
+    return false;
+  }
+  unsigned nextSyntheticId = maximumSourceId + 1;
+  std::map<unsigned, SatClause> checked;
+  rendered = "(sat_proof";
+  exactStepCount = 0;
+  rupStepCount = 0;
+  for (const auto& step : sourceSteps) {
+    if (step.id == 0 || checked.find(step.id) != checked.end()) {
+      return false;
+    }
+    if (step.kind == "input") {
+      checked.emplace(step.id, step.literals);
+      rendered +=
+        " (sat_input " + std::to_string(step.id)
+        + " " + renderSatClause(step.literals) + ")";
+      ++exactStepCount;
+      continue;
+    }
+    if (step.kind != "rup" || step.parents.empty()) {
+      return false;
+    }
+    ++rupStepCount;
+    std::vector<std::pair<unsigned, SatClause>> parents;
+    for (const auto& parent : step.parents) {
+      const auto found = checked.find(parent.id);
+      if (found == checked.end()) {
+        return false;
+      }
+      parents.emplace_back(parent.id, found->second);
+    }
+    SatClause initial = parents.front().second;
+    std::vector<ExactSatOperation> operations;
+    factorSatClause(initial, operations);
+    if (!lowerOrderedSatResolution(
+          initial, parents, 1, step.literals, operations)) {
+      return false;
+    }
+    const SatClause finalClause = operations.empty() ? initial : operations.back().result;
+    if (operations.empty() || finalClause != step.literals) {
+      ExactSatOperation permutation;
+      permutation.kind = ExactSatOperationKind::Permute;
+      permutation.result = step.literals;
+      operations.push_back(std::move(permutation));
+    }
+    unsigned currentId = parents.front().first;
+    for (std::size_t index = 0; index < operations.size(); ++index) {
+      const ExactSatOperation& operation = operations[index];
+      const bool finalOperation = index + 1 == operations.size();
+      if (!finalOperation && nextSyntheticId == 0) {
+        return false;
+      }
+      const unsigned operationId =
+        finalOperation ? step.id : nextSyntheticId++;
+      switch (operation.kind) {
+        case ExactSatOperationKind::Resolve:
+          rendered +=
+            " (sat_resolve " + std::to_string(operationId)
+            + " (left " + std::to_string(currentId)
+            + " " + std::to_string(operation.leftIndex) + ")"
+            + " (right " + std::to_string(operation.rightParent)
+            + " " + std::to_string(operation.rightIndex) + ")"
+            + " (result " + renderSatClause(operation.result) + "))";
+          break;
+        case ExactSatOperationKind::Factor:
+          rendered +=
+            " (sat_factor " + std::to_string(operationId)
+            + " (parent " + std::to_string(currentId) + ")"
+            + " (literals " + std::to_string(operation.leftIndex)
+            + " " + std::to_string(operation.rightIndex) + ")"
+            + " (result " + renderSatClause(operation.result) + "))";
+          break;
+        case ExactSatOperationKind::Permute:
+          rendered +=
+            " (sat_permute " + std::to_string(operationId)
+            + " (parent " + std::to_string(currentId) + ")"
+            + " (result " + renderSatClause(operation.result) + "))";
+          break;
+      }
+      currentId = operationId;
+      ++exactStepCount;
+    }
+    checked.emplace(step.id, step.literals);
+  }
+  rendered += ")";
+  return !sourceSteps.empty();
+}
+
+}
+
+bool collectAvatarSatProof(
+  SAT::SATClause* root,
+  MegalodonKernelSyntax::RenderedKernelAvatarRefutation* refutation)
+{
+  if (root == nullptr || refutation == nullptr) {
+    return false;
+  }
+  struct CompareSATClauses {
+    bool operator()(SAT::SATClause* left, SAT::SATClause* right) const
+    {
+      return left->number < right->number;
+    }
+  };
+  std::set<SAT::SATClause*, CompareSATClauses> proof;
+  std::vector<SAT::SATClause*> todo{root};
+  while (!todo.empty()) {
+    SAT::SATClause* current = todo.back();
+    todo.pop_back();
+    if (current == nullptr || !proof.insert(current).second) {
+      continue;
+    }
+    SAT::SATInference* inference = current->inference();
+    if (inference == nullptr || inference->getType() != SAT::SATInference::PROP_INF) {
+      continue;
+    }
+    auto* prop = static_cast<SAT::PropInference*>(inference);
+    for (SAT::SATClause* parent : Lib::iterTraits(prop->getPremises()->iter())) {
+      todo.push_back(parent);
+    }
+  }
+
+  refutation->inputs.clear();
+  refutation->proofSteps.clear();
+  refutation->hasSatRefutationClause = true;
+  refutation->satRefutationClause =
+    MegalodonKernelSyntax::clause(renderSatClause(
+      [&]() {
+        SatClause literals;
+        for (SAT::SATLiteral literal : root->iter()) {
+          literals.push_back({literal.var(), literal.positive()});
+        }
+        return literals;
+      }()));
+  std::size_t proofIndex = 0;
+  std::size_t inputIndex = 0;
+  for (SAT::SATClause* clause : proof) {
+    MegalodonKernelSyntax::RenderedKernelSatProofStep step;
+    step.index = proofIndex++;
+    step.id = clause->number;
+    for (SAT::SATLiteral literal : clause->iter()) {
+      step.literals.push_back({literal.var(), literal.positive()});
+    }
+    step.hasClause = true;
+    step.clause = MegalodonKernelSyntax::clause(renderSatClause(step.literals));
+    SAT::SATInference* inference = clause->inference();
+    if (inference == nullptr) {
+      return false;
+    }
+    if (inference->getType() == SAT::SATInference::FO_CONVERSION) {
+      Kernel::Unit* origin = inference->foConversion()->getOrigin();
+      if (origin == nullptr) {
+        return false;
+      }
+      step.kind = "input";
+      step.hasOriginUnit = true;
+      step.originUnit =
+        MegalodonKernelSyntax::unitRef("u" + std::to_string(origin->number()));
+      MegalodonKernelSyntax::RenderedKernelSatInput input;
+      input.index = inputIndex++;
+      input.hasClause = true;
+      input.clause = step.clause;
+      input.hasOriginUnit = true;
+      input.originUnit = step.originUnit;
+      refutation->inputs.push_back(std::move(input));
+    } else if (inference->getType() == SAT::SATInference::PROP_INF) {
+      step.kind = "rup";
+      auto* prop = static_cast<SAT::PropInference*>(inference);
+      std::size_t parentIndex = 0;
+      for (SAT::SATClause* parent : Lib::iterTraits(prop->getPremises()->iter())) {
+        MegalodonKernelSyntax::RenderedKernelSatProofParent renderedParent;
+        renderedParent.index = parentIndex++;
+        renderedParent.id = parent->number;
+        SatClause parentLiterals;
+        for (SAT::SATLiteral literal : parent->iter()) {
+          parentLiterals.push_back({literal.var(), literal.positive()});
+        }
+        renderedParent.hasClause = true;
+        renderedParent.clause =
+          MegalodonKernelSyntax::clause(renderSatClause(parentLiterals));
+        step.parents.push_back(std::move(renderedParent));
+      }
+    } else {
+      return false;
+    }
+    refutation->proofSteps.push_back(std::move(step));
+  }
+  return true;
+}
+
+bool avatarRefutationStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelAvatarRefutation& refutation,
+  MegalodonKernelSyntax::PrimitiveStep* result)
+{
+  if (result == nullptr || !refutation.hasResultClause) {
+    return false;
+  }
+  std::string satProof;
+  std::size_t exactStepCount = 0;
+  std::size_t rupStepCount = 0;
+  if (!lowerAvatarSatProof(
+        refutation.proofSteps, satProof, exactStepCount, rupStepCount)) {
+    return false;
+  }
   std::vector<std::string> parentIds;
   std::string renderedParents = "(parents";
-  for (const auto& parent : parents) {
-    parentIds.push_back(parent.value);
-    renderedParents += " " + quote(parent.value);
+  std::string renderedSatClauses = "(sat_clauses";
+  for (const auto& input : refutation.inputs) {
+    if (!input.hasOriginUnit || !input.hasClause) {
+      return false;
+    }
+    parentIds.push_back(input.originUnit.value);
+    renderedParents += " " + quote(input.originUnit.value);
+    renderedSatClauses += " " + input.clause.sexpr;
   }
   renderedParents += ")";
-  std::string renderedSatClauses = "(sat_clauses";
-  for (const auto& clause : satClauses) {
-    renderedSatClauses += " " + clause.sexpr;
-  }
   renderedSatClauses += ")";
-  return primitiveClauseStep(
+  *result = primitiveClauseStep(
     "avatar_refutation",
     id,
     parentIds,
-    result.sexpr,
+    refutation.resultClause.sexpr,
     {
-      {"sat_input_count", std::to_string(satClauses.size())},
+      {"sat_input_count", std::to_string(refutation.inputs.size())},
+      {"sat_proof_format", "resolution_v1"},
+      {"sat_lowering_source", "rup_resolution_v1"},
+      {"sat_proof_step_count", std::to_string(exactStepCount)},
+      {"sat_rup_source_step_count", std::to_string(rupStepCount)},
       {"selection_source", "avatar_v1"},
       {"scope", "certificate_local_block_v1"},
       {"primitive_lowering_source", "avatar_v1"},
     },
     "(avatar_refutation " + quote(id) + " " + renderedParents
-      + " " + renderedSatClauses
-      + (satProof.empty() ? "" : " " + satProof)
-      + " (result " + result.sexpr + "))");
+      + " " + renderedSatClauses + " " + satProof
+      + " (result " + refutation.resultClause.sexpr + "))");
+  return true;
 }
 
 namespace {

@@ -12,6 +12,10 @@ namespace Kernel {
 class Formula;
 }
 
+namespace SAT {
+class SATClause;
+}
+
 namespace Shell {
 namespace MegalodonKernelBuilder {
 
@@ -148,12 +152,14 @@ MegalodonKernelSyntax::PrimitiveStep avatarSplitStep(
   const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& parents,
   const MegalodonKernelSyntax::RenderedKernelClause& result);
 
-MegalodonKernelSyntax::PrimitiveStep avatarRefutationStep(
+bool collectAvatarSatProof(
+  SAT::SATClause* root,
+  MegalodonKernelSyntax::RenderedKernelAvatarRefutation* refutation);
+
+bool avatarRefutationStep(
   const std::string& id,
-  const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& parents,
-  const std::vector<MegalodonKernelSyntax::RenderedKernelClause>& satClauses,
-  const std::string& satProof,
-  const MegalodonKernelSyntax::RenderedKernelClause& result);
+  const MegalodonKernelSyntax::RenderedKernelAvatarRefutation& refutation,
+  MegalodonKernelSyntax::PrimitiveStep* result);
 
 std::vector<MegalodonKernelSyntax::RenderedKernelSkolemBranchScopeSymbol>
 sourceSignatureScope(

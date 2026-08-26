@@ -254,6 +254,21 @@ struct RenderedKernelSatInput {
   RenderedKernelUnitRef originUnit;
 };
 
+struct RenderedKernelSatLiteral {
+  unsigned variable = 0;
+  bool positive = false;
+
+  bool operator==(const RenderedKernelSatLiteral& other) const
+  {
+    return variable == other.variable && positive == other.positive;
+  }
+
+  bool operator!=(const RenderedKernelSatLiteral& other) const
+  {
+    return !(*this == other);
+  }
+};
+
 struct RenderedKernelSatProofParent {
   std::size_t index = 0;
   unsigned id = 0;
@@ -266,6 +281,7 @@ struct RenderedKernelSatProofStep {
   unsigned id = 0;
   bool hasClause = false;
   RenderedKernelClause clause;
+  std::vector<RenderedKernelSatLiteral> literals;
   std::string kind;
   bool hasOriginUnit = false;
   RenderedKernelUnitRef originUnit;
