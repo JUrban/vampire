@@ -330,3 +330,38 @@ architecture. That large fallback remains frozen compatibility code. The next
 Vampire-side superposition work must construct exact typed primitive records
 from recorded inference data and then delete the corresponding search branch;
 it must not add more candidate reconstruction to the fallback.
+
+## Typed Superposition Primitive Chains, 2026-08-26
+
+Superposition output now has enforceable builder ownership. The rule-specific
+`MegalodonKernelBuilder::paramodulateStep` owns equality/target parent
+references, selected literal indices, rewrite position, source and replacement
+terms, result clause, and canonical Lisp rendering. `PrimitiveChain` preserves
+the exact successful ordered sequence and refuses to expose a chain containing
+a non-builder primitive. Both current superposition emitters route their
+`substitute`, `factor`, `equality_symmetry`, and `paramodulate` records through
+rule-specific builders.
+
+The already generated native chain is cached by Vampire unit number and added
+to that unit's `kernel_v1` record; metadata generation does not rerun
+superposition reconstruction. Fresh metadata therefore carries
+`primitive_expansion_builder=typed_v1` and per-step typed ownership, while the
+selected required primitive remains `paramodulate` even when substitutions
+precede it.
+
+The final 20-worker corpus at
+`/project/tmp/superposition_typed_builder_refactored_final_100_20260826`
+passes 100/100 source-linked THF certificates under ten-second Vampire limits,
+builder-strict Megalodon checking, and both audits. It contains 351
+superposition macros; all 351 have typed builder chains, comprising 352
+`paramodulate` and 394 `substitute` primitives. The live `u141` test now also
+requires typed paramodulation ownership.
+
+This completes output ownership, not extraction ownership. The large
+`certificateSuperpositionStepsSexpr` and
+`certificateSuperpositionStepSexpr` routines still perform candidate
+selection and normalization inside `MegalodonChecker.cpp`. The next change
+must use exact selected literals, substitutions, orientation, and positions
+from Vampire's inference record to build the primitive chain directly, then
+delete the corresponding candidate loops. More fallback cases or larger
+search bounds are prohibited.

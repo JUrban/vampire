@@ -53,6 +53,33 @@ MegalodonKernelSyntax::PrimitiveStep primitiveClauseStep(
 
 }
 
+std::string PrimitiveChain::render(
+  MegalodonKernelSyntax::PrimitiveStep primitive)
+{
+  const std::string rendered = primitive.rendered;
+  _primitives[rendered] = std::move(primitive);
+  return rendered;
+}
+
+bool PrimitiveChain::collect(
+  const std::vector<std::string>& renderedSteps,
+  std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps) const
+{
+  if (primitiveSteps == nullptr) {
+    return true;
+  }
+  primitiveSteps->clear();
+  for (const std::string& rendered : renderedSteps) {
+    auto primitive = _primitives.find(rendered);
+    if (primitive == _primitives.end()) {
+      primitiveSteps->clear();
+      return false;
+    }
+    primitiveSteps->push_back(primitive->second);
+  }
+  return true;
+}
+
 MegalodonKernelSyntax::PrimitiveStep resolveStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& leftParent,
@@ -173,6 +200,40 @@ MegalodonKernelSyntax::PrimitiveStep equalityResolutionConstraintsStep(
       + " (literal " + literalText + ")"
       + " (selected " + selected.sexpr + ")"
       + " (constraints " + constraints.sexpr + ")"
+      + " (result " + result.sexpr + "))");
+}
+
+MegalodonKernelSyntax::PrimitiveStep paramodulateStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& equalityParent,
+  std::size_t equalityLiteral,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& targetParent,
+  std::size_t targetLiteral,
+  const MegalodonKernelSyntax::RenderedKernelPosition& position,
+  const MegalodonKernelSyntax::RenderedKernelTerm& from,
+  const MegalodonKernelSyntax::RenderedKernelTerm& to,
+  const MegalodonKernelSyntax::RenderedKernelClause& result)
+{
+  const std::string equalityLiteralText = std::to_string(equalityLiteral);
+  const std::string targetLiteralText = std::to_string(targetLiteral);
+  return primitiveClauseStep(
+    "paramodulate",
+    id,
+    {equalityParent.value, targetParent.value},
+    result.sexpr,
+    {
+      {"equality_literal", equalityLiteralText},
+      {"target_literal", targetLiteralText},
+      {"position", position.sexpr},
+      {"from", from.sexpr},
+      {"to", to.sexpr},
+    },
+    "(paramodulate " + quote(id)
+      + " (equality " + quote(equalityParent.value) + " " + equalityLiteralText + ")"
+      + " (target " + quote(targetParent.value) + " " + targetLiteralText + ") "
+      + position.sexpr
+      + " (from " + from.sexpr + ")"
+      + " (to " + to.sexpr + ")"
       + " (result " + result.sexpr + "))");
 }
 

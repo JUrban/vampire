@@ -4,6 +4,7 @@
 #include "Shell/MegalodonChecker/MegalodonKernelSyntax.hpp"
 
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,17 @@ class Formula;
 
 namespace Shell {
 namespace MegalodonKernelBuilder {
+
+class PrimitiveChain {
+public:
+  std::string render(MegalodonKernelSyntax::PrimitiveStep primitive);
+  bool collect(
+    const std::vector<std::string>& renderedSteps,
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps) const;
+
+private:
+  std::map<std::string, MegalodonKernelSyntax::PrimitiveStep> _primitives;
+};
 
 MegalodonKernelSyntax::PrimitiveStep resolveStep(
   const std::string& id,
@@ -56,6 +68,17 @@ MegalodonKernelSyntax::PrimitiveStep equalityResolutionConstraintsStep(
   const MegalodonKernelSyntax::RenderedKernelClause& constraints,
   const MegalodonKernelSyntax::RenderedKernelClause& result,
   const std::vector<std::pair<std::string, std::string>>& metadataFields);
+
+MegalodonKernelSyntax::PrimitiveStep paramodulateStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& equalityParent,
+  std::size_t equalityLiteral,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& targetParent,
+  std::size_t targetLiteral,
+  const MegalodonKernelSyntax::RenderedKernelPosition& position,
+  const MegalodonKernelSyntax::RenderedKernelTerm& from,
+  const MegalodonKernelSyntax::RenderedKernelTerm& to,
+  const MegalodonKernelSyntax::RenderedKernelClause& result);
 
 MegalodonKernelSyntax::PrimitiveStep foolAtomLiftStep(
   const std::string& id,

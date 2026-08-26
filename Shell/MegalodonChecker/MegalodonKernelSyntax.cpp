@@ -291,6 +291,9 @@ bool appendPrimitiveExpansionChainFields(
   }
   if (!requiredRules.empty()) {
     auto preferred = std::find(requiredRules.begin(), requiredRules.end(), "resolve");
+    if (preferred == requiredRules.end()) {
+      preferred = std::find(requiredRules.begin(), requiredRules.end(), "paramodulate");
+    }
     fields.push_back(
       "primitive_expansion_requires="
       + (preferred != requiredRules.end() ? *preferred : requiredRules.front()));
@@ -346,6 +349,9 @@ bool appendPrimitiveExpansionChainFields(
   fields.push_back("primitive_expansion_prefix=" + expectedFinalId);
   if (!requiredRules.empty()) {
     auto preferred = std::find(requiredRules.begin(), requiredRules.end(), "resolve");
+    if (preferred == requiredRules.end()) {
+      preferred = std::find(requiredRules.begin(), requiredRules.end(), "paramodulate");
+    }
     fields.push_back(
       "primitive_expansion_requires="
       + (preferred != requiredRules.end() ? *preferred : requiredRules.front()));

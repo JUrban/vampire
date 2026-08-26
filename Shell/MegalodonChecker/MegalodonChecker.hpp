@@ -162,7 +162,8 @@ private:
     Kernel::Clause* parent,
     const Kernel::Substitution& substitution,
     std::string& step,
-    std::vector<std::string>& metadata);
+    std::vector<std::string>& metadata,
+    MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
   bool certificateRewriteTermAtMegalodonPosition(Kernel::TermList term, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::TermList& rewritten);
   bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::Literal*& rewritten);
   bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, std::string& rendered);
@@ -244,8 +245,16 @@ private:
   bool certificateForwardSubsumptionDemodulationStepsSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateDemodulationStepsSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateParamodulateStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
-  bool certificateSuperpositionStepsSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
-  bool certificateSuperpositionStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
+  bool certificateSuperpositionStepsSexpr(
+    Kernel::Unit* unit,
+    const InferenceRecorder::InferenceInformation* replayInfo,
+    std::string& result,
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
+  bool certificateSuperpositionStepSexpr(
+    Kernel::Unit* unit,
+    const InferenceRecorder::InferenceInformation* replayInfo,
+    std::string& result,
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   std::string certificateJsonWithStepIds(Kernel::Unit* unit, const std::string& certificateJson);
   std::string certificateFallbackSourceJson(Kernel::Unit* unit);
   void printMegalodonCertificateJson() const;
@@ -280,6 +289,8 @@ private:
   std::vector<std::string> _certificateNativeMetadata;
   std::vector<std::string> _certificateNativeSteps;
   std::set<unsigned> _certificateNativeStepIds;
+  std::map<unsigned, std::vector<MegalodonKernelSyntax::PrimitiveStep>>
+    _certificateNativePrimitiveStepsByUnit;
 };
 
 } // namespace Shell
