@@ -18,6 +18,7 @@ struct PrimitiveStep {
   std::string rule;
   std::string id;
   std::string rendered;
+  bool builderOwned = false;
   std::vector<std::string> parentIds;
   bool hasResultClause = false;
   std::string resultClause;

@@ -128,6 +128,19 @@ typed `PrimitiveStep` metadata. Those branches must either call a rule-specific
 builder or be removed from the qualifying export. New primitive rules must not
 add another generic construction path.
 
+Builder ownership is now externally checkable for indexed expansion chains.
+The private builder marks every constructed `PrimitiveStep`; chain
+serialization fails if any step lacks that mark and emits
+`primitive_expansion_builder=typed_v1` plus a `typed_v1` marker for each
+indexed step. Megalodon qualifying replay checks these fields in its extracted
+kernel checker. A fresh 100-case, 20-worker run passed builder-strict checking,
+and deleting one marker from a focused certificate is rejected.
+
+This provenance is not yet a claim that the whole exporter is builder-owned.
+It covers indexed expansion chains only. Direct legacy records need the same
+enforceable ownership boundary before any proof can be classified as fully
+Ivy-path.
+
 ## Initial Export Fragment
 
 The initial qualifying schedule should avoid AVATAR and higher-order-heavy

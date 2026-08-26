@@ -43,6 +43,7 @@ MegalodonKernelSyntax::PrimitiveStep primitiveClauseStep(
   step.rule = rule;
   step.id = id;
   step.rendered = rendered;
+  step.builderOwned = true;
   step.parentIds = parentIds;
   step.hasResultClause = true;
   step.resultClause = resultClause;

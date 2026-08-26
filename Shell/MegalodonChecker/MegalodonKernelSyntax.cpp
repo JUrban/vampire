@@ -327,7 +327,10 @@ bool appendPrimitiveExpansionChainFields(
   }
   std::vector<std::string> requiredRules;
   for (const auto& step : primitiveSteps) {
-    if (step.rule.empty() || step.id.empty() || step.rendered.empty()) {
+    if (!step.builderOwned
+      || step.rule.empty()
+      || step.id.empty()
+      || step.rendered.empty()) {
       return false;
     }
     if (!isPrimitiveRule(step.rule)) {
@@ -339,6 +342,7 @@ bool appendPrimitiveExpansionChainFields(
     }
   }
   fields.push_back("primitive_expansion=prefix");
+  fields.push_back("primitive_expansion_builder=typed_v1");
   fields.push_back("primitive_expansion_prefix=" + expectedFinalId);
   if (!requiredRules.empty()) {
     auto preferred = std::find(requiredRules.begin(), requiredRules.end(), "resolve");
@@ -354,6 +358,8 @@ bool appendPrimitiveExpansionChainFields(
       "primitive_expansion_step_" + std::to_string(i) + "_rule=" + primitiveSteps[i].rule);
     fields.push_back(
       "primitive_expansion_step_" + std::to_string(i) + "_id=" + primitiveSteps[i].id);
+    fields.push_back(
+      "primitive_expansion_step_" + std::to_string(i) + "_builder=typed_v1");
     fields.push_back(
       "primitive_expansion_step_" + std::to_string(i) + "_parent_count="
       + std::to_string(primitiveSteps[i].parentIds.size()));
