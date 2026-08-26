@@ -777,3 +777,47 @@ proof failure. Keep the producer-owned certificate and native checked-claim
 path authoritative; do not move this work back into Python or infer missing
 Skolem data in OCaml. The separate simple declarative emitter remains a
 diagnostic output surface and still has independent rendering failures.
+
+### Live Qed preserves the producer claim graph, 2026-08-26
+
+The cached 100-certificate gate above checks the native proof terms but leaves
+unresolved source premises as assumptions. The stronger original-development
+bridge must resolve those premises to live Megalodon lemmas and the current
+conjecture and then pass ordinary `Qed`. That bridge now preserves the same
+producer-owned checked-claim graph instead of beta-normalizing it into a proof
+tree.
+
+Megalodon's extracted elaborator performs term-only beta reduction for open
+choice/extensionality macros and leaves proof-lambda applications as claim
+lets. Bare, partially applied native `dneg` and proposition-extensionality
+primitives are translated by extracted proof constructors parameterized by
+the live library's `xm`, `FalseE`, `prop_ext`, and `iffI`. Final classical
+closure is constructed deterministically and checked once by normal
+Megalodon `Qed`; no certificate-local definition is installed globally.
+
+The current live artifact passes twelve original commands through `and6I`:
+
+```text
+/project/tmp/live-prefix12-final-branch-20260826
+LIVE_HAMMER_PREFIX_AVATAR_REFUTATIONS 11
+LIVE_HAMMER_PREFIX_QUALIFYING_PASS 12
+```
+
+Separately, the same Megalodon binary passed all 100 fixed producer
+certificates with ten parallel consumer workers and no new Vampire runs:
+
+```text
+/project/tmp/checked-claim-100-final-branch-20260826
+    100 PASS
+```
+
+That is a broad certificate-consumer regression, not live E1 evidence, because
+its unresolved source premises remain assumptions.
+
+The harness requires a DAG-preservation marker for every reconstructed
+command, in addition to the ten-second Vampire bound, exact source checking,
+no-fallback guards, signature isolation, and final `Qed`. This is a 12-theorem
+E1 frontier, not a reclassification of the cached 100 certificates. Future
+certificate evolution must keep atomic producer records shareable; the
+consumer may type-check and elaborate them but must not flatten the graph or
+rediscover a proof tree.
