@@ -301,6 +301,7 @@ bool appendPrimitiveExpansionChainFields(
           std::string rule = expansion.substr(ruleStart, cursor - ruleStart);
           if (rule != finalRule
             && rule != "step_variable_sorts"
+            && rule != "step_free_variable_sorts"
             && rule != "step_extra") {
             std::size_t quoteStart = expansion.find('"', cursor);
             if (quoteStart != std::string::npos) {

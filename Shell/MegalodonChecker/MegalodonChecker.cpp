@@ -6,6 +6,7 @@
 #include "Kernel/EqHelper.hpp"
 #include "Kernel/Formula.hpp"
 #include "Kernel/FormulaUnit.hpp"
+#include "Kernel/FormulaVarIterator.hpp"
 #include "Kernel/HOL/HOL.hpp"
 #include "Kernel/Inference.hpp"
 #include "Kernel/Matcher.hpp"
@@ -798,9 +799,9 @@ bool MegalodonChecker::certificateSubstituteStepPartsSexpr(
       MegalodonKernelSyntax::unitRef(parentId),
       MegalodonKernelSyntax::substitution(substitutionSexpr),
       MegalodonKernelSyntax::clause(resultClause));
-  if (!renderedResultVarSorts.empty()) {
+  auto appendResultVariableSorts = [&](const char* tag) {
     std::ostringstream metadataOut;
-    metadataOut << "(step_variable_sorts " << sexprQuote(id) << " (";
+    metadataOut << '(' << tag << ' ' << sexprQuote(id) << " (";
     for (std::size_t i = 0; i < renderedResultVarSorts.size(); ++i) {
       if (i != 0) {
         metadataOut << ' ';
@@ -809,7 +810,11 @@ bool MegalodonChecker::certificateSubstituteStepPartsSexpr(
     }
     metadataOut << "))";
     metadata.push_back(metadataOut.str());
+  };
+  if (!renderedResultVarSorts.empty()) {
+    appendResultVariableSorts("step_variable_sorts");
   }
+  appendResultVariableSorts("step_free_variable_sorts");
   std::string kernelMetadata;
   if (!certificateInstantiationKernelMetadataSexpr(
         id,
@@ -4603,22 +4608,25 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         rendered.push_back({var, variableName(var) + ":" + sortText});
       }
     }
-    if (rendered.empty()) {
-      return;
-    }
     std::sort(rendered.begin(), rendered.end(), [](const auto& left, const auto& right) {
       return left.first < right.first;
     });
-    std::ostringstream metadata;
-    metadata << "(step_variable_sorts " << sexprQuote(stepId) << " (";
-    for (std::size_t i = 0; i < rendered.size(); ++i) {
-      if (i != 0) {
-        metadata << ' ';
+    auto addRecord = [&](const char* tag) {
+      std::ostringstream metadata;
+      metadata << '(' << tag << ' ' << sexprQuote(stepId) << " (";
+      for (std::size_t i = 0; i < rendered.size(); ++i) {
+        if (i != 0) {
+          metadata << ' ';
+        }
+        metadata << sexprQuote(rendered[i].second);
       }
-      metadata << sexprQuote(rendered[i].second);
+      metadata << "))";
+      syntheticMetadata.push_back(metadata.str());
+    };
+    if (!rendered.empty()) {
+      addRecord("step_variable_sorts");
     }
-    metadata << "))";
-    syntheticMetadata.push_back(metadata.str());
+    addRecord("step_free_variable_sorts");
   };
   const std::string unitId = "u" + std::to_string(unit->number());
   auto addSyntheticInstantiationMetadata =
@@ -6710,25 +6718,27 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
         return std::string();
       }
       std::vector<std::string> variables = collectSexprVariables(clause);
-      if (variables.empty()) {
-        return std::string();
-      }
-      std::ostringstream metadata;
+      std::ostringstream records;
+      std::ostringstream fields;
       bool any = false;
-      metadata << "(step_variable_sorts " << sexprQuote(id) << " (";
       for (const std::string& variable : variables) {
         auto sort = knownVariableSorts.find(variable);
         if (sort == knownVariableSorts.end()) {
           continue;
         }
         if (any) {
-          metadata << ' ';
+          fields << ' ';
         }
-        metadata << sexprQuote(variable + ":" + sort->second);
+        fields << sexprQuote(variable + ":" + sort->second);
         any = true;
       }
-      metadata << "))";
-      return any ? metadata.str() : std::string();
+      if (any) {
+        records << "(step_variable_sorts " << sexprQuote(id)
+                << " (" << fields.str() << "))\n  ";
+      }
+      records << "(step_free_variable_sorts " << sexprQuote(id)
+              << " (" << fields.str() << "))";
+      return records.str();
     };
   auto substitutedAtomSexpr =
     [&](Kernel::Literal* literal, const Kernel::Substitution& substitution, bool swapEquality, std::string& rendered) {
@@ -10157,8 +10167,7 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
           cursor = nameEnd + 2;
         }
       }
-      std::ostringstream metadata;
-      metadata << "(step_variable_sorts " << sexprQuote(id) << " (";
+      std::ostringstream fields;
       bool any = false;
       for (const std::string& variable : variables) {
         auto sort = knownVariableSorts.find(variable);
@@ -10166,15 +10175,19 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
           continue;
         }
         if (any) {
-          metadata << ' ';
+          fields << ' ';
         }
-        metadata << sexprQuote(variable + ":" + sort->second);
+        fields << sexprQuote(variable + ":" + sort->second);
         any = true;
       }
-      metadata << "))";
       if (any) {
-        syntheticMetadata.push_back(metadata.str());
+        syntheticMetadata.push_back(
+          "(step_variable_sorts " + sexprQuote(id)
+          + " (" + fields.str() + "))");
       }
+      syntheticMetadata.push_back(
+        "(step_free_variable_sorts " + sexprQuote(id)
+        + " (" + fields.str() + "))");
     };
 
   for (std::size_t parentIndex = 0; parentIndex < parents.size(); ++parentIndex) {
@@ -25179,39 +25192,68 @@ void MegalodonChecker::printMegalodonSymbolDeclarations()
 
 void MegalodonChecker::printStepVariableSorts(Kernel::Unit* u)
 {
-  Lib::DHMap<unsigned, Kernel::TermList> varSorts;
-  Kernel::SortHelper::collectVariableSorts(u, varSorts);
-  std::vector<std::pair<unsigned, std::string>> rendered;
-  Lib::DHMap<unsigned, Kernel::TermList>::Iterator it(varSorts);
-  while (it.hasNext()) {
-    unsigned var;
-    Kernel::TermList sort;
-    it.next(var, sort);
-    std::string sortText;
-    if (sortToMegalodon(sort, sortText)) {
-      rendered.push_back({var, variableName(var) + ":" + sortText});
+  Lib::DHMap<unsigned, Kernel::TermList> variableSorts;
+  Kernel::SortHelper::collectVariableSorts(u, variableSorts);
+  std::set<unsigned> freeVariables;
+  if (u->isClause()) {
+    for (Kernel::Literal* literal : u->asClause()->iterLits()) {
+      Kernel::FormulaVarIterator variables(static_cast<const Kernel::Term*>(literal));
+      while (variables.hasNext()) {
+        freeVariables.insert(variables.next());
+      }
+    }
+  } else {
+    Kernel::FormulaVarIterator variables(u->getFormula());
+    while (variables.hasNext()) {
+      freeVariables.insert(variables.next());
     }
   }
-  if (rendered.empty()) {
-    return;
-  }
-  std::sort(rendered.begin(), rendered.end(), [](const auto& left, const auto& right) {
-    return left.first < right.first;
-  });
-  out << "megalodon_step_variable_sorts(" << u->number() << ",[";
-  std::ostringstream metadata;
-  metadata << "(step_variable_sorts " << sexprQuote("u" + std::to_string(u->number())) << " (";
-  for (std::size_t i = 0; i < rendered.size(); ++i) {
-    if (i != 0) {
-      out << ',';
-      metadata << ' ';
+
+  auto renderVariableSorts = [&](const std::set<unsigned>* selected) {
+    std::vector<std::pair<unsigned, std::string>> rendered;
+    Lib::DHMap<unsigned, Kernel::TermList>::Iterator it(variableSorts);
+    while (it.hasNext()) {
+      unsigned var;
+      Kernel::TermList sort;
+      it.next(var, sort);
+      if (selected != nullptr && selected->find(var) == selected->end()) {
+        continue;
+      }
+      std::string sortText;
+      if (sortToMegalodon(sort, sortText)) {
+        rendered.push_back({var, variableName(var) + ":" + sortText});
+      }
     }
-    out << quote(rendered[i].second);
-    metadata << sexprQuote(rendered[i].second);
-  }
-  out << "]).\n";
-  metadata << "))";
-  _certificateNativeMetadata.push_back(metadata.str());
+    std::sort(rendered.begin(), rendered.end(), [](const auto& left, const auto& right) {
+      return left.first < right.first;
+    });
+    return rendered;
+  };
+  auto emitVariableSorts = [&](const std::string& tag,
+                               const std::vector<std::pair<unsigned, std::string>>& rendered,
+                               bool alwaysEmit) {
+    if (rendered.empty() && !alwaysEmit) {
+      return;
+    }
+    out << "megalodon_" << tag << '(' << u->number() << ",[";
+    std::ostringstream metadata;
+    metadata << '(' << tag << ' ' << sexprQuote("u" + std::to_string(u->number())) << " (";
+    for (std::size_t i = 0; i < rendered.size(); ++i) {
+      if (i != 0) {
+        out << ',';
+        metadata << ' ';
+      }
+      out << quote(rendered[i].second);
+      metadata << sexprQuote(rendered[i].second);
+    }
+    out << "]).\n";
+    metadata << "))";
+    _certificateNativeMetadata.push_back(metadata.str());
+  };
+
+  emitVariableSorts("step_variable_sorts", renderVariableSorts(nullptr), false);
+  emitVariableSorts(
+    "step_free_variable_sorts", renderVariableSorts(&freeVariables), true);
 }
 
 void MegalodonChecker::printStep(Kernel::Unit* u)
