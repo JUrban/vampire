@@ -4643,7 +4643,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         const std::vector<std::pair<std::string, std::string>>& fields,
         const std::string& rendered) {
       localPrimitiveSteps.push_back(
-        MegalodonKernelSyntax::primitiveClauseStep(
+        MegalodonKernelBuilder::primitiveClauseStep(
           rule,
           stepId,
           parentIds,
@@ -5418,7 +5418,7 @@ bool MegalodonChecker::certificateResolveStepSexpr(
           + " (literal " + std::to_string(pivotIndex) + ")"
           + " (result " + symmetryClause + "))");
         localPrimitiveSteps.push_back(
-          MegalodonKernelSyntax::primitiveClauseStep(
+          MegalodonKernelBuilder::primitiveClauseStep(
             "equality_symmetry",
             symmetryId,
             {parentId},
@@ -5445,7 +5445,7 @@ bool MegalodonChecker::certificateResolveStepSexpr(
       + " (pivot " + std::to_string(leftIndex) + " " + std::to_string(rightIndex) + ")"
       + " (result " + resolveResultClause + "))");
     localPrimitiveSteps.push_back(
-      MegalodonKernelSyntax::primitiveClauseStep(
+      MegalodonKernelBuilder::primitiveClauseStep(
         "resolve",
         resolveId,
         {leftParentId, rightParentId},
@@ -5479,7 +5479,7 @@ bool MegalodonChecker::certificateResolveStepSexpr(
               + " (literals " + std::to_string(left) + " " + std::to_string(right) + ")"
               + " (result " + factorClause + "))");
             localPrimitiveSteps.push_back(
-              MegalodonKernelSyntax::primitiveClauseStep(
+              MegalodonKernelBuilder::primitiveClauseStep(
                 "factor",
                 factorId,
                 {currentParentId},
@@ -5502,7 +5502,7 @@ bool MegalodonChecker::certificateResolveStepSexpr(
         + " (parent " + sexprQuote(currentParentId) + ") (subst)"
         + " (result " + finalClause + "))");
       localPrimitiveSteps.push_back(
-        MegalodonKernelSyntax::primitiveClauseStep(
+        MegalodonKernelBuilder::primitiveClauseStep(
           "substitute",
           stepBase,
           {currentParentId},
@@ -6021,7 +6021,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
         }
         steps.push_back(substituteStep);
         localPrimitiveSteps.push_back(
-          MegalodonKernelSyntax::primitiveClauseStep(
+          MegalodonKernelBuilder::primitiveClauseStep(
             "substitute",
             substituteId,
             {parentId},
@@ -6047,7 +6047,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
       + " (pivot " + std::to_string(leftPivotIndex) + " " + std::to_string(rightPivotIndex) + ")"
       + " (result " + conclusion + "))");
     localPrimitiveSteps.push_back(
-      MegalodonKernelSyntax::primitiveClauseStep(
+      MegalodonKernelBuilder::primitiveClauseStep(
         "resolve",
         stepBase,
         {parentIds[leftIndex], parentIds[rightIndex]},
@@ -6265,7 +6265,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
           }
           steps.push_back(sideSubstituteStep);
           localPrimitiveSteps.push_back(
-            MegalodonKernelSyntax::primitiveClauseStep(
+            MegalodonKernelBuilder::primitiveClauseStep(
               "substitute",
               sideParentId,
               {"u" + std::to_string(parents[sideParentIndex]->number())},
@@ -6286,7 +6286,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
           steps.push_back(
             sideSymmetryStep);
           localPrimitiveSteps.push_back(
-            MegalodonKernelSyntax::primitiveClauseStep(
+            MegalodonKernelBuilder::primitiveClauseStep(
               "equality_symmetry",
               sideSymmetryId,
               {sideParentId},
@@ -6311,7 +6311,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
         steps.push_back(
           resolveStep);
         localPrimitiveSteps.push_back(
-          MegalodonKernelSyntax::primitiveClauseStep(
+          MegalodonKernelBuilder::primitiveClauseStep(
             "resolve",
             resolveId,
             {parentIds[mainParentIndex], parentIds[sideParentIndex]},
@@ -6345,7 +6345,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
               steps.push_back(
                 symmetryStep);
               localPrimitiveSteps.push_back(
-                MegalodonKernelSyntax::primitiveClauseStep(
+                MegalodonKernelBuilder::primitiveClauseStep(
                   "equality_symmetry",
                   symmetryId,
                   {currentParentId},
@@ -6387,7 +6387,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
                 steps.push_back(
                   factorStep);
                 localPrimitiveSteps.push_back(
-                  MegalodonKernelSyntax::primitiveClauseStep(
+                  MegalodonKernelBuilder::primitiveClauseStep(
                     "factor",
                     factorId,
                     {currentParentId},
@@ -6414,7 +6414,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
           steps.push_back(
             finalStep);
           localPrimitiveSteps.push_back(
-            MegalodonKernelSyntax::primitiveClauseStep(
+            MegalodonKernelBuilder::primitiveClauseStep(
               "substitute",
               stepBase,
               {currentParentId},
@@ -6770,7 +6770,7 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
         }
         if (!sideSubstituteId.empty()) {
           localPrimitiveSteps.push_back(
-            MegalodonKernelSyntax::primitiveClauseStep(
+            MegalodonKernelBuilder::primitiveClauseStep(
               "substitute",
               sideSubstituteId,
               {sideParentId},
@@ -6813,7 +6813,7 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
           primitivePrefix += sideSymmetryStep;
           primitivePrefix += "\n  ";
           localPrimitiveSteps.push_back(
-            MegalodonKernelSyntax::primitiveClauseStep(
+            MegalodonKernelBuilder::primitiveClauseStep(
               "equality_symmetry",
               sideSymmetryId,
               {sideSymmetryParentId},
@@ -6883,7 +6883,7 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
         primitivePrefix += resolveStep;
         primitivePrefix += "\n  ";
         localPrimitiveSteps.push_back(
-          MegalodonKernelSyntax::primitiveClauseStep(
+          MegalodonKernelBuilder::primitiveClauseStep(
             "resolve",
             resolveId,
             {mainParentId, resolveSideParentId},
@@ -6920,7 +6920,7 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
               primitivePrefix += factorStep;
               primitivePrefix += "\n  ";
               localPrimitiveSteps.push_back(
-                MegalodonKernelSyntax::primitiveClauseStep(
+                MegalodonKernelBuilder::primitiveClauseStep(
                   "factor",
                   factorId,
                   {currentParentId},
@@ -6944,7 +6944,7 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
           + " (result " + resultClauseSexpr + "))";
         result = primitivePrefix + finalStep;
         localPrimitiveSteps.push_back(
-          MegalodonKernelSyntax::primitiveClauseStep(
+          MegalodonKernelBuilder::primitiveClauseStep(
             "substitute",
             stepBase,
             {currentParentId},
@@ -7601,7 +7601,7 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
       steps.push_back(renderedStep);
       if (equalityResolutionPrimitive != nullptr) {
         *equalityResolutionPrimitive =
-          MegalodonKernelSyntax::primitiveClauseStep(
+          MegalodonKernelBuilder::primitiveClauseStep(
             "equality_resolution_constraints",
             unitId,
             {activeParentId},
@@ -7653,7 +7653,7 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
     steps.push_back(equalityResolutionStep);
     if (equalityResolutionPrimitive != nullptr) {
       *equalityResolutionPrimitive =
-        MegalodonKernelSyntax::primitiveClauseStep(
+        MegalodonKernelBuilder::primitiveClauseStep(
           "equality_resolution",
           equalityResolutionId,
           {activeParentId},

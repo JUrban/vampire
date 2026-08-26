@@ -93,6 +93,25 @@ Skolem/epsilon proof object, but it moves the critical transport proposition
 out of Megalodon-side proof inspection and into Vampire-emitted, typed
 certificate data.
 
+Post-audit correction, 2026-08-26: `MegalodonKernelSyntax` had incorrectly
+retained the constructor for `PrimitiveStep`.  That made the printer module a
+second builder and allowed inference code to bypass `MegalodonKernelBuilder`.
+The constructor has now been removed from the syntax API, and all twenty live
+clausal primitive construction sites route through
+`MegalodonKernelBuilder::primitiveClauseStep`.  A 20-worker, 100-case THF run
+with ten-second Vampire limits passed strict Megalodon certificate checking,
+the primitive-record audit, and the `kernel_v1` metadata audit.
+
+This is an ownership correction, not completion of the primitive builder.
+Several call sites still render the primitive S-expression in
+`MegalodonChecker.cpp` and then hand both the rendered text and structured
+fields to the builder.  The next extraction must replace that duplication with
+rule-specific builder operations for `resolve`, `factor`, `substitute`, and
+`equality_symmetry`.  Those operations should consume parent ids, typed
+clauses/substitutions, and selected literal indices and should produce the
+canonical rendering internally.  New primitive rules must not add another
+generic construction path.
+
 ## Initial Export Fragment
 
 The initial qualifying schedule should avoid AVATAR and higher-order-heavy

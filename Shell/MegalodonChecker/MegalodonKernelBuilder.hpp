@@ -14,6 +14,14 @@ class Formula;
 namespace Shell {
 namespace MegalodonKernelBuilder {
 
+MegalodonKernelSyntax::PrimitiveStep primitiveClauseStep(
+  const std::string& rule,
+  const std::string& id,
+  const std::vector<std::string>& parentIds,
+  const std::string& resultClause,
+  const std::vector<std::pair<std::string, std::string>>& fields,
+  const std::string& rendered);
+
 std::vector<MegalodonKernelSyntax::RenderedKernelSkolemBranchScopeSymbol>
 sourceSignatureScope(
   Kernel::Formula* formula,

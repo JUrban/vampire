@@ -214,30 +214,6 @@ PrimitiveExpansion primitiveExpansion(
   return {prefix, primitiveRule};
 }
 
-PrimitiveStep primitiveStep(
-  const std::string& rule,
-  const std::string& id,
-  const std::string& rendered)
-{
-  return {rule, id, rendered};
-}
-
-PrimitiveStep primitiveClauseStep(
-  const std::string& rule,
-  const std::string& id,
-  const std::vector<std::string>& parentIds,
-  const std::string& resultClause,
-  const std::vector<std::pair<std::string, std::string>>& fields,
-  const std::string& rendered)
-{
-  PrimitiveStep step = primitiveStep(rule, id, rendered);
-  step.parentIds = parentIds;
-  step.hasResultClause = true;
-  step.resultClause = resultClause;
-  step.fields = fields;
-  return step;
-}
-
 void appendPrimitiveExpansion(
   std::vector<std::string>& fields,
   const PrimitiveExpansion& expansion)

@@ -12,6 +12,25 @@
 namespace Shell {
 namespace MegalodonKernelBuilder {
 
+MegalodonKernelSyntax::PrimitiveStep primitiveClauseStep(
+  const std::string& rule,
+  const std::string& id,
+  const std::vector<std::string>& parentIds,
+  const std::string& resultClause,
+  const std::vector<std::pair<std::string, std::string>>& fields,
+  const std::string& rendered)
+{
+  MegalodonKernelSyntax::PrimitiveStep step;
+  step.rule = rule;
+  step.id = id;
+  step.rendered = rendered;
+  step.parentIds = parentIds;
+  step.hasResultClause = true;
+  step.resultClause = resultClause;
+  step.fields = fields;
+  return step;
+}
+
 namespace {
 
 using KernelSymbol = std::pair<bool, unsigned>;
