@@ -80,6 +80,32 @@ bool PrimitiveChain::collect(
   return true;
 }
 
+std::string avatarPrimitiveWithMetadata(
+  const MegalodonKernelSyntax::PrimitiveStep& step)
+{
+  std::vector<std::pair<std::string, std::string>> fields{
+    {"schema", MegalodonKernelSyntax::schema()},
+    {"rule", step.rule},
+    {"primitive_expansion", "prefix"},
+    {"primitive_expansion_prefix", step.id},
+    {"primitive_expansion_requires", step.rule},
+  };
+  fields.insert(fields.end(), step.fields.begin(), step.fields.end());
+  if (step.hasResultClause) {
+    fields.push_back({"result_clause", step.resultClause});
+  }
+  std::string rendered =
+    "(step_extra " + quote(step.id) + " \"avatar_scope_v1\" (";
+  for (std::size_t index = 0; index < fields.size(); ++index) {
+    if (index != 0) {
+      rendered += " ";
+    }
+    rendered += quote(fields[index].first + "=" + fields[index].second);
+  }
+  rendered += "))";
+  return rendered + "\n  " + step.rendered;
+}
+
 MegalodonKernelSyntax::PrimitiveStep resolveStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& leftParent,
@@ -526,6 +552,144 @@ MegalodonKernelSyntax::PrimitiveStep cnfFormulaClauseStep(
       + " (index " + std::to_string(index) + ")"
       + " (count " + std::to_string(count) + ")"
       + " (projection " + renderedProjection + ")"
+      + " (result " + result.sexpr + "))");
+}
+
+MegalodonKernelSyntax::PrimitiveStep avatarComponentStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelClause& result)
+{
+  return primitiveClauseStep(
+    "avatar_component",
+    id,
+    {},
+    result.sexpr,
+    {
+      {"selection_source", "avatar_v1"},
+      {"scope", "certificate_local_block_v1"},
+      {"primitive_lowering_source", "avatar_v1"},
+    },
+    "(avatar_component " + quote(id) + " (result " + result.sexpr + "))");
+}
+
+MegalodonKernelSyntax::PrimitiveStep avatarDefinitionStep(
+  const std::string& id,
+  unsigned splitVariable,
+  bool splitPositive,
+  const MegalodonKernelSyntax::RenderedKernelClause& result)
+{
+  const std::string splitVariableText = std::to_string(splitVariable);
+  const std::string splitPositiveText = splitPositive ? "true" : "false";
+  return primitiveClauseStep(
+    "avatar_definition",
+    id,
+    {},
+    result.sexpr,
+    {
+      {"split_variable", splitVariableText},
+      {"split_positive", splitPositiveText},
+      {"selection_source", "avatar_v1"},
+      {"scope", "certificate_local_block_v1"},
+      {"primitive_lowering_source", "avatar_v1"},
+    },
+    "(avatar_definition " + quote(id)
+      + " (split " + splitVariableText + " " + splitPositiveText + ")"
+      + " (result " + result.sexpr + "))");
+}
+
+MegalodonKernelSyntax::PrimitiveStep splitDependencyStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& owner,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelSplitDependencyItem>& dependencies,
+  const MegalodonKernelSyntax::RenderedKernelClause& result)
+{
+  std::string renderedDependencies = "(dependencies";
+  for (const auto& dependency : dependencies) {
+    if (!dependency.hasComponentClauseSexpr) {
+      continue;
+    }
+    renderedDependencies +=
+      " (dependency " + std::to_string(dependency.split.variable)
+      + " " + (dependency.split.positive ? "true" : "false")
+      + " (component " + dependency.componentClauseSexpr.sexpr + "))";
+  }
+  renderedDependencies += ")";
+  return primitiveClauseStep(
+    "split_dependency",
+    id,
+    {owner.value},
+    result.sexpr,
+    {
+      {"dependency_count", std::to_string(dependencies.size())},
+      {"selection_source", "avatar_v1"},
+      {"scope", "certificate_local_block_v1"},
+      {"primitive_lowering_source", "avatar_v1"},
+    },
+    "(split_dependency " + quote(id)
+      + " (owner " + quote(owner.value) + ") "
+      + renderedDependencies
+      + " (result " + result.sexpr + "))");
+}
+
+MegalodonKernelSyntax::PrimitiveStep avatarSplitStep(
+  const std::string& id,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& parents,
+  const MegalodonKernelSyntax::RenderedKernelClause& result)
+{
+  std::vector<std::string> parentIds;
+  std::string renderedParents = "(parents";
+  for (const auto& parent : parents) {
+    parentIds.push_back(parent.value);
+    renderedParents += " " + quote(parent.value);
+  }
+  renderedParents += ")";
+  return primitiveClauseStep(
+    "avatar_split",
+    id,
+    parentIds,
+    result.sexpr,
+    {
+      {"selection_source", "avatar_v1"},
+      {"scope", "certificate_local_block_v1"},
+      {"primitive_lowering_source", "avatar_v1"},
+    },
+    "(avatar_split " + quote(id) + " " + renderedParents
+      + " (result " + result.sexpr + "))");
+}
+
+MegalodonKernelSyntax::PrimitiveStep avatarRefutationStep(
+  const std::string& id,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& parents,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelClause>& satClauses,
+  const std::string& satProof,
+  const MegalodonKernelSyntax::RenderedKernelClause& result)
+{
+  std::vector<std::string> parentIds;
+  std::string renderedParents = "(parents";
+  for (const auto& parent : parents) {
+    parentIds.push_back(parent.value);
+    renderedParents += " " + quote(parent.value);
+  }
+  renderedParents += ")";
+  std::string renderedSatClauses = "(sat_clauses";
+  for (const auto& clause : satClauses) {
+    renderedSatClauses += " " + clause.sexpr;
+  }
+  renderedSatClauses += ")";
+  return primitiveClauseStep(
+    "avatar_refutation",
+    id,
+    parentIds,
+    result.sexpr,
+    {
+      {"sat_input_count", std::to_string(satClauses.size())},
+      {"selection_source", "avatar_v1"},
+      {"scope", "certificate_local_block_v1"},
+      {"primitive_lowering_source", "avatar_v1"},
+    },
+    "(avatar_refutation " + quote(id) + " " + renderedParents
+      + " " + renderedSatClauses
+      + (satProof.empty() ? "" : " " + satProof)
       + " (result " + result.sexpr + "))");
 }
 

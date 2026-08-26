@@ -848,8 +848,10 @@ bool MegalodonChecker::certificateAvatarComponentStepSexpr(Kernel::Unit* unit, s
   if (!certificateClauseSexpr(clause, renderedClause)) {
     return false;
   }
-  result = "(avatar_component " + sexprQuote("u" + std::to_string(unit->number()))
-    + " (result " + renderedClause + "))";
+  const auto step = MegalodonKernelBuilder::avatarComponentStep(
+    "u" + std::to_string(unit->number()),
+    MegalodonKernelSyntax::clause(renderedClause));
+  result = MegalodonKernelBuilder::avatarPrimitiveWithMetadata(step);
   return true;
 }
 
@@ -873,13 +875,16 @@ bool MegalodonChecker::certificateAvatarSplitStepSexpr(Kernel::Unit* unit, std::
   if (renderedClause.empty()) {
     return false;
   }
-  std::ostringstream out;
-  out << "(avatar_split " << sexprQuote("u" + std::to_string(unit->number())) << " (parents";
+  std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef> parents;
   for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
-    out << ' ' << sexprQuote("u" + std::to_string(parent->number()));
+    parents.push_back(
+      MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number())));
   }
-  out << ") (result " << renderedClause << "))";
-  result = out.str();
+  const auto step = MegalodonKernelBuilder::avatarSplitStep(
+    "u" + std::to_string(unit->number()),
+    parents,
+    MegalodonKernelSyntax::clause(renderedClause));
+  result = MegalodonKernelBuilder::avatarPrimitiveWithMetadata(step);
   return true;
 }
 
@@ -1008,15 +1013,18 @@ bool MegalodonChecker::certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, 
     if (origin == nullptr || !satClauseAsSplitClauseSexpr(clause, resultClause)) {
       return false;
     }
-    std::ostringstream out;
-    out << "(avatar_split " << sexprQuote("u" + std::to_string(origin->number())) << " (parents";
+    std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef> parents;
     for (Kernel::Unit* parent : iterTraits(origin->getParents())) {
       if (_certificateNativeStepIds.find(parent->number()) != _certificateNativeStepIds.end()) {
-        out << ' ' << sexprQuote("u" + std::to_string(parent->number()));
+        parents.push_back(
+          MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number())));
       }
     }
-    out << ") (result " << resultClause << "))";
-    rendered = out.str();
+    const auto step = MegalodonKernelBuilder::avatarSplitStep(
+      "u" + std::to_string(origin->number()),
+      parents,
+      MegalodonKernelSyntax::clause(resultClause));
+    rendered = MegalodonKernelBuilder::avatarPrimitiveWithMetadata(step);
     return true;
   };
 
@@ -1075,27 +1083,26 @@ bool MegalodonChecker::certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, 
     return false;
   }
 
+  std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef> renderedParents;
+  for (const std::string& parentId : parentIds) {
+    renderedParents.push_back(MegalodonKernelSyntax::unitRef(parentId));
+  }
+  std::vector<MegalodonKernelSyntax::RenderedKernelClause> renderedSatClauses;
+  for (const std::string& clause : satClauses) {
+    renderedSatClauses.push_back(MegalodonKernelSyntax::clause(clause));
+  }
+  const auto refutationStep =
+    MegalodonKernelBuilder::avatarRefutationStep(
+      "u" + std::to_string(unit->number()),
+      renderedParents,
+      renderedSatClauses,
+      satProof,
+      MegalodonKernelSyntax::clause("(clause)"));
   std::ostringstream out;
   for (const std::string& originStep : originSteps) {
     out << originStep << "\n  ";
   }
-  out << "(avatar_refutation " << sexprQuote("u" + std::to_string(unit->number()));
-  if (!parentIds.empty()) {
-    out << " (parents";
-    for (const std::string& parentId : parentIds) {
-      out << ' ' << sexprQuote(parentId);
-    }
-    out << ')';
-  }
-  out << " (sat_clauses";
-  for (const std::string& clause : satClauses) {
-    out << ' ' << clause;
-  }
-  out << ')';
-  if (!satProof.empty()) {
-    out << ' ' << satProof;
-  }
-  out << " (result (clause)))";
+  out << MegalodonKernelBuilder::avatarPrimitiveWithMetadata(refutationStep);
   result = out.str();
   return true;
 }
@@ -11765,6 +11772,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       ++splitIndex;
     }
     avatarComponent.splitCount = splitIndex;
+    kernelFields.push_back("selection_source=avatar_v1");
+    kernelFields.push_back("scope=certificate_local_block_v1");
+    kernelFields.push_back("primitive_lowering_source=avatar_v1");
     emitKernelV1(
       "avatar_component",
       kernelFields,
@@ -12118,15 +12128,21 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         addClauseDbIndexSortFields(fields, "component_clause", splitExtra->component);
         if (!componentClause.empty()
           && _certificateNativeStepIds.insert(u->number()).second) {
-          std::ostringstream native;
-          native << "(avatar_definition " << sexprQuote("u" + std::to_string(u->number()))
-                 << " (split " << componentLiteral.var() << ' '
-                 << (componentLiteral.positive() ? "true" : "false") << ")"
-                 << " (result " << componentClause << "))";
-          _certificateNativeSteps.push_back(native.str());
+          const auto nativeStep =
+            MegalodonKernelBuilder::avatarDefinitionStep(
+              "u" + std::to_string(u->number()),
+              componentLiteral.var(),
+              componentLiteral.positive(),
+              MegalodonKernelSyntax::clause(componentClause));
+          _certificateNativeSteps.push_back(
+            MegalodonKernelBuilder::avatarPrimitiveWithMetadata(nativeStep));
         }
         {
-          std::vector<std::string> kernelFields;
+          std::vector<std::string> kernelFields{
+            "selection_source=avatar_v1",
+            "scope=certificate_local_block_v1",
+            "primitive_lowering_source=avatar_v1",
+          };
           if (!componentClause.empty()) {
             avatarDefinition.hasResultClause = true;
             avatarDefinition.resultClause = MegalodonKernelSyntax::clause(componentClause);
@@ -12152,7 +12168,6 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
 
   if (u->isClause() && u->asClause()->splits() && !u->asClause()->splits()->isEmpty()) {
     std::vector<std::string> fields;
-    std::vector<std::string> nativeDependencies;
     MegalodonKernelSyntax::RenderedKernelSplitDependency splitDependency;
     unsigned dependencyIndex = 0;
     for (unsigned split : iterTraits(u->asClause()->splits()->iter())) {
@@ -12179,11 +12194,6 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           fields.push_back(prefix + "_component_clause_sexpr=" + componentClause);
           dependency.hasComponentClauseSexpr = true;
           dependency.componentClauseSexpr = MegalodonKernelSyntax::clause(componentClause);
-          std::ostringstream nativeDependency;
-          nativeDependency << "(dependency " << splitLiteral.var() << ' '
-                           << (splitLiteral.positive() ? "true" : "false")
-                           << " (component " << componentClause << "))";
-          nativeDependencies.push_back(nativeDependency.str());
         }
         dependency.componentClauseVariableSorts = collectClauseVariableSorts(component->second);
         dependency.componentClauseDbSorts = collectClauseDbIndexSorts(component->second);
@@ -12213,21 +12223,23 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     }
     fields.push_back("dependency_count=" + std::to_string(dependencyIndex));
     {
-      std::vector<std::string> kernelFields;
+      std::vector<std::string> kernelFields{
+        "selection_source=avatar_v1",
+        "scope=certificate_local_block_v1",
+        "primitive_lowering_source=avatar_v1",
+      };
       std::string resultClause;
       if (clauseSexprForKernel(u->asClause(), resultClause)) {
         splitDependency.hasResultClause = true;
         splitDependency.resultClause = MegalodonKernelSyntax::clause(resultClause);
-        std::ostringstream native;
-        native << "(split_dependency "
-               << sexprQuote("u" + std::to_string(u->number()) + "_split_dependency")
-               << " (owner " << sexprQuote("u" + std::to_string(u->number())) << ")"
-               << " (dependencies";
-        for (const std::string& dependency : nativeDependencies) {
-          native << ' ' << dependency;
-        }
-        native << ") (result " << resultClause << "))";
-        _certificateNativeSteps.push_back(native.str());
+        const auto nativeStep =
+          MegalodonKernelBuilder::splitDependencyStep(
+            "u" + std::to_string(u->number()) + "_split_dependency",
+            MegalodonKernelSyntax::unitRef("u" + std::to_string(u->number())),
+            splitDependency.dependencies,
+            MegalodonKernelSyntax::clause(resultClause));
+        _certificateNativeSteps.push_back(
+          MegalodonKernelBuilder::avatarPrimitiveWithMetadata(nativeStep));
       }
       emitKernelV1(
         "split_dependency",
@@ -12470,7 +12482,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         }
         fields.push_back("parent_var_binding_count=" + std::to_string(bindingIndex));
         {
-          std::vector<std::string> kernelFields;
+          std::vector<std::string> kernelFields{
+            "selection_source=avatar_v1",
+            "scope=certificate_local_block_v1",
+            "primitive_lowering_source=avatar_v1",
+          };
           std::string sourceClause;
           if (clauseSexprForKernel(mainParent, sourceClause)) {
             avatarSplit.hasSourceClause = true;
@@ -12513,7 +12529,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       || u->inference().rule() == Kernel::InferenceRule::AVATAR_REFUTATION_SMT
     )
     && u->asClause()->length() == 0) {
-    std::vector<std::string> kernelFields;
+    std::vector<std::string> kernelFields{
+      "selection_source=avatar_v1",
+      "scope=certificate_local_block_v1",
+      "primitive_lowering_source=avatar_v1",
+    };
     MegalodonKernelSyntax::RenderedKernelAvatarRefutation avatarRefutation;
     avatarRefutation.hasResultClause = true;
     avatarRefutation.resultClause = MegalodonKernelSyntax::clause("(clause)");

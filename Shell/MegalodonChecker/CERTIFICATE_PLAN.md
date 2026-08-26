@@ -665,3 +665,31 @@ path remains in the nonqualifying compatibility implementation and should be
 deleted only after its remaining tests are migrated. The next qualifying scope
 object is AVATAR split/SAT discharge, whose exported claim must contain no
 split name.
+
+### Producer-owned AVATAR scope, 2026-08-26
+
+Fresh AVATAR certificate records now pass through typed builder functions for
+components, definitions, dependencies, splits, and refutations. Every native
+record is emitted together with a builder-owned `avatar_scope_v1` record that
+adds a mandatory `avatar_v1` selection/lowering owner and a
+`certificate_local_block_v1` scope, including synthetic SAT-origin steps.
+Qualifying Megalodon replay accepts only that builder record and rejects
+missing or mutated fields; rich `kernel_v1` diagnostics cannot satisfy the
+gate.
+
+The consumer localizes each checked claim with the exact emitted component
+proposition and rejects a block whose proposition or proof exports a split or
+Skolem alias. The original-source ten-command gate passes with AVATAR enabled;
+nine certificates contain real AVATAR refutations. A fresh two-phase
+100-problem producer run emitted 100/100 certificates in parallel, including
+27 scoped AVATAR refutations. Strict proof-term replay passes 22 of those 27 at
+the ten-second checker threshold; three stop earlier at existing preprocessing
+type errors and two exceed that threshold. These are retained as frontier
+cases, not relabelled as AVATAR successes.
+
+The next producer task is not another consumer-side AVATAR heuristic. Record
+the exact SAT/RUP resolution chain that justifies every dependency and final
+refutation, serialize it through the typed builder, and move deterministic
+chain validation/elaboration into the extracted checker and elaborator
+modules. Qualifying replay must fail when the chain is absent or malformed and
+must never enumerate candidate pivots, parent orders, or substitutions.

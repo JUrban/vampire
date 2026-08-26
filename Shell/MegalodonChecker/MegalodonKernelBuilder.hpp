@@ -26,6 +26,9 @@ private:
   std::map<std::string, MegalodonKernelSyntax::PrimitiveStep> _primitives;
 };
 
+std::string avatarPrimitiveWithMetadata(
+  const MegalodonKernelSyntax::PrimitiveStep& step);
+
 MegalodonKernelSyntax::PrimitiveStep resolveStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& leftParent,
@@ -122,6 +125,34 @@ MegalodonKernelSyntax::PrimitiveStep cnfFormulaClauseStep(
   std::size_t index,
   std::size_t count,
   const MegalodonKernelSyntax::RenderedKernelCnfProjection& projection,
+  const MegalodonKernelSyntax::RenderedKernelClause& result);
+
+MegalodonKernelSyntax::PrimitiveStep avatarComponentStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelClause& result);
+
+MegalodonKernelSyntax::PrimitiveStep avatarDefinitionStep(
+  const std::string& id,
+  unsigned splitVariable,
+  bool splitPositive,
+  const MegalodonKernelSyntax::RenderedKernelClause& result);
+
+MegalodonKernelSyntax::PrimitiveStep splitDependencyStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& owner,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelSplitDependencyItem>& dependencies,
+  const MegalodonKernelSyntax::RenderedKernelClause& result);
+
+MegalodonKernelSyntax::PrimitiveStep avatarSplitStep(
+  const std::string& id,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& parents,
+  const MegalodonKernelSyntax::RenderedKernelClause& result);
+
+MegalodonKernelSyntax::PrimitiveStep avatarRefutationStep(
+  const std::string& id,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& parents,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelClause>& satClauses,
+  const std::string& satProof,
   const MegalodonKernelSyntax::RenderedKernelClause& result);
 
 std::vector<MegalodonKernelSyntax::RenderedKernelSkolemBranchScopeSymbol>
