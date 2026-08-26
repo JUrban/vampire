@@ -250,11 +250,6 @@ private:
     const InferenceRecorder::InferenceInformation* replayInfo,
     std::string& result,
     std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
-  bool certificateSuperpositionStepSexpr(
-    Kernel::Unit* unit,
-    const InferenceRecorder::InferenceInformation* replayInfo,
-    std::string& result,
-    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   std::string certificateJsonWithStepIds(Kernel::Unit* unit, const std::string& certificateJson);
   std::string certificateFallbackSourceJson(Kernel::Unit* unit);
   void printMegalodonCertificateJson() const;
@@ -291,6 +286,7 @@ private:
   std::set<unsigned> _certificateNativeStepIds;
   std::map<unsigned, std::vector<MegalodonKernelSyntax::PrimitiveStep>>
     _certificateNativePrimitiveStepsByUnit;
+  std::map<unsigned, std::string> _certificateSuperpositionLoweringSourceByUnit;
 };
 
 } // namespace Shell

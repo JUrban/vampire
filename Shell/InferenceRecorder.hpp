@@ -27,11 +27,24 @@ public:
     Kernel::Clause *conclusion;
     std::vector<Kernel::Clause *> premises;
     std::vector<Kernel::Substitution> substitutionForBanksSub;
+    Kernel::Substitution conclusionVariableRenaming;
     bool hasDemodulationRewrite = false;
     Kernel::TermList demodulationRuleLhs;
     Kernel::TermList demodulationRuleRhs;
     Kernel::TermList demodulationRedex;
     Kernel::TermList demodulationReplacement;
+    bool hasSuperpositionSelection = false;
+    Kernel::Clause* superpositionTargetParent = nullptr;
+    Kernel::Literal* superpositionTargetLiteral = nullptr;
+    unsigned superpositionTargetLiteralIndex = 0;
+    Kernel::TermList superpositionTargetTerm;
+    Kernel::Clause* superpositionEqualityParent = nullptr;
+    Kernel::Literal* superpositionEqualityLiteral = nullptr;
+    unsigned superpositionEqualityLiteralIndex = 0;
+    Kernel::TermList superpositionEqualityLhs;
+    Kernel::TermList superpositionEqualityRhs;
+    bool superpositionEqualityIsResult = false;
+    bool superpositionSimultaneous = false;
   };
 
   class RectifyInferenceExtra : public GenericInferenceInformation {
@@ -47,7 +60,20 @@ public:
 
   void resolution(unsigned int id, Kernel::Clause *conclusion, const std::vector<Kernel::Clause *> &premises, const Indexing::ResultSubstitutionSP &recordedSubst);
 
-  void superposition(unsigned int id, Kernel::Clause *conclusion, const std::vector<Kernel::Clause *> &premises, const Indexing::ResultSubstitutionSP &recordedSubst, bool eqIsResult);
+  void superposition(
+    unsigned int id,
+    Kernel::Clause* conclusion,
+    const std::vector<Kernel::Clause*>& premises,
+    const Indexing::ResultSubstitutionSP& recordedSubst,
+    bool eqIsResult,
+    Kernel::Clause* targetParent,
+    Kernel::Literal* targetLiteral,
+    Kernel::TermList targetTerm,
+    Kernel::Clause* equalityParent,
+    Kernel::Literal* equalityLiteral,
+    Kernel::TermList equalityLhs,
+    Kernel::TermList equalityRhs,
+    bool simultaneous);
 
   void factoring(unsigned int id, Kernel::Clause *conclusion, const std::vector<Kernel::Clause *> &premises, const Indexing::RobSubstitution &recordedSubst);
 
@@ -209,6 +235,11 @@ private:
       std::unique_ptr<InferenceInformation> info = std::make_unique<InferenceInformation>();
       info->conclusion = conclusion;
       info->premises = premises;
+      for (const auto& [variable, mappedVariable] : varMap) {
+        info->conclusionVariableRenaming.bind(
+          variable,
+          Kernel::TermList::var(mappedVariable));
+      }
       populateSubstitutionsGen<T>(info->substitutionForBanksSub, varMap, premises, recordedSubst, applyFunc);
       _inferences[id] = std::move(info);
       _lastInferenceId = id;
@@ -226,6 +257,11 @@ private:
       std::unique_ptr<InferenceInformation> info = std::make_unique<InferenceInformation>();
       info->conclusion = conclusion;
       info->premises = premises;
+      for (const auto& [variable, mappedVariable] : varMap) {
+        info->conclusionVariableRenaming.bind(
+          variable,
+          Kernel::TermList::var(mappedVariable));
+      }
       populateSubstitutions(info->substitutionForBanksSub, varMap, premises, recordedSubst);
       // for(auto& subst : info->substitutionForBanksSub){
       //	std::cout << subst << std::endl;
@@ -244,6 +280,11 @@ private:
       std::unique_ptr<InferenceInformation> info = std::make_unique<InferenceInformation>();
       info->conclusion = conclusion;
       info->premises = premises;
+      for (const auto& [variable, mappedVariable] : varMap) {
+        info->conclusionVariableRenaming.bind(
+          variable,
+          Kernel::TermList::var(mappedVariable));
+      }
       populateSubstitutionsMergeOneBank<T>(info->substitutionForBanksSub, varMap, premises, recordedSubst, applyFunc);
       _inferences[id] = std::move(info);
       _lastInferenceId = id;

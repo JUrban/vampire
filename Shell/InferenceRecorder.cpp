@@ -89,7 +89,20 @@ void InferenceRecorder::resolution(unsigned int id, Clause *conclusion, const st
   recordGenericSubstitutionInference(id, conclusion, premises, recordedSubst);
 }
 
-void InferenceRecorder::superposition(unsigned int id, Clause *conclusion, const std::vector<Clause *> &premises, const ResultSubstitutionSP &recordedSubst, bool eqIsResult)
+void InferenceRecorder::superposition(
+  unsigned int id,
+  Clause* conclusion,
+  const std::vector<Clause*>& premises,
+  const ResultSubstitutionSP& recordedSubst,
+  bool eqIsResult,
+  Clause* targetParent,
+  Literal* targetLiteral,
+  TermList targetTerm,
+  Clause* equalityParent,
+  Literal* equalityLiteral,
+  TermList equalityLhs,
+  TermList equalityRhs,
+  bool simultaneous)
 {
   recordGenericSubstitutionInference<ResultSubstitutionSP>(id, conclusion, premises, recordedSubst,
                                                                      [eqIsResult](ResultSubstitutionSP subst, const TermList &term, size_t bank) {
@@ -100,6 +113,43 @@ void InferenceRecorder::superposition(unsigned int id, Clause *conclusion, const
                                                                          return subst->apply(term, !eqIsResult);
                                                                        }
                                                                      });
+  auto recorded = _inferences.find(id);
+  if (_lastInferenceId != id || recorded == _inferences.end()) {
+    return;
+  }
+  auto literalIndex = [](Clause* parent, Literal* selected, unsigned& index) {
+    if (parent == nullptr || selected == nullptr) {
+      return false;
+    }
+    for (unsigned candidate = 0; candidate < parent->length(); ++candidate) {
+      if ((*parent)[candidate] == selected) {
+        index = candidate;
+        return true;
+      }
+    }
+    return false;
+  };
+  auto* info = static_cast<InferenceInformation*>(recorded->second.get());
+  if (!literalIndex(
+        targetParent,
+        targetLiteral,
+        info->superpositionTargetLiteralIndex)
+    || !literalIndex(
+        equalityParent,
+        equalityLiteral,
+        info->superpositionEqualityLiteralIndex)) {
+    return;
+  }
+  info->hasSuperpositionSelection = true;
+  info->superpositionTargetParent = targetParent;
+  info->superpositionTargetLiteral = targetLiteral;
+  info->superpositionTargetTerm = targetTerm;
+  info->superpositionEqualityParent = equalityParent;
+  info->superpositionEqualityLiteral = equalityLiteral;
+  info->superpositionEqualityLhs = equalityLhs;
+  info->superpositionEqualityRhs = equalityRhs;
+  info->superpositionEqualityIsResult = eqIsResult;
+  info->superpositionSimultaneous = simultaneous;
 }
 
 void InferenceRecorder::factoring(unsigned int id, Clause *conclusion, const std::vector<Clause *> &premises, const RobSubstitution &recordedSubst)

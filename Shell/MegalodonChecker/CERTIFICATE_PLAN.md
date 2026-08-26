@@ -357,11 +357,58 @@ superposition macros; all 351 have typed builder chains, comprising 352
 `paramodulate` and 394 `substitute` primitives. The live `u141` test now also
 requires typed paramodulation ownership.
 
-This completes output ownership, not extraction ownership. The large
-`certificateSuperpositionStepsSexpr` and
-`certificateSuperpositionStepSexpr` routines still perform candidate
-selection and normalization inside `MegalodonChecker.cpp`. The next change
-must use exact selected literals, substitutions, orientation, and positions
-from Vampire's inference record to build the primitive chain directly, then
-delete the corresponding candidate loops. More fallback cases or larger
-search bounds are prohibited.
+This completed output ownership but, at that checkpoint, did not complete
+extraction ownership. The following checkpoint replaces that state; the
+paragraph above is retained as the historical acceptance boundary that drove
+the next change.
+
+## Exact Recorded Superposition Lowering, 2026-08-26
+
+Fresh Lisp certificates no longer reconstruct superposition by searching the
+conclusion. `Superposition::performSuperposition` now gives the inference
+recorder the exact rewritten parent, equality parent, selected literals,
+selected target term, oriented equality sides, and simultaneous-rewrite mode.
+The recorder validates and stores the two literal indices and preserves the
+replayer's parent substitutions and conclusion-variable renaming.
+
+`certificateSuperpositionStepsSexpr` consumes only that record. It emits the
+typed parent substitutions, rewrites the recorded occurrence (and, for
+Vampire's simultaneous mode, every matching occurrence in deterministic
+left-to-right order), factors only duplicate side literals, and uses a final
+identity substitution only to assign the exact conclusion order and id. It
+does not try alternative parents, equality orientations, target literals,
+variable permutations, or candidate normalizations. The former 1,024-line
+`certificateSuperpositionStepSexpr` candidate-search implementation and its
+fallback call were deleted.
+
+The duplicate clause renderer in the old lowering initially encoded Vampire
+equality literals as raw `=` applications, unlike the canonical certificate
+renderer. Reusing `safeApplySubstitution` and `certificateLiteralSexpr`
+removed that second representation and raised exact coverage from 24/351 to
+351/351 superposition macros. Fresh metadata records both
+`selection_source=recorder_v1` and
+`primitive_lowering_source=recorder_v1`; no compatibility source can satisfy
+the exact-lowering gate.
+
+The final 20-worker source-linked THF run is:
+
+```text
+/project/tmp/superposition_exact_invariant_final_100_v3_20260826
+PASS 100/100
+kernel_v1 records 3529
+superposition macros 351
+paramodulate records 533
+substitute records 431
+```
+
+Vampire was capped at ten seconds per problem. Megalodon used source checks,
+builder-strict checking, and the primitive and metadata audits with
+`REQUIRE_SUPERPOSITION_EXACT_LOWERING=1`. A mutation changing one lowering
+marker to `legacy_search` is rejected. Focused tests cover the cyclic four-way
+renaming at `u141` and the two-occurrence simultaneous rewrite at `u792`.
+
+This closes the superposition producer-extraction gap for the measured corpus;
+it does not close the whole project. Other macro families and preprocessing
+operations must undergo the same producer-record/builder/extracted-checker
+migration, and detached source-linked structural results remain distinct from
+original-development E1 proofs.
