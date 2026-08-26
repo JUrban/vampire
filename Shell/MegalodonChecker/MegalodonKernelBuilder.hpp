@@ -14,14 +14,6 @@ class Formula;
 namespace Shell {
 namespace MegalodonKernelBuilder {
 
-MegalodonKernelSyntax::PrimitiveStep primitiveClauseStep(
-  const std::string& rule,
-  const std::string& id,
-  const std::vector<std::string>& parentIds,
-  const std::string& resultClause,
-  const std::vector<std::pair<std::string, std::string>>& fields,
-  const std::string& rendered);
-
 MegalodonKernelSyntax::PrimitiveStep resolveStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& leftParent,
@@ -42,6 +34,28 @@ MegalodonKernelSyntax::PrimitiveStep equalitySymmetryStep(
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
   std::size_t literal,
   const MegalodonKernelSyntax::RenderedKernelClause& result);
+
+MegalodonKernelSyntax::PrimitiveStep substituteStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelSubstitution& substitution,
+  const MegalodonKernelSyntax::RenderedKernelClause& result);
+
+MegalodonKernelSyntax::PrimitiveStep equalityResolutionStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  std::size_t literal,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::vector<std::pair<std::string, std::string>>& metadataFields);
+
+MegalodonKernelSyntax::PrimitiveStep equalityResolutionConstraintsStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  std::size_t literal,
+  const MegalodonKernelSyntax::RenderedKernelLiteral& selected,
+  const MegalodonKernelSyntax::RenderedKernelClause& constraints,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::vector<std::pair<std::string, std::string>>& metadataFields);
 
 std::vector<MegalodonKernelSyntax::RenderedKernelSkolemBranchScopeSymbol>
 sourceSignatureScope(

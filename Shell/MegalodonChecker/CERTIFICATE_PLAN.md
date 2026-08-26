@@ -113,11 +113,19 @@ branches still assemble primitive-looking text directly in
 `MegalodonChecker.cpp`; they remain migration debt and are not covered by this
 claim.
 
-This remains incomplete.  Nine generic construction sites remain: six
-`substitute` sites, two equality-resolution variants, and one compatibility
-lambda used by URR substitutions.  The next extraction must give substitution
-and equality resolution their own typed builder operations and then remove the
-generic public `primitiveClauseStep` entry point.  New primitive rules must not
+The next follow-up added typed builders for `substitute`,
+`equality_resolution`, and `equality_resolution_constraints`, migrated the
+remaining nine metadata construction sites, and made `primitiveClauseStep` a
+private implementation detail of `MegalodonKernelBuilder`. Neither
+`MegalodonChecker` nor `MegalodonKernelSyntax` can invoke a generic primitive
+constructor now. The same 65-step proof remained byte-identical, and the fresh
+20-worker run at `/project/tmp/vampire_no_generic_builder_100_20260826` passed
+100/100 strict checks plus both metadata audits.
+
+This remains incomplete because older native-export branches still assemble
+primitive-looking text directly in `MegalodonChecker.cpp` without constructing
+typed `PrimitiveStep` metadata. Those branches must either call a rule-specific
+builder or be removed from the qualifying export. New primitive rules must not
 add another generic construction path.
 
 ## Initial Export Fragment

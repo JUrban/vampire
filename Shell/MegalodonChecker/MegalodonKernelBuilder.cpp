@@ -31,8 +31,6 @@ std::string quote(const std::string& value)
   return result;
 }
 
-}
-
 MegalodonKernelSyntax::PrimitiveStep primitiveClauseStep(
   const std::string& rule,
   const std::string& id,
@@ -50,6 +48,8 @@ MegalodonKernelSyntax::PrimitiveStep primitiveClauseStep(
   step.resultClause = resultClause;
   step.fields = fields;
   return step;
+}
+
 }
 
 MegalodonKernelSyntax::PrimitiveStep resolveStep(
@@ -111,6 +111,67 @@ MegalodonKernelSyntax::PrimitiveStep equalitySymmetryStep(
     "(equality_symmetry " + quote(id)
       + " (parent " + quote(parent.value) + ")"
       + " (literal " + literalText + ")"
+      + " (result " + result.sexpr + "))");
+}
+
+MegalodonKernelSyntax::PrimitiveStep substituteStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelSubstitution& substitution,
+  const MegalodonKernelSyntax::RenderedKernelClause& result)
+{
+  return primitiveClauseStep(
+    "substitute",
+    id,
+    {parent.value},
+    result.sexpr,
+    {{"substitution", substitution.sexpr}},
+    "(substitute " + quote(id)
+      + " (parent " + quote(parent.value) + ") " + substitution.sexpr
+      + " (result " + result.sexpr + "))");
+}
+
+MegalodonKernelSyntax::PrimitiveStep equalityResolutionStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  std::size_t literal,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::vector<std::pair<std::string, std::string>>& metadataFields)
+{
+  const std::string literalText = std::to_string(literal);
+  return primitiveClauseStep(
+    "equality_resolution",
+    id,
+    {parent.value},
+    result.sexpr,
+    metadataFields,
+    "(equality_resolution " + quote(id)
+      + " (parent " + quote(parent.value) + ")"
+      + " (literal " + literalText + ")"
+      + " (result " + result.sexpr + "))");
+}
+
+MegalodonKernelSyntax::PrimitiveStep equalityResolutionConstraintsStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  std::size_t literal,
+  const MegalodonKernelSyntax::RenderedKernelLiteral& selected,
+  const MegalodonKernelSyntax::RenderedKernelClause& constraints,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::vector<std::pair<std::string, std::string>>& metadataFields)
+{
+  const std::string literalText = std::to_string(literal);
+  return primitiveClauseStep(
+    "equality_resolution_constraints",
+    id,
+    {parent.value},
+    result.sexpr,
+    metadataFields,
+    "(equality_resolution_constraints " + quote(id)
+      + " (parent " + quote(parent.value) + ")"
+      + " (literal " + literalText + ")"
+      + " (selected " + selected.sexpr + ")"
+      + " (constraints " + constraints.sexpr + ")"
       + " (result " + result.sexpr + "))");
 }
 
