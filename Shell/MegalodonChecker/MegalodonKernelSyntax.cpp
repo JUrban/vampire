@@ -228,9 +228,11 @@ RenderedKernelLiteral literal(const std::string& sexpr)
   return {sexpr};
 }
 
-RenderedKernelClause clause(const std::string& sexpr)
+RenderedKernelClause clause(
+  const std::string& sexpr,
+  const std::vector<ProducerFunctionApplication>& producerFunctionApplications)
 {
-  return {sexpr};
+  return {sexpr, producerFunctionApplications};
 }
 
 RenderedKernelSubstitution substitution(const std::string& sexpr)

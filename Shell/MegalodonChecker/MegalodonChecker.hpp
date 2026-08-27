@@ -314,6 +314,7 @@ private:
   std::set<unsigned> _certificateNativeStepIds;
   std::map<unsigned, std::vector<MegalodonKernelSyntax::PrimitiveStep>>
     _certificateNativePrimitiveStepsByUnit;
+  std::map<unsigned, std::string> _certificateResolutionLoweringSourceByUnit;
   std::map<unsigned, std::string> _certificateSuperpositionLoweringSourceByUnit;
 };
 

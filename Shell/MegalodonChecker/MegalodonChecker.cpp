@@ -42,6 +42,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -773,12 +774,71 @@ bool MegalodonChecker::certificateSubstituteStepPartsSexpr(
   const std::string resultClause = certificateClauseSexprFromRenderedLiterals(substitutedLiterals);
 
   Lib::DHMap<unsigned, Kernel::TermList> resultVarSorts;
+  std::vector<MegalodonKernelSyntax::ProducerFunctionApplication>
+    producerFunctionApplications;
+  std::set<std::tuple<unsigned, std::size_t, std::string>>
+    seenProducerFunctionApplications;
+  auto collectProducerFunctionApplications =
+    [&](auto&& self, Kernel::TermList term) -> bool {
+      bool hasApplication = false;
+      unsigned functionSymbol = 0;
+      std::size_t argumentCount = 0;
+      if (term.isApplication()) {
+        Kernel::TermList head;
+        std::vector<Kernel::TermList> arguments;
+        decomposeApplicationSpine(term, head, arguments);
+        if (head.isTerm() && head.term()->arity() == 0) {
+          hasApplication = true;
+          functionSymbol = head.term()->functor();
+          argumentCount = arguments.size();
+        }
+      } else if (term.isTerm()) {
+        hasApplication = true;
+        functionSymbol = term.term()->functor();
+        argumentCount = term.term()->arity();
+      }
+      if (hasApplication) {
+        std::string rendered;
+        if (!certificateTermSexpr(term, rendered)) {
+          return false;
+        }
+        const auto key =
+          std::make_tuple(functionSymbol, argumentCount, rendered);
+        if (seenProducerFunctionApplications.insert(key).second) {
+          producerFunctionApplications.push_back({
+            functionSymbol,
+            argumentCount,
+            rendered,
+          });
+        }
+      }
+      if (term.isVar()) {
+        return true;
+      }
+      if (term.isApplication()) {
+        return self(self, term.lhs()) && self(self, term.rhs());
+      }
+      Kernel::Term* body = term.term();
+      for (unsigned index = 0; index < body->arity(); ++index) {
+        if (!self(self, *body->nthArgument(index))) {
+          return false;
+        }
+      }
+      return true;
+    };
   for (Kernel::Literal* literal : parent->iterLits()) {
     Kernel::Literal* substituted = nullptr;
     if (!safeApplySubstitution(literal, substitution, substituted)) {
       return false;
     }
     Kernel::SortHelper::collectVariableSorts(substituted, resultVarSorts);
+    for (unsigned index = 0; index < substituted->arity(); ++index) {
+      if (!collectProducerFunctionApplications(
+            collectProducerFunctionApplications,
+            *substituted->nthArgument(index))) {
+        return false;
+      }
+    }
   }
   std::vector<std::pair<unsigned, std::string>> renderedResultVarSorts;
   Lib::DHMap<unsigned, Kernel::TermList>::Iterator resultVarSortIterator(resultVarSorts);
@@ -800,7 +860,9 @@ bool MegalodonChecker::certificateSubstituteStepPartsSexpr(
       id,
       MegalodonKernelSyntax::unitRef(parentId),
       MegalodonKernelSyntax::substitution(substitutionSexpr),
-      MegalodonKernelSyntax::clause(resultClause));
+      MegalodonKernelSyntax::clause(
+        resultClause,
+        producerFunctionApplications));
   auto appendResultVariableSorts = [&](const char* tag) {
     std::ostringstream metadataOut;
     metadataOut << '(' << tag << ' ' << sexprQuote(id) << " (";
@@ -10413,7 +10475,41 @@ bool MegalodonChecker::certificateNativeStepSexpr(
   std::string& result)
 {
   _certificateNativePrimitiveStepsByUnit.erase(unit->number());
+  _certificateResolutionLoweringSourceByUnit.erase(unit->number());
   _certificateSuperpositionLoweringSourceByUnit.erase(unit->number());
+  auto certificateResolutionPrimitiveSteps = [&]() {
+    std::vector<MegalodonKernelSyntax::PrimitiveStep> primitiveSteps;
+    std::string loweringSource;
+    if (certificateResolveStepSexpr(
+          unit, result, &primitiveSteps)) {
+      loweringSource = "proof_extra_v1";
+    } else if (certificateSubstitutedResolutionStepsSexpr(
+                 unit, replayInfo, result, &primitiveSteps)) {
+      const bool hasRecordedSubstitutions =
+        replayInfo != nullptr
+        && replayInfo->premises.size() == 2
+        && replayInfo->substitutionForBanksSub.size() == 2;
+      loweringSource =
+        hasRecordedSubstitutions ? "recorder_v1" : "producer_match_v1";
+    } else if (certificateSatSubsumptionResolutionStepSexpr(
+                 unit, result, &primitiveSteps)) {
+      loweringSource = "sat_subsumption_v1";
+    } else {
+      return false;
+    }
+    std::vector<std::string> validationFields;
+    if (!MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
+          validationFields,
+          primitiveSteps,
+          "u" + std::to_string(unit->number()))) {
+      return false;
+    }
+    _certificateResolutionLoweringSourceByUnit[unit->number()] =
+      loweringSource;
+    _certificateNativePrimitiveStepsByUnit[unit->number()] =
+      std::move(primitiveSteps);
+    return true;
+  };
   auto certificateSuperpositionPrimitiveSteps = [&]() {
     std::vector<MegalodonKernelSyntax::PrimitiveStep> primitiveSteps;
     if (certificateSuperpositionStepsSexpr(
@@ -10496,9 +10592,7 @@ bool MegalodonChecker::certificateNativeStepSexpr(
       || certificateFoolDistinctnessStepSexpr(unit, result)
       || certificateBoolSimplificationStepSexpr(unit, result)
       || certificateUnitResultingResolutionStepsSexpr(unit, result, true)
-      || certificateResolveStepSexpr(unit, result)
-      || certificateSubstitutedResolutionStepsSexpr(unit, replayInfo, result)
-      || certificateSatSubsumptionResolutionStepSexpr(unit, result)
+      || certificateResolutionPrimitiveSteps()
       || certificateFactorStepSexpr(unit, result)
       || certificateTrivialInequalityRemovalStepsSexpr(unit, result)
       || certificateEqualityResolutionStepSexpr(unit, replayInfo, result)
@@ -10784,6 +10878,41 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
     }
   }
   std::set<std::tuple<std::string, std::string, std::string, std::string>> seenUses;
+  if (!skolemUseDescriptors.empty()) {
+    for (Kernel::Unit* unit : proof) {
+      auto primitiveSteps =
+        _certificateNativePrimitiveStepsByUnit.find(unit->number());
+      if (primitiveSteps == _certificateNativePrimitiveStepsByUnit.end()) {
+        continue;
+      }
+      for (const auto& primitive : primitiveSteps->second) {
+        for (const auto& application : primitive.producerFunctionApplications) {
+          auto descriptor =
+            skolemUseDescriptors.find(application.functionSymbol);
+          if (descriptor == skolemUseDescriptors.end()
+            || application.argumentCount != descriptor->second.dependencyCount
+            || application.termSexpr.empty()) {
+            continue;
+          }
+          const auto key = std::make_tuple(
+            descriptor->second.step,
+            descriptor->second.symbol,
+            primitive.id,
+            application.termSexpr);
+          if (!seenUses.insert(key).second) {
+            continue;
+          }
+          MegalodonKernelSyntax::RenderedKernelSkolemUse use;
+          use.skolemStep = descriptor->second.step;
+          use.symbol = descriptor->second.symbol;
+          use.dependencyCount = descriptor->second.dependencyCount;
+          use.unit = primitive.id;
+          use.term = MegalodonKernelSyntax::term(application.termSexpr);
+          skolemUses.push_back(std::move(use));
+        }
+      }
+    }
+  }
   auto collectTermUses = [&](auto&& self, Kernel::TermList term,
                              const std::string& unitId) -> void {
     Kernel::TermList head;
@@ -14957,6 +15086,23 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         if (selected->synthesisExtra.elseLit != nullptr) {
           addKernelLiteralFields(kernelFields, "else", selected->synthesisExtra.elseLit);
         }
+        if (u->inference().rule() == Kernel::InferenceRule::RESOLUTION) {
+          auto primitiveSteps =
+            _certificateNativePrimitiveStepsByUnit.find(u->number());
+          auto loweringSource =
+            _certificateResolutionLoweringSourceByUnit.find(u->number());
+          if (primitiveSteps == _certificateNativePrimitiveStepsByUnit.end()
+            || loweringSource == _certificateResolutionLoweringSourceByUnit.end()
+            || !MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
+              kernelFields,
+              primitiveSteps->second,
+              "u" + std::to_string(u->number()))) {
+            INVALID_OPERATION(
+              "typed resolution primitive chain serialization failed");
+          }
+          kernelFields.push_back(
+            "primitive_lowering_source=" + loweringSource->second);
+        }
         emitKernelV1(
           u->inference().rule() == Kernel::InferenceRule::RESOLUTION ? "resolution" : "factoring",
           kernelFields,
@@ -15304,42 +15450,22 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
 	          };
 	        if (u->inference().rule() == Kernel::InferenceRule::FORWARD_SUBSUMPTION_RESOLUTION
 	          || u->inference().rule() == Kernel::InferenceRule::BACKWARD_SUBSUMPTION_RESOLUTION) {
-	          std::string primitiveExpansion;
-	          std::vector<MegalodonKernelSyntax::PrimitiveStep> primitiveSteps;
-	          if (certificateResolveStepSexpr(
-	                u,
-	                primitiveExpansion,
-	                &primitiveSteps)
-	            && MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
+	          auto primitiveSteps =
+	            _certificateNativePrimitiveStepsByUnit.find(u->number());
+	          auto loweringSource =
+	            _certificateResolutionLoweringSourceByUnit.find(u->number());
+	          if (primitiveSteps == _certificateNativePrimitiveStepsByUnit.end()
+	            || loweringSource == _certificateResolutionLoweringSourceByUnit.end()
+	            || !MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
 	              kernelFields,
-	              primitiveSteps,
+	              primitiveSteps->second,
 	              "u" + std::to_string(u->number()))) {
-	            adoptSubsumptionPivotFromPrimitiveSteps(primitiveSteps);
-	          } else if (certificateSubstitutedResolutionStepsSexpr(
-	                u,
-	                info,
-	                primitiveExpansion,
-	                &primitiveSteps)
-	            && MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
-	              kernelFields,
-	              primitiveSteps,
-	              "u" + std::to_string(u->number()))) {
-	            adoptSubsumptionPivotFromPrimitiveSteps(primitiveSteps);
-	          } else if (certificateSatSubsumptionResolutionStepSexpr(
-	                u,
-	                primitiveExpansion,
-	                &primitiveSteps)
-	            && MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
-	              kernelFields,
-	              primitiveSteps,
-	              "u" + std::to_string(u->number()))) {
-	            adoptSubsumptionPivotFromPrimitiveSteps(primitiveSteps);
-	          } else if (certificateNativeStepSexpr(u, info, primitiveExpansion)) {
-	            MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
-	              kernelFields,
-	              primitiveExpansion,
-	              "subsumption_resolution");
+	            INVALID_OPERATION(
+	              "typed subsumption-resolution primitive chain serialization failed");
 	          }
+	          kernelFields.push_back(
+	            "primitive_lowering_source=" + loweringSource->second);
+	          adoptSubsumptionPivotFromPrimitiveSteps(primitiveSteps->second);
 	        }
         if (u->inference().rule() == Kernel::InferenceRule::EQUALITY_RESOLUTION) {
           std::string primitiveExpansion;

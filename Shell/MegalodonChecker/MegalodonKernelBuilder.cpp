@@ -43,7 +43,9 @@ MegalodonKernelSyntax::PrimitiveStep primitiveClauseStep(
   const std::vector<std::string>& parentIds,
   const std::string& resultClause,
   const std::vector<std::pair<std::string, std::string>>& fields,
-  const std::string& rendered)
+  const std::string& rendered,
+  const std::vector<MegalodonKernelSyntax::ProducerFunctionApplication>&
+    producerFunctionApplications = {})
 {
   MegalodonKernelSyntax::PrimitiveStep step;
   step.rule = rule;
@@ -53,6 +55,7 @@ MegalodonKernelSyntax::PrimitiveStep primitiveClauseStep(
   step.parentIds = parentIds;
   step.hasResultClause = true;
   step.resultClause = resultClause;
+  step.producerFunctionApplications = producerFunctionApplications;
   step.fields = fields;
   return step;
 }
@@ -316,7 +319,8 @@ MegalodonKernelSyntax::PrimitiveStep substituteStep(
     {{"substitution", substitution.sexpr}},
     "(substitute " + quote(id)
       + " (parent " + quote(parent.value) + ") " + substitution.sexpr
-      + " (result " + result.sexpr + "))");
+      + " (result " + result.sexpr + "))",
+    result.producerFunctionApplications);
 }
 
 MegalodonKernelSyntax::PrimitiveStep equalityResolutionStep(

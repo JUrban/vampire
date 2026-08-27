@@ -14,6 +14,12 @@ struct PrimitiveExpansion {
   std::string requiredRule;
 };
 
+struct ProducerFunctionApplication {
+  unsigned functionSymbol = 0;
+  std::size_t argumentCount = 0;
+  std::string termSexpr;
+};
+
 struct PrimitiveStep {
   std::string rule;
   std::string id;
@@ -29,6 +35,7 @@ struct PrimitiveStep {
   // primitive fields; the refutation-level Skolem-use builder consumes them.
   std::vector<unsigned> certificateLocalFunctionSymbols;
   std::vector<std::size_t> certificateLocalSymbolDependencyCounts;
+  std::vector<ProducerFunctionApplication> producerFunctionApplications;
   std::vector<std::pair<std::string, std::string>> fields;
 };
 
@@ -50,6 +57,7 @@ struct RenderedKernelLiteral {
 
 struct RenderedKernelClause {
   std::string sexpr;
+  std::vector<ProducerFunctionApplication> producerFunctionApplications;
 };
 
 struct RenderedKernelSubstitution {
@@ -697,7 +705,9 @@ RenderedKernelUnitRef unitRef(const std::string& value);
 RenderedKernelTerm term(const std::string& sexpr);
 RenderedKernelFormula formula(const std::string& sexpr);
 RenderedKernelLiteral literal(const std::string& sexpr);
-RenderedKernelClause clause(const std::string& sexpr);
+RenderedKernelClause clause(
+  const std::string& sexpr,
+  const std::vector<ProducerFunctionApplication>& producerFunctionApplications = {});
 RenderedKernelSubstitution substitution(const std::string& sexpr);
 RenderedKernelPosition position(const std::string& sexpr);
 RenderedKernelType type(const std::string& sexpr);
