@@ -24,6 +24,7 @@ struct PrimitiveStep {
   std::string resultClause;
   bool hasResultFormula = false;
   std::string resultFormula;
+  std::vector<std::string> certificateLocalSymbols;
   std::vector<std::pair<std::string, std::string>> fields;
 };
 

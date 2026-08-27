@@ -10719,6 +10719,25 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr() const
   for (const std::string& metadata : _certificateNativeMetadata) {
     out << "  " << metadata << "\n";
   }
+  std::vector<MegalodonKernelSyntax::PrimitiveStep> skolemSteps;
+  for (Kernel::Unit* unit : proof) {
+    auto primitives = _certificateNativePrimitiveStepsByUnit.find(unit->number());
+    if (primitives == _certificateNativePrimitiveStepsByUnit.end()) {
+      continue;
+    }
+    for (const auto& primitive : primitives->second) {
+      if (primitive.rule == "skolem_formula") {
+        skolemSteps.push_back(primitive);
+      }
+    }
+  }
+  const std::string skolemScope =
+    MegalodonKernelBuilder::skolemRefutationScopeBlock(
+      "u" + std::to_string((*proof.rbegin())->number()),
+      skolemSteps);
+  if (!skolemScope.empty()) {
+    out << "  " << skolemScope << "\n";
+  }
   for (const std::string& step : _certificateNativeSteps) {
     out << "  " << step << "\n";
   }

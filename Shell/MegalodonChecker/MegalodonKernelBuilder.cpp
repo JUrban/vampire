@@ -85,6 +85,49 @@ bool PrimitiveChain::collect(
   return true;
 }
 
+std::string skolemRefutationScopeBlock(
+  const std::string& finalStep,
+  const std::vector<MegalodonKernelSyntax::PrimitiveStep>& skolemSteps)
+{
+  if (finalStep.empty() || skolemSteps.empty()) {
+    return "";
+  }
+  std::set<std::string> stepIds;
+  std::set<std::string> symbols;
+  std::string entries = "(entries";
+  for (std::size_t index = 0; index < skolemSteps.size(); ++index) {
+    const auto& step = skolemSteps[index];
+    if (!step.builderOwned
+      || step.rule != "skolem_formula"
+      || step.id.empty()
+      || step.certificateLocalSymbols.empty()
+      || !stepIds.insert(step.id).second) {
+      return "";
+    }
+    entries +=
+      " (entry (index " + std::to_string(index) + ")"
+      + " (step " + quote(step.id) + ") (symbols";
+    for (const std::string& symbol : step.certificateLocalSymbols) {
+      if (symbol.empty() || !symbols.insert(symbol).second) {
+        return "";
+      }
+      entries += " " + quote(symbol);
+    }
+    entries += "))";
+  }
+  entries += ")";
+
+  std::string dischargeOrder = "(discharge_order";
+  for (auto step = skolemSteps.rbegin(); step != skolemSteps.rend(); ++step) {
+    dischargeOrder += " " + quote(step->id);
+  }
+  dischargeOrder += ")";
+  return
+    "(skolem_scope_block \"smolka_refutation_v1\""
+    " (final " + quote(finalStep) + ") "
+    + entries + " " + dischargeOrder + ")";
+}
+
 std::string avatarPrimitiveWithMetadata(
   const MegalodonKernelSyntax::PrimitiveStep& step)
 {
@@ -486,6 +529,7 @@ MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
          witnessIndex < branch.witnesses.size();
          ++witnessIndex) {
       const auto& witness = branch.witnesses[witnessIndex];
+      step.certificateLocalSymbols.push_back(witness.symbol);
       const std::string witnessPrefix =
         prefix + "_witness_" + std::to_string(witnessIndex);
       step.fields.push_back({witnessPrefix + "_symbol", witness.symbol});
