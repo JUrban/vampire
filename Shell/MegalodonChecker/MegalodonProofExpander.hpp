@@ -2,10 +2,12 @@
 #define __MEGALODON_PROOF_EXPANDER__
 
 #include "Kernel/Term.hpp"
+#include "Shell/MegalodonChecker/MegalodonKernelSyntax.hpp"
 
 #include <cstddef>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace Shell {
@@ -39,10 +41,66 @@ struct Expansion {
   std::vector<Instance> instances;
 };
 
+struct SubstituteClauseStep {
+  std::string id;
+  MegalodonKernelSyntax::RenderedKernelUnitRef parent;
+  MegalodonKernelSyntax::RenderedKernelSubstitution substitution;
+  MegalodonKernelSyntax::RenderedKernelClause result;
+};
+
+struct EqualitySymmetryClauseStep {
+  std::string id;
+  MegalodonKernelSyntax::RenderedKernelUnitRef parent;
+  std::size_t literal = 0;
+  MegalodonKernelSyntax::RenderedKernelClause result;
+};
+
+struct ParamodulateClauseStep {
+  std::string id;
+  MegalodonKernelSyntax::RenderedKernelUnitRef equalityParent;
+  MegalodonKernelSyntax::RenderedKernelUnitRef targetParent;
+  std::size_t equalityLiteral = 0;
+  std::size_t targetLiteral = 0;
+  MegalodonKernelSyntax::RenderedKernelPosition position;
+  MegalodonKernelSyntax::RenderedKernelTerm from;
+  MegalodonKernelSyntax::RenderedKernelTerm to;
+  MegalodonKernelSyntax::RenderedKernelClause result;
+};
+
+struct FactorClauseStep {
+  std::string id;
+  MegalodonKernelSyntax::RenderedKernelUnitRef parent;
+  std::size_t leftLiteral = 0;
+  std::size_t rightLiteral = 0;
+  MegalodonKernelSyntax::RenderedKernelClause result;
+};
+
+using ClauseStep = std::variant<
+  SubstituteClauseStep,
+  EqualitySymmetryClauseStep,
+  ParamodulateClauseStep,
+  FactorClauseStep>;
+
+struct ClauseStepRequest {
+  ClauseStep step;
+  std::vector<std::string> trailingRecords;
+};
+
+struct ClauseExpansion {
+  std::vector<MegalodonKernelSyntax::PrimitiveStep> primitives;
+  std::vector<std::string> renderedSteps;
+};
+
 bool expandGroundProof(
   const std::vector<Step>& steps,
   const std::string& finalStep,
   Expansion& result,
+  std::string& error);
+
+bool expandClauseProof(
+  const std::vector<ClauseStepRequest>& requests,
+  const std::string& finalStep,
+  ClauseExpansion& result,
   std::string& error);
 
 }

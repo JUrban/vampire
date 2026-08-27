@@ -2,6 +2,7 @@
 
 #include "Kernel/SubstHelper.hpp"
 #include "Kernel/Substitution.hpp"
+#include "Shell/MegalodonChecker/MegalodonKernelBuilder.hpp"
 
 #include <algorithm>
 #include <functional>
@@ -152,6 +153,76 @@ bool expandGroundProof(
   }
   if (rootIndex != 0) {
     error = "primitive proof expansion did not allocate the root first";
+    return false;
+  }
+  return true;
+}
+
+bool expandClauseProof(
+  const std::vector<ClauseStepRequest>& requests,
+  const std::string& finalStep,
+  ClauseExpansion& result,
+  std::string& error)
+{
+  result = ClauseExpansion{};
+  if (requests.empty()) {
+    error = "clausal primitive expansion is empty";
+    return false;
+  }
+
+  for (const ClauseStepRequest& request : requests) {
+    MegalodonKernelSyntax::PrimitiveStep primitive;
+    if (const auto* step =
+          std::get_if<SubstituteClauseStep>(&request.step)) {
+      primitive = MegalodonKernelBuilder::substituteStep(
+        step->id,
+        step->parent,
+        step->substitution,
+        step->result);
+    } else if (const auto* step =
+                 std::get_if<EqualitySymmetryClauseStep>(&request.step)) {
+      primitive = MegalodonKernelBuilder::equalitySymmetryStep(
+        step->id,
+        step->parent,
+        step->literal,
+        step->result);
+    } else if (const auto* step =
+                 std::get_if<ParamodulateClauseStep>(&request.step)) {
+      primitive = MegalodonKernelBuilder::paramodulateStep(
+        step->id,
+        step->equalityParent,
+        step->equalityLiteral,
+        step->targetParent,
+        step->targetLiteral,
+        step->position,
+        step->from,
+        step->to,
+        step->result);
+    } else if (const auto* step =
+                 std::get_if<FactorClauseStep>(&request.step)) {
+      primitive = MegalodonKernelBuilder::factorStep(
+        step->id,
+        step->parent,
+        step->leftLiteral,
+        step->rightLiteral,
+        step->result);
+    }
+
+    std::string rendered = primitive.rendered;
+    for (const std::string& record : request.trailingRecords) {
+      rendered += "\n  " + record;
+    }
+    result.renderedSteps.push_back(std::move(rendered));
+    result.primitives.push_back(std::move(primitive));
+  }
+
+  std::vector<std::string> validationFields;
+  if (!MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
+        validationFields,
+        result.primitives,
+        finalStep)) {
+    result = ClauseExpansion{};
+    error = "clausal primitive expansion is not a connected final-step chain";
     return false;
   }
   return true;
