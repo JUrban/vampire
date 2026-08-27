@@ -816,8 +816,37 @@ its unresolved source premises remain assumptions.
 
 The harness requires a DAG-preservation marker for every reconstructed
 command, in addition to the ten-second Vampire bound, exact source checking,
-no-fallback guards, signature isolation, and final `Qed`. This is a 12-theorem
-E1 frontier, not a reclassification of the cached 100 certificates. Future
-certificate evolution must keep atomic producer records shareable; the
-consumer may type-check and elaborate them but must not flatten the graph or
-rediscover a proof tree.
+no-fallback guards, signature isolation, and final `Qed`. At this checkpoint
+the E1 frontier was 12 theorems; it was not a reclassification of the cached
+100 certificates. Future certificate evolution must keep atomic producer
+records shareable; the consumer may type-check and elaborate them but must not
+flatten the graph or rediscover a proof tree.
+
+### Single authoritative live check, 2026-08-27
+
+The live consumer previously checked every prepared DAG claim during replay
+and checked the complete nested claim term again at ordinary `Qed`. This was a
+duplicate traversal, not missing producer detail: the retained `and7I`
+certificate spent about 34 seconds in each traversal. Qualifying compact-DAG
+registration now defers the individual proposition checks to the final
+ordinary `Qed`; standalone preprocessing retains immediate checks. Claim
+closing, reference resolution, and certificate-`Known` rejection still occur
+before registration, and every claim proof remains in the final term.
+
+A mutation unit registers an invalid deferred claim and requires final kernel
+rejection. The unchanged producer certificates then pass 13 source-linked
+commands in 72.9 seconds instead of 111.3 seconds, with lower peak memory. One
+new ten-second-bounded producer run extends the original-development gate to
+14 commands through `not_or_and_demorgan`:
+
+```text
+/project/tmp/live-prefix13-deferred-final-20260827
+/project/tmp/live-prefix14-demorgan-20260827
+/project/tmp/checked-claim-100-deferred-regression-20260827 (100 PASS, 10 workers)
+```
+
+This does not add or weaken a certificate rule, and it does not move any
+Smolka transformation back into the OCaml compatibility layer. The producer
+calculus, exact ENNF/Skolem/AVATAR records, and small-kernel ownership remain
+unchanged. The remaining `and7I` cost is the real final kernel traversal and
+must remain an acceptance check.
