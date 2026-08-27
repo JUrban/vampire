@@ -10534,11 +10534,11 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
   auto literalMultiplicity =
     [](const std::vector<std::string>& literals, const std::string& literal) {
       return static_cast<unsigned>(std::count(literals.begin(), literals.end(), literal));
-    };
+  };
 
   const std::string stepBase = "u" + std::to_string(unit->number());
-  std::vector<std::string> steps;
-  MegalodonKernelBuilder::PrimitiveChain primitiveChain;
+  std::vector<MegalodonProofExpander::ClauseStepRequest>
+    expansionRequests;
   std::vector<std::string> parentIds(2);
   std::vector<std::vector<std::string>> substitutedParentClauses(2);
   std::vector<std::string> syntheticMetadata;
@@ -10643,7 +10643,19 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
           &primitive)) {
       return failExact("typed parent substitution");
     }
-    steps.push_back(primitiveChain.render(std::move(primitive)));
+    if (!primitive.hasResultClause) {
+      return failExact("typed parent substitution result");
+    }
+    MegalodonProofExpander::ClauseStepRequest request;
+    request.step = MegalodonProofExpander::SubstituteClauseStep{
+      substituteId,
+      MegalodonKernelSyntax::unitRef(parentIds[parentIndex]),
+      MegalodonKernelSyntax::substitution(renderedSubstitution),
+      MegalodonKernelSyntax::clause(
+        primitive.resultClause,
+        primitive.producerFunctionApplications),
+    };
+    expansionRequests.push_back(std::move(request));
     syntheticMetadata.insert(
       syntheticMetadata.end(), metadata.begin(), metadata.end());
     emittedVariableSorts.insert(substituteId);
@@ -10731,19 +10743,21 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
         unsigned currentTargetIndex,
         const std::vector<unsigned>& position,
         const std::vector<std::string>& resultClause) {
-      steps.push_back(primitiveChain.render(
-        MegalodonKernelBuilder::paramodulateStep(
+      MegalodonProofExpander::ClauseStepRequest request;
+      request.step = MegalodonProofExpander::ParamodulateClauseStep{
           id,
           MegalodonKernelSyntax::unitRef(parentIds[equalityParentIndex]),
-          equalityIndex,
           MegalodonKernelSyntax::unitRef(targetParentId),
+          equalityIndex,
           currentTargetIndex,
           MegalodonKernelSyntax::position(
             certificatePositionSexpr(position)),
           MegalodonKernelSyntax::term(fromSexpr),
           MegalodonKernelSyntax::term(toSexpr),
           MegalodonKernelSyntax::clause(
-            clauseSexprFromLiterals(resultClause)))));
+            clauseSexprFromLiterals(resultClause)),
+        };
+      expansionRequests.push_back(std::move(request));
       addSyntheticVariableSorts(id, resultClause);
     };
 
@@ -10852,14 +10866,16 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
             removeAt(currentClause, right);
           const std::string factorId =
             stepBase + "_factor" + std::to_string(factorCount++);
-          steps.push_back(primitiveChain.render(
-            MegalodonKernelBuilder::factorStep(
+          MegalodonProofExpander::ClauseStepRequest request;
+          request.step = MegalodonProofExpander::FactorClauseStep{
               factorId,
               MegalodonKernelSyntax::unitRef(currentParentId),
               left,
               right,
               MegalodonKernelSyntax::clause(
-                clauseSexprFromLiterals(factored)))));
+                clauseSexprFromLiterals(factored)),
+            };
+          expansionRequests.push_back(std::move(request));
           addSyntheticVariableSorts(factorId, factored);
           currentClause = std::move(factored);
           currentParentId = factorId;
@@ -10873,27 +10889,31 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
       return failExact("deterministic simultaneous conclusion");
     }
     if (currentParentId != stepBase) {
-      steps.push_back(primitiveChain.render(
-        MegalodonKernelBuilder::substituteStep(
+      MegalodonProofExpander::ClauseStepRequest request;
+      request.step = MegalodonProofExpander::SubstituteClauseStep{
           stepBase,
           MegalodonKernelSyntax::unitRef(currentParentId),
           MegalodonKernelSyntax::substitution("(subst)"),
           MegalodonKernelSyntax::clause(
-            clauseSexprFromLiterals(actual)))));
+            clauseSexprFromLiterals(actual)),
+        };
+      expansionRequests.push_back(std::move(request));
     }
   }
 
-  if (!primitiveChain.collect(steps, primitiveSteps)) {
-    return failExact("typed primitive collection");
+  MegalodonProofExpander::ClauseExpansion expansion;
+  std::string expansionError;
+  if (!MegalodonProofExpander::expandClauseProof(
+        expansionRequests,
+        stepBase,
+        expansion,
+        expansionError)) {
+    return failExact("typed primitive expansion");
   }
-  std::ostringstream out;
-  for (std::size_t index = 0; index < steps.size(); ++index) {
-    if (index != 0) {
-      out << "\n  ";
-    }
-    out << steps[index];
+  result = expansion.rendered;
+  if (primitiveSteps != nullptr) {
+    *primitiveSteps = std::move(expansion.primitives);
   }
-  result = out.str();
   for (const std::string& id : emittedVariableSorts) {
     const std::string variablePrefix =
       "(step_variable_sorts " + sexprQuote(id) + " ";
