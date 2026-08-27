@@ -61,6 +61,7 @@ private:
   struct CertificateProducerApplicationTerm {
     Kernel::TermList term;
     std::vector<Kernel::TermList> arguments;
+    std::size_t occurrenceCount = 1;
   };
 
   bool inferenceNeedsReplayInformation(const Kernel::InferenceRule& rule) const;
@@ -313,8 +314,15 @@ private:
     MegalodonKernelSyntax::PrimitiveStep* equalityResolutionPrimitive = nullptr);
   bool certificateEqualityFactoringStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateTruthConflictStepSexpr(Kernel::Unit* unit, std::string& result);
-  bool certificateForwardSubsumptionDemodulationStepsSexpr(Kernel::Unit* unit, std::string& result);
-  bool certificateDemodulationStepsSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
+  bool certificateForwardSubsumptionDemodulationStepsSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
+  bool certificateDemodulationStepsSexpr(
+    Kernel::Unit* unit,
+    const InferenceRecorder::InferenceInformation* replayInfo,
+    std::string& result,
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   bool certificateParamodulateStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
   bool certificateSuperpositionStepsSexpr(
     Kernel::Unit* unit,
