@@ -241,7 +241,7 @@ private:
   bool certificateFoolFormulaStepSexpr(
     Kernel::Unit* unit,
     std::string& result,
-    MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   bool certificateEnnfFormulaStepSexpr(
     Kernel::Unit* unit,
     std::string& result,
@@ -282,8 +282,14 @@ private:
   bool certificateAvatarContradictionStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateCondensationStepSexpr(Kernel::Unit* unit, std::string& result);
-  bool certificateDefinitionRewriteStepsSexpr(Kernel::Unit* unit, std::string& result);
-  bool certificateDefinitionFoldingStepsSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateDefinitionRewriteStepsSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
+  bool certificateDefinitionFoldingStepsSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   bool certificateFoolExhaustivenessStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFoolDistinctnessStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateBoolSimplificationStepSexpr(Kernel::Unit* unit, std::string& result);
@@ -334,7 +340,11 @@ private:
     const InferenceRecorder::InferenceInformation* replayInfo,
     std::string& result,
     std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
-  bool certificateParamodulateStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
+  bool certificateParamodulateStepSexpr(
+    Kernel::Unit* unit,
+    const InferenceRecorder::InferenceInformation* replayInfo,
+    std::string& result,
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps);
   bool certificateSuperpositionStepsSexpr(
     Kernel::Unit* unit,
     const InferenceRecorder::InferenceInformation* replayInfo,

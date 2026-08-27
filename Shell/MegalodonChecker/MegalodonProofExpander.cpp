@@ -57,9 +57,6 @@ Environment composeParentEnvironment(
       binding.first,
       applyEnvironment(binding.second, childEnvironment));
   }
-  for (auto& binding : result) {
-    binding.second = applyEnvironment(binding.second, result);
-  }
   return result;
 }
 
@@ -145,12 +142,47 @@ void rememberTermVariableSorts(
 bool groundEnvironment(
   const Step& step,
   const Environment& incoming,
+  bool parametric,
   const std::vector<GroundTerm>& groundTerms,
   Environment& result,
   std::string& error)
 {
   result = incoming;
+
+  if (parametric) {
+    result.erase(
+      std::remove_if(
+        result.begin(),
+        result.end(),
+        [](const auto& binding) { return !binding.second.ground(); }),
+      result.end());
+  }
   closeEnvironment(result);
+
+  for (const auto& binding : result) {
+    auto expected = std::find_if(
+      step.freeVariableSorts.begin(),
+      step.freeVariableSorts.end(),
+      [&](const auto& variable) { return variable.first == binding.first; });
+    Kernel::TermList actualSort;
+    if (expected != step.freeVariableSorts.end()
+        && binding.second.ground()
+        && Kernel::SortHelper::tryGetResultSort(binding.second, actualSort)
+        && actualSort != expected->second) {
+      std::ostringstream expectedText;
+      std::ostringstream actualText;
+      expectedText << expected->second;
+      actualText << actualSort;
+      error = "proof instance " + step.id + " binds X"
+        + std::to_string(binding.first) + " at sort " + expectedText.str()
+        + " to a term of sort " + actualText.str();
+      return false;
+    }
+  }
+
+  if (parametric) {
+    return true;
+  }
 
   VariableSorts needed = step.freeVariableSorts;
   for (const auto& binding : result) {
@@ -165,7 +197,9 @@ bool groundEnvironment(
     }
   }
   for (const auto& application : step.applications) {
-    rememberTermVariableSorts(application.term, needed);
+    if (application.requiresGrounding) {
+      rememberTermVariableSorts(application.term, needed);
+    }
   }
 
   Environment completion;
@@ -213,6 +247,59 @@ bool sameEnvironment(const Environment& left, const Environment& right)
   return left == right;
 }
 
+using ApplicationArities = std::map<unsigned, std::size_t>;
+
+std::size_t applicationArity(Kernel::TermList term)
+{
+  std::size_t arity = 0;
+  while (term.isApplication()) {
+    ++arity;
+    term = term.lhs();
+  }
+  return arity;
+}
+
+void rememberGroundApplications(
+  Kernel::TermList term,
+  const ApplicationArities& arities,
+  std::vector<Application>& applications)
+{
+  Kernel::TermList head = term;
+  while (head.isApplication()) {
+    head = head.lhs();
+  }
+  if (head.isTerm() && head.term()->arity() == 0) {
+    const unsigned functionSymbol = head.term()->functor();
+    auto expected = arities.find(functionSymbol);
+    if (expected != arities.end()
+        && applicationArity(term) == expected->second
+        && term.ground()
+        && std::none_of(
+          applications.begin(),
+          applications.end(),
+          [&](const Application& existing) {
+            return existing.functionSymbol == functionSymbol
+              && existing.term == term;
+          })) {
+      applications.push_back(Application{functionSymbol, term});
+    }
+  }
+
+  if (term.isVar()) {
+    return;
+  }
+  if (term.isApplication()) {
+    rememberGroundApplications(term.lhs(), arities, applications);
+    rememberGroundApplications(term.rhs(), arities, applications);
+    return;
+  }
+  Kernel::Term* body = term.term();
+  for (unsigned index = 0; index < body->arity(); ++index) {
+    rememberGroundApplications(
+      *body->nthArgument(index), arities, applications);
+  }
+}
+
 }
 
 bool expandGroundProof(
@@ -234,11 +321,26 @@ bool expandGroundProof(
     return false;
   }
 
-  result = Expansion{"ivy_ground_v1", finalStep, {}};
+  ApplicationArities applicationArities;
+  for (const auto& step : steps) {
+    for (const auto& application : step.applications) {
+      const std::size_t arity = applicationArity(application.term);
+      auto inserted = applicationArities.emplace(
+        application.functionSymbol, arity);
+      if (!inserted.second && inserted.first->second != arity) {
+        error = "primitive proof uses one Skolem symbol at inconsistent arities";
+        return false;
+      }
+    }
+  }
+
+  result = Expansion{"ivy_instance_v2", finalStep, {}};
   std::vector<bool> active;
-  std::function<bool(const std::string&, const Environment&, std::size_t&)>
+  std::function<bool(
+    const std::string&, const Environment&, bool, std::size_t&)>
     visit = [&](const std::string& stepId,
                 const Environment& environment,
+                bool parametric,
                 std::size_t& resultIndex) {
       auto found = stepById.find(stepId);
       if (found == stepById.end()) {
@@ -250,6 +352,7 @@ bool expandGroundProof(
       if (!groundEnvironment(
             step,
             environment,
+            parametric,
             groundTerms,
             groundedEnvironment,
             error)) {
@@ -257,6 +360,7 @@ bool expandGroundProof(
       }
       for (const auto& instance : result.instances) {
         if (instance.stepId == stepId
+            && instance.parametric == parametric
             && sameEnvironment(instance.environment, groundedEnvironment)) {
           resultIndex = instance.index;
           return true;
@@ -264,35 +368,60 @@ bool expandGroundProof(
       }
       resultIndex = result.instances.size();
       result.instances.push_back(
-        Instance{resultIndex, stepId, groundedEnvironment, {}, {}});
+        Instance{
+          resultIndex, stepId, parametric, groundedEnvironment, {}, {}, {}});
       active.push_back(true);
 
       for (const auto& application : step.applications) {
         Kernel::TermList grounded =
           applyEnvironment(application.term, groundedEnvironment);
         if (!grounded.ground()) {
+          if (parametric) {
+            result.instances[resultIndex].sourceApplications.push_back(
+              application);
+            const auto duplicate = std::find_if(
+              result.instances[resultIndex].applications.begin(),
+              result.instances[resultIndex].applications.end(),
+              [&](const Application& existing) {
+                return existing.functionSymbol == application.functionSymbol
+                  && existing.term == grounded;
+              });
+            if (duplicate == result.instances[resultIndex].applications.end()) {
+              result.instances[resultIndex].applications.push_back(
+                Application{application.functionSymbol, grounded});
+            }
+            continue;
+          }
+          if (!application.requiresGrounding) {
+            continue;
+          }
           error = "proof instance " + stepId
             + " retains a variable in a Skolem application";
           return false;
         }
-        const auto duplicate = std::find_if(
-          result.instances[resultIndex].applications.begin(),
-          result.instances[resultIndex].applications.end(),
-          [&](const Application& existing) {
-            return existing.functionSymbol == application.functionSymbol
-              && existing.term == grounded;
-          });
-        if (duplicate == result.instances[resultIndex].applications.end()) {
-          result.instances[resultIndex].applications.push_back(
-            Application{application.functionSymbol, grounded});
-        }
+        result.instances[resultIndex].sourceApplications.push_back(
+          application);
+        rememberGroundApplications(
+          grounded,
+          applicationArities,
+          result.instances[resultIndex].applications);
+      }
+      for (const auto& binding : groundedEnvironment) {
+        rememberGroundApplications(
+          binding.second,
+          applicationArities,
+          result.instances[resultIndex].applications);
       }
 
       const Environment parentEnvironment =
         composeParentEnvironment(groundedEnvironment, step.parentSubstitution);
       for (const std::string& parentId : step.parentIds) {
         std::size_t parentIndex = 0;
-        if (!visit(parentId, parentEnvironment, parentIndex)) {
+        if (!visit(
+              parentId,
+              parentEnvironment,
+              parametric,
+              parentIndex)) {
           return false;
         }
         if (parentIndex < active.size() && active[parentIndex]) {
@@ -300,13 +429,26 @@ bool expandGroundProof(
           return false;
         }
         result.instances[resultIndex].parentInstances.push_back(parentIndex);
+        for (const Application& application :
+             result.instances[parentIndex].applications) {
+          const auto duplicate = std::find_if(
+            result.instances[resultIndex].applications.begin(),
+            result.instances[resultIndex].applications.end(),
+            [&](const Application& existing) {
+              return existing.functionSymbol == application.functionSymbol
+                && existing.term == application.term;
+            });
+          if (duplicate == result.instances[resultIndex].applications.end()) {
+            result.instances[resultIndex].applications.push_back(application);
+          }
+        }
       }
       active[resultIndex] = false;
       return true;
     };
 
   std::size_t rootIndex = 0;
-  if (!visit(finalStep, {}, rootIndex)) {
+  if (!visit(finalStep, {}, false, rootIndex)) {
     return false;
   }
   if (rootIndex != 0) {

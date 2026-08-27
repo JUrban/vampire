@@ -19,6 +19,7 @@ using VariableSorts = std::vector<std::pair<unsigned, Kernel::TermList>>;
 struct Application {
   unsigned functionSymbol = 0;
   Kernel::TermList term;
+  bool requiresGrounding = true;
 };
 
 struct GroundTerm {
@@ -39,9 +40,11 @@ struct Step {
 struct Instance {
   std::size_t index = 0;
   std::string stepId;
+  bool parametric = false;
   Environment environment;
   std::vector<std::size_t> parentInstances;
   std::vector<Application> applications;
+  std::vector<Application> sourceApplications;
 };
 
 struct Expansion {

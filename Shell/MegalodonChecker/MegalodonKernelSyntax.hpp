@@ -115,6 +115,8 @@ struct RenderedKernelSkolemUse {
   std::size_t occurrenceCount = 1;
   bool hasGroundInstance = false;
   std::size_t groundInstance = 0;
+  bool groundInstanceParametric = false;
+  std::size_t groundEnvironmentSize = 0;
 };
 
 struct RenderedKernelGroundBinding {
@@ -131,6 +133,7 @@ struct RenderedKernelGroundApplication {
 struct RenderedKernelGroundInstance {
   std::size_t index = 0;
   RenderedKernelUnitRef unit;
+  bool parametric = false;
   std::vector<RenderedKernelGroundBinding> environment;
   std::vector<std::size_t> parentInstances;
   std::vector<RenderedKernelGroundApplication> applications;

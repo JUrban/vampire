@@ -364,17 +364,28 @@ bool MegalodonChecker::certificateTypeSexpr(Kernel::TermList sort, std::string& 
 
 bool MegalodonChecker::certificateTermSexpr(Kernel::TermList term, std::string& result)
 {
-  if (term.isVar()) {
-    result = "(TMH " + sexprQuote(variableName(term.var())) + ")";
+  if (HOL::isTrue(term)) {
+    result = "(TMH \"vampire_true\")";
     return true;
   }
-  if (term.isApplication()) {
-    std::string lhs;
-    std::string rhs;
-    if (!certificateTermSexpr(term.lhs(), lhs) || !certificateTermSexpr(term.rhs(), rhs)) {
+  if (HOL::isFalse(term)) {
+    result = "(TMH \"vampire_false\")";
+    return true;
+  }
+  if (term.isLambdaTerm() && term.lambdaBody().ground()) {
+    Kernel::TermList lambdaSort = Kernel::SortHelper::getResultSort(term.term());
+    std::string domain;
+    std::string body;
+    if (!lambdaSort.isArrowSort()
+        || !certificateTypeSexpr(lambdaSort.domain(), domain)
+        || !certificateTermSexpr(term.lambdaBody(), body)) {
       return false;
     }
-    result = "(AP " + lhs + " " + rhs + ")";
+    result = "(LAM " + domain + " " + body + ")";
+    return true;
+  }
+  if (term.isVar()) {
+    result = "(TMH " + sexprQuote(variableName(term.var())) + ")";
     return true;
   }
   if (term.isTerm() && term.term()->isSpecial()) {
@@ -388,9 +399,11 @@ bool MegalodonChecker::certificateTermSexpr(Kernel::TermList term, std::string& 
       std::string body;
       if (lambdaBody.isTerm() && lambdaBody.term()->isFormula()) {
         if (!certificateFormulaTermSexpr(lambdaBody.term()->getSpecialData()->getFormula(), body)) {
+          result = "lambda formula body";
           return false;
         }
       } else if (!certificateTermSexpr(lambdaBody, body)) {
+        result = "lambda term body";
         return false;
       }
 
@@ -402,6 +415,9 @@ bool MegalodonChecker::certificateTermSexpr(Kernel::TermList term, std::string& 
       for (auto it = vars.rbegin(); it != vars.rend(); ++it) {
         std::string type;
         if (!certificateTypeSexpr(it->second, type)) {
+          std::ostringstream detail;
+          detail << "lambda binder type " << it->second;
+          result = detail.str();
           return false;
         }
         body = "(VLAMV " + sexprQuote(variableName(it->first)) + " " + type + " " + body + ")";
@@ -412,6 +428,16 @@ bool MegalodonChecker::certificateTermSexpr(Kernel::TermList term, std::string& 
     default:
       return false;
     }
+  }
+  if (term.isApplication()) {
+    std::string lhs;
+    std::string rhs;
+    if (!certificateTermSexpr(term.lhs(), lhs)
+        || !certificateTermSexpr(term.rhs(), rhs)) {
+      return false;
+    }
+    result = "(AP " + lhs + " " + rhs + ")";
+    return true;
   }
   if (!term.isTerm() || term.term()->isSpecial()) {
     return false;
@@ -1113,9 +1139,57 @@ bool MegalodonChecker::certificateAvatarComponentStepSexpr(Kernel::Unit* unit, s
   if (!certificateClauseSexpr(clause, renderedClause)) {
     return false;
   }
+  std::set<unsigned> definitionNumbers;
+  for (unsigned split : iterTraits(clause->splits()->iter())) {
+    const SATLiteral splitLiteral = Splitter::getLiteralFromName(split);
+    Kernel::Unit* matchingDefinition = nullptr;
+    for (Kernel::Unit* candidate : proof) {
+      if (candidate->inference().rule()
+          != Kernel::InferenceRule::AVATAR_DEFINITION) {
+        continue;
+      }
+      const auto* splitExtraRaw = env.proofExtra.find(candidate);
+      if (splitExtraRaw == nullptr) {
+        continue;
+      }
+      const auto* splitExtra =
+        static_cast<const SplitDefinitionExtra*>(splitExtraRaw);
+      if (splitExtra->component == nullptr
+          || !splitExtra->component->isComponent()
+          || splitExtra->component->noSplits()) {
+        continue;
+      }
+      const unsigned componentLevel = splitExtra->component->splits()->sval();
+      const SATLiteral componentLiteral =
+        Splitter::getLiteralFromName(componentLevel);
+      if (componentLiteral.var() != splitLiteral.var()) {
+        continue;
+      }
+      if (matchingDefinition != nullptr
+          && matchingDefinition != candidate) {
+        INVALID_OPERATION(
+          "multiple AVATAR definitions for SAT variable "
+          + std::to_string(splitLiteral.var()));
+      }
+      matchingDefinition = candidate;
+    }
+    if (matchingDefinition == nullptr) {
+      INVALID_OPERATION(
+        "AVATAR component lacks a definition for SAT variable "
+        + std::to_string(splitLiteral.var()));
+    }
+    definitionNumbers.insert(matchingDefinition->number());
+  }
+  std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef> definitions;
+  for (unsigned definitionNumber : definitionNumbers) {
+    definitions.push_back(MegalodonKernelSyntax::unitRef(
+      "u" + std::to_string(definitionNumber)));
+  }
   const auto step = MegalodonKernelBuilder::avatarComponentStep(
     "u" + std::to_string(unit->number()),
+    definitions,
     MegalodonKernelSyntax::clause(renderedClause));
+  _certificateNativePrimitiveStepsByUnit[unit->number()] = {step};
   result = MegalodonKernelBuilder::avatarPrimitiveWithMetadata(step);
   return true;
 }
@@ -1132,18 +1206,71 @@ bool MegalodonChecker::certificateAvatarSplitStepSexpr(Kernel::Unit* unit, std::
     }
   } else {
     std::string formula;
-    if (!certificateFormulaTermSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), formula)) {
-      return false;
+    if (certificateFormulaTermSexpr(
+          static_cast<Kernel::FormulaUnit*>(unit)->formula(),
+          formula)) {
+      renderedClause = "(clause (pos " + formula + "))";
+    } else {
+      const auto* satExtraRaw = env.proofExtra.find(unit);
+      if (satExtraRaw == nullptr) {
+        return false;
+      }
+      const auto* satExtra =
+        static_cast<const Indexing::SATClauseExtra*>(satExtraRaw);
+      if (satExtra->clause == nullptr) {
+        return false;
+      }
+      std::ostringstream clause;
+      clause << "(clause";
+      for (SATLiteral literal : satExtra->clause->iter()) {
+        clause << " (" << (literal.positive() ? "pos" : "neg")
+               << " (TMH "
+               << sexprQuote("split_" + std::to_string(literal.var()))
+               << "))";
+      }
+      clause << ')';
+      renderedClause = clause.str();
     }
-    renderedClause = "(clause (pos " + formula + "))";
   }
   if (renderedClause.empty()) {
     return false;
   }
   std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef> parents;
+  std::vector<Kernel::Unit*> parentUnits;
   for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    parentUnits.push_back(parent);
+  }
+  auto sourceParent = std::find_if(
+    parentUnits.begin(),
+    parentUnits.end(),
+    [](Kernel::Unit* parent) {
+      return parent->inference().rule()
+        != Kernel::InferenceRule::AVATAR_DEFINITION;
+    });
+  if (sourceParent == parentUnits.end()) {
+    return false;
+  }
+  Kernel::Unit* source = *sourceParent;
+  parentUnits.erase(sourceParent);
+  std::sort(
+    parentUnits.begin(),
+    parentUnits.end(),
+    [](Kernel::Unit* left, Kernel::Unit* right) {
+      return left->number() < right->number();
+    });
+  parents.push_back(
+    MegalodonKernelSyntax::unitRef("u" + std::to_string(source->number())));
+  for (Kernel::Unit* parent : parentUnits) {
     parents.push_back(
       MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number())));
+  }
+  if (std::getenv("MEGALODON_CERT_DEBUG")) {
+    std::cerr << "megalodon native avatar_split u" << unit->number()
+              << " canonical parents";
+    for (const auto& parent : parents) {
+      std::cerr << ' ' << parent.value;
+    }
+    std::cerr << std::endl;
   }
   const auto step = MegalodonKernelBuilder::avatarSplitStep(
     "u" + std::to_string(unit->number()),
@@ -1220,17 +1347,51 @@ bool MegalodonChecker::certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, 
     if (origin == nullptr || !satClauseAsSplitClauseSexpr(clause, resultClause)) {
       return false;
     }
-    std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef> parents;
+    std::vector<Kernel::Unit*> parentUnits;
     for (Kernel::Unit* parent : iterTraits(origin->getParents())) {
-      if (_certificateNativeStepIds.find(parent->number()) != _certificateNativeStepIds.end()) {
-        parents.push_back(
-          MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number())));
+      if (_certificateNativeStepIds.find(parent->number())
+          != _certificateNativeStepIds.end()) {
+        parentUnits.push_back(parent);
       }
+    }
+    auto sourceParent = std::find_if(
+      parentUnits.begin(),
+      parentUnits.end(),
+      [](Kernel::Unit* parent) {
+        return parent->inference().rule()
+          != Kernel::InferenceRule::AVATAR_DEFINITION;
+      });
+    if (sourceParent == parentUnits.end()) {
+      return false;
+    }
+    Kernel::Unit* source = *sourceParent;
+    parentUnits.erase(sourceParent);
+    std::sort(
+      parentUnits.begin(),
+      parentUnits.end(),
+      [](Kernel::Unit* left, Kernel::Unit* right) {
+        return left->number() < right->number();
+      });
+    std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef> parents;
+    parents.push_back(
+      MegalodonKernelSyntax::unitRef("u" + std::to_string(source->number())));
+    for (Kernel::Unit* parent : parentUnits) {
+      parents.push_back(
+        MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number())));
+    }
+    if (std::getenv("MEGALODON_CERT_DEBUG")) {
+      std::cerr << "megalodon synthetic avatar_split u" << origin->number()
+                << " canonical parents";
+      for (const auto& parent : parents) {
+        std::cerr << ' ' << parent.value;
+      }
+      std::cerr << std::endl;
     }
     const auto step = MegalodonKernelBuilder::avatarSplitStep(
       "u" + std::to_string(origin->number()),
       parents,
       MegalodonKernelSyntax::clause(resultClause));
+    _certificateNativePrimitiveStepsByUnit[origin->number()] = {step};
     rendered = MegalodonKernelBuilder::avatarPrimitiveWithMetadata(step);
     return true;
   };
@@ -2480,7 +2641,7 @@ bool MegalodonChecker::certificateFoolBoolStepSexpr(
 bool MegalodonChecker::certificateFoolFormulaStepSexpr(
   Kernel::Unit* unit,
   std::string& result,
-  MegalodonKernelSyntax::PrimitiveStep* primitiveStep)
+  std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps)
 {
   if (unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::FOOL_ELIMINATION) {
     return false;
@@ -2589,45 +2750,6 @@ bool MegalodonChecker::certificateFoolFormulaStepSexpr(
           break;
         }
       }
-      if (left->connective() == Kernel::LITERAL
-        && right->connective() == Kernel::LITERAL) {
-        Kernel::Literal* leftLiteral = left->literal();
-        Kernel::Literal* rightLiteral = right->literal();
-        std::string leftSort;
-        std::string rightSort;
-        std::string leftFirst;
-        std::string rightFirst;
-        std::string leftSecond;
-        std::string rightSecond;
-        if (leftLiteral->isEquality()
-          && rightLiteral->isEquality()
-          && leftLiteral->polarity() == rightLiteral->polarity()
-          && certificateTypeSexpr(
-            HOL::convert::toNameless(
-              Kernel::SortHelper::getEqualityArgumentSort(leftLiteral)),
-            leftSort)
-          && certificateTypeSexpr(
-            HOL::convert::toNameless(
-              Kernel::SortHelper::getEqualityArgumentSort(rightLiteral)),
-            rightSort)
-          && certificateTermSexpr(
-            HOL::convert::toNameless(*leftLiteral->nthArgument(0)),
-            leftFirst)
-          && certificateTermSexpr(
-            HOL::convert::toNameless(*rightLiteral->nthArgument(0)),
-            rightFirst)
-          && certificateTermSexpr(
-            HOL::convert::toNameless(*leftLiteral->nthArgument(1)),
-            leftSecond)
-          && certificateTermSexpr(
-            HOL::convert::toNameless(*rightLiteral->nthArgument(1)),
-            rightSecond)
-          && leftSort == rightSort
-          && leftFirst == rightFirst
-          && leftSecond == rightSecond) {
-          return;
-        }
-      }
       std::string leftText;
       std::string rightText;
       if (certificateFormulaTermSexpr(left, leftText)
@@ -2670,8 +2792,13 @@ bool MegalodonChecker::certificateFoolFormulaStepSexpr(
     MegalodonKernelSyntax::formula(resultFormula));
   out << built.rendered;
   result = out.str();
-  if (primitiveStep != nullptr) {
-    *primitiveStep = std::move(built);
+  if (primitiveSteps != nullptr) {
+    primitiveSteps->clear();
+    primitiveSteps->reserve(primitives.size() + 1);
+    for (auto& primitive : primitives) {
+      primitiveSteps->push_back(std::move(primitive.first));
+    }
+    primitiveSteps->push_back(std::move(built));
   }
   return true;
 }
@@ -4068,7 +4195,10 @@ bool MegalodonChecker::certificateExtensionalityResolutionStepsSexpr(Kernel::Uni
   return false;
 }
 
-bool MegalodonChecker::certificateDefinitionRewriteStepsSexpr(Kernel::Unit* unit, std::string& result)
+bool MegalodonChecker::certificateDefinitionRewriteStepsSexpr(
+  Kernel::Unit* unit,
+  std::string& result,
+  std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps)
 {
   if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::DEFINITION_UNFOLDING) {
     return false;
@@ -4267,6 +4397,7 @@ bool MegalodonChecker::certificateDefinitionRewriteStepsSexpr(Kernel::Unit* unit
   const std::string unitId = "u" + std::to_string(unit->number());
   std::string currentParentId = "u" + std::to_string(source->number());
   std::vector<std::string> steps;
+  std::vector<MegalodonKernelSyntax::PrimitiveStep> primitives;
 
   for (std::size_t parentIndex = 1; parentIndex < parents.size(); ++parentIndex) {
     Kernel::Clause* definitionParent = parents[parentIndex]->asClause();
@@ -4325,17 +4456,20 @@ bool MegalodonChecker::certificateDefinitionRewriteStepsSexpr(Kernel::Unit* unit
 	            definitionParentId = unitId + "_def_subst" + std::to_string(parentIndex - 1);
 	            std::string substituteStep;
 	            std::vector<std::string> substituteMetadata;
+	            MegalodonKernelSyntax::PrimitiveStep substitutePrimitive;
 	            if (!certificateSubstituteStepPartsSexpr(
 	                  definitionParentId,
 	                  "u" + std::to_string(definitionParent->number()),
 	                  definitionParent,
 	                  substitution,
 	                  substituteStep,
-	                  substituteMetadata)) {
+	                  substituteMetadata,
+	                  &substitutePrimitive)) {
 	              return false;
 	            }
 	            steps.push_back(substituteStep);
 	            steps.insert(steps.end(), substituteMetadata.begin(), substituteMetadata.end());
+	            primitives.push_back(std::move(substitutePrimitive));
 	          }
 
           std::string fromSexpr;
@@ -4355,14 +4489,20 @@ bool MegalodonChecker::certificateDefinitionRewriteStepsSexpr(Kernel::Unit* unit
           if (resultClause.empty()) {
             return false;
           }
-          steps.push_back(
-            "(paramodulate " + sexprQuote(stepId)
-            + " (equality " + sexprQuote(definitionParentId) + " 0)"
-            + " (target " + sexprQuote(currentParentId) + " " + std::to_string(literalIndex) + ") "
-            + certificatePositionSexpr(nativePosition)
-            + " (from " + fromSexpr + ")"
-            + " (to " + toSexpr + ")"
-            + " (result " + resultClause + "))");
+          auto paramodulatePrimitive =
+            MegalodonKernelBuilder::paramodulateStep(
+              stepId,
+              MegalodonKernelSyntax::unitRef(definitionParentId),
+              0,
+              MegalodonKernelSyntax::unitRef(currentParentId),
+              literalIndex,
+              MegalodonKernelSyntax::position(
+                certificatePositionSexpr(nativePosition)),
+              MegalodonKernelSyntax::term(fromSexpr),
+              MegalodonKernelSyntax::term(toSexpr),
+              MegalodonKernelSyntax::clause(resultClause));
+          steps.push_back(paramodulatePrimitive.rendered);
+          primitives.push_back(std::move(paramodulatePrimitive));
 
           currentClause = nextClause;
           currentParentId = stepId;
@@ -4384,10 +4524,16 @@ bool MegalodonChecker::certificateDefinitionRewriteStepsSexpr(Kernel::Unit* unit
     out << steps[i];
   }
   result = out.str();
+  if (primitiveSteps != nullptr) {
+    *primitiveSteps = std::move(primitives);
+  }
   return true;
 }
 
-bool MegalodonChecker::certificateDefinitionFoldingStepsSexpr(Kernel::Unit* unit, std::string& result)
+bool MegalodonChecker::certificateDefinitionFoldingStepsSexpr(
+  Kernel::Unit* unit,
+  std::string& result,
+  std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps)
 {
   if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::DEFINITION_FOLDING_TWEE) {
     return false;
@@ -4582,6 +4728,7 @@ bool MegalodonChecker::certificateDefinitionFoldingStepsSexpr(Kernel::Unit* unit
   std::string currentParentId = "u" + std::to_string(parents[0]->number());
   const std::string unitId = "u" + std::to_string(unit->number());
   std::vector<std::string> steps;
+  std::vector<MegalodonKernelSyntax::PrimitiveStep> primitives;
 
   for (std::size_t stepIndex = 0; stepIndex < foldingExtra->steps.size(); ++stepIndex) {
     const auto& step = foldingExtra->steps[stepIndex];
@@ -4648,28 +4795,37 @@ bool MegalodonChecker::certificateDefinitionFoldingStepsSexpr(Kernel::Unit* unit
 	      definitionParentId = unitId + "_def_subst" + std::to_string(stepIndex);
 	      std::string substituteStep;
 	      std::vector<std::string> substituteMetadata;
+	      MegalodonKernelSyntax::PrimitiveStep substitutePrimitive;
 	      if (!certificateSubstituteStepPartsSexpr(
 	            definitionParentId,
 	            "u" + std::to_string(parents[definitionParentIndex]->number()),
 	            definitionParent,
 	            substitution,
 	            substituteStep,
-	            substituteMetadata)) {
+	            substituteMetadata,
+	            &substitutePrimitive)) {
 	        return emitDefinitionRewriteChain();
 	      }
 	      steps.push_back(substituteStep);
 	      steps.insert(steps.end(), substituteMetadata.begin(), substituteMetadata.end());
+	      primitives.push_back(std::move(substitutePrimitive));
 	    }
 
     const std::string stepId = isLast ? unitId : unitId + "_paramodulate" + std::to_string(stepIndex);
-    steps.push_back(
-      "(paramodulate " + sexprQuote(stepId)
-      + " (equality " + sexprQuote(definitionParentId) + " " + std::to_string(equalityIndex) + ")"
-      + " (target " + sexprQuote(currentParentId) + " " + std::to_string(step.literal) + ") "
-      + certificatePositionSexpr(nativePosition)
-      + " (from " + fromSexpr + ")"
-      + " (to " + toSexpr + ")"
-      + " (result " + resultClause + "))");
+    auto paramodulatePrimitive =
+      MegalodonKernelBuilder::paramodulateStep(
+        stepId,
+        MegalodonKernelSyntax::unitRef(definitionParentId),
+        equalityIndex,
+        MegalodonKernelSyntax::unitRef(currentParentId),
+        step.literal,
+        MegalodonKernelSyntax::position(
+          certificatePositionSexpr(nativePosition)),
+        MegalodonKernelSyntax::term(fromSexpr),
+        MegalodonKernelSyntax::term(toSexpr),
+        MegalodonKernelSyntax::clause(resultClause));
+    steps.push_back(paramodulatePrimitive.rendered);
+    primitives.push_back(std::move(paramodulatePrimitive));
 
     currentClause = nextClause;
     currentParentId = stepId;
@@ -4683,6 +4839,9 @@ bool MegalodonChecker::certificateDefinitionFoldingStepsSexpr(Kernel::Unit* unit
     out << steps[i];
   }
   result = out.str();
+  if (primitiveSteps != nullptr) {
+    *primitiveSteps = std::move(primitives);
+  }
   return true;
 }
 
@@ -7219,7 +7378,8 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
                 sideSubstitution,
                 sideSubstituteStep,
                 substituteMetadata,
-                &substitutePrimitive)
+                &substitutePrimitive,
+                &sideClauseLiterals)
             || !substitutePrimitive.hasResultClause) {
             return debugFailure("typed side substitution construction failed");
           }
@@ -7626,8 +7786,15 @@ bool MegalodonChecker::certificateTrivialInequalityRemovalStepsSexpr(Kernel::Uni
       || !certificateTermSexpr(*literal->nthArgument(1), rhs)) {
       return false;
     }
-    return (isTruthConstant(lhs, "f__true") && isTruthConstant(rhs, "f__false"))
-      || (isTruthConstant(lhs, "f__false") && isTruthConstant(rhs, "f__true"));
+    const bool lhsTrue = isTruthConstant(lhs, "f__true")
+      || isTruthConstant(lhs, "vampire_true");
+    const bool lhsFalse = isTruthConstant(lhs, "f__false")
+      || isTruthConstant(lhs, "vampire_false");
+    const bool rhsTrue = isTruthConstant(rhs, "f__true")
+      || isTruthConstant(rhs, "vampire_true");
+    const bool rhsFalse = isTruthConstant(rhs, "f__false")
+      || isTruthConstant(rhs, "vampire_false");
+    return (lhsTrue && rhsFalse) || (lhsFalse && rhsTrue);
   };
 
   std::vector<std::string> current;
@@ -7671,6 +7838,7 @@ bool MegalodonChecker::certificateTrivialInequalityRemovalStepsSexpr(Kernel::Uni
   const std::string stepBase = "u" + std::to_string(unit->number());
   std::string currentParentId = "u" + std::to_string(parent->number());
   std::vector<std::string> steps;
+  std::vector<MegalodonKernelSyntax::PrimitiveStep> primitives;
   for (std::size_t i = 0; i < removals.size(); ++i) {
     const Removal& removal = removals[i];
     auto literalIt = std::find(current.begin(), current.end(), removal.literal);
@@ -7688,11 +7856,23 @@ bool MegalodonChecker::certificateTrivialInequalityRemovalStepsSexpr(Kernel::Uni
     const std::string stepId = i + 1 == removals.size()
       ? stepBase
       : stepBase + "_trivial" + std::to_string(i);
-    steps.push_back(
-      "(" + removal.rule + " " + sexprQuote(stepId)
-      + " (parent " + sexprQuote(currentParentId) + ")"
-      + " (literal " + std::to_string(literalIndex) + ")"
-      + " (result " + clauseSexprFromLiterals(resultLiterals) + "))");
+    const auto resultClause = MegalodonKernelSyntax::clause(
+      clauseSexprFromLiterals(resultLiterals));
+    MegalodonKernelSyntax::PrimitiveStep primitive =
+      removal.rule == "truth_conflict"
+      ? MegalodonKernelBuilder::truthConflictStep(
+          stepId,
+          MegalodonKernelSyntax::unitRef(currentParentId),
+          literalIndex,
+          resultClause)
+      : MegalodonKernelBuilder::equalityResolutionStep(
+          stepId,
+          MegalodonKernelSyntax::unitRef(currentParentId),
+          literalIndex,
+          resultClause,
+          {});
+    steps.push_back(primitive.rendered);
+    primitives.push_back(std::move(primitive));
     current = resultLiterals;
     currentParentId = stepId;
   }
@@ -7709,6 +7889,8 @@ bool MegalodonChecker::certificateTrivialInequalityRemovalStepsSexpr(Kernel::Uni
     out << steps[i];
   }
   result = out.str();
+  _certificateNativePrimitiveStepsByUnit[unit->number()] =
+    std::move(primitives);
   return true;
 }
 
@@ -8736,7 +8918,8 @@ bool MegalodonChecker::certificateTruthConflictStepSexpr(
 bool MegalodonChecker::certificateParamodulateStepSexpr(
   Kernel::Unit* unit,
   const InferenceRecorder::InferenceInformation*,
-  std::string& result)
+  std::string& result,
+  std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps)
 {
   const Kernel::InferenceRule& rule = unit->inference().rule();
   if (!unit->isClause()
@@ -8868,7 +9051,8 @@ bool MegalodonChecker::certificateParamodulateStepSexpr(
             needsDuplicateFactors = true;
           }
 
-          std::vector<std::string> steps;
+          std::vector<MegalodonProofExpander::ClauseStepRequest>
+            expansionRequests;
           std::vector<std::string> paramodulationResult = needsDuplicateFactors ? expected : actual;
           std::string paramodulationStepId = needsDuplicateFactors
             ? "u" + std::to_string(unit->number()) + "_paramodulate"
@@ -8890,11 +9074,16 @@ bool MegalodonChecker::certificateParamodulateStepSexpr(
                   }
                   std::vector<std::string> factored = removeAt(currentClause, right);
                   const std::string factorId = "u" + std::to_string(unit->number()) + "_factor" + std::to_string(factorCount++);
-                  steps.push_back(
-                    "(factor " + sexprQuote(factorId)
-                    + " (parent " + sexprQuote(currentParentId) + ")"
-                    + " (literals " + std::to_string(left) + " " + std::to_string(right) + ")"
-                    + " (result " + clauseSexprFromLiterals(factored) + "))");
+                  MegalodonProofExpander::ClauseStepRequest request;
+                  request.step = MegalodonProofExpander::FactorClauseStep{
+                    factorId,
+                    MegalodonKernelSyntax::unitRef(currentParentId),
+                    left,
+                    right,
+                    MegalodonKernelSyntax::clause(
+                      clauseSexprFromLiterals(factored)),
+                  };
+                  expansionRequests.push_back(std::move(request));
                   currentClause = factored;
                   currentParentId = factorId;
                   changed = true;
@@ -8908,10 +9097,14 @@ bool MegalodonChecker::certificateParamodulateStepSexpr(
           }
 
           if (needsDuplicateFactors) {
-            steps.push_back(
-              "(substitute " + sexprQuote("u" + std::to_string(unit->number()))
-              + " (parent " + sexprQuote(currentParentId) + ") (subst)"
-              + " (result " + clauseSexprFromLiterals(actual) + "))");
+            MegalodonProofExpander::ClauseStepRequest request;
+            request.step = MegalodonProofExpander::SubstituteClauseStep{
+              "u" + std::to_string(unit->number()),
+              MegalodonKernelSyntax::unitRef(currentParentId),
+              MegalodonKernelSyntax::substitution("(subst)"),
+              MegalodonKernelSyntax::clause(clauseSexprFromLiterals(actual)),
+            };
+            expansionRequests.push_back(std::move(request));
           }
 
           if (!needsDuplicateFactors && !sameMultiset(paramodulationResult, actual)) {
@@ -8924,20 +9117,38 @@ bool MegalodonChecker::certificateParamodulateStepSexpr(
             || !literalIndex(targetParent, target, targetIndex)) {
             continue;
           }
-          std::string paramodulate =
-            "(paramodulate " + sexprQuote(paramodulationStepId)
-            + " (equality " + sexprQuote("u" + std::to_string(equalityParent->number())) + " " + std::to_string(equalityIndex) + ")"
-            + " (target " + sexprQuote("u" + std::to_string(targetParent->number())) + " " + std::to_string(targetIndex) + ") "
-            + certificatePositionSexpr(nativePosition)
-            + " (from " + selectedFromSexpr + ")"
-            + " (to " + selectedToSexpr + ")"
-            + " (result " + clauseSexprFromLiterals(paramodulationResult) + "))";
-          std::ostringstream out;
-          out << paramodulate;
-          for (const std::string& step : steps) {
-            out << "\n  " << step;
+          MegalodonProofExpander::ClauseStepRequest paramodulateRequest;
+          paramodulateRequest.step =
+            MegalodonProofExpander::ParamodulateClauseStep{
+              paramodulationStepId,
+              MegalodonKernelSyntax::unitRef(
+                "u" + std::to_string(equalityParent->number())),
+              MegalodonKernelSyntax::unitRef(
+                "u" + std::to_string(targetParent->number())),
+              equalityIndex,
+              targetIndex,
+              MegalodonKernelSyntax::position(
+                certificatePositionSexpr(nativePosition)),
+              MegalodonKernelSyntax::term(selectedFromSexpr),
+              MegalodonKernelSyntax::term(selectedToSexpr),
+              MegalodonKernelSyntax::clause(
+                clauseSexprFromLiterals(paramodulationResult)),
+            };
+          expansionRequests.insert(
+            expansionRequests.begin(), std::move(paramodulateRequest));
+          MegalodonProofExpander::ClauseExpansion expansion;
+          std::string expansionError;
+          if (!MegalodonProofExpander::expandClauseProof(
+                expansionRequests,
+                "u" + std::to_string(unit->number()),
+                expansion,
+                expansionError)) {
+            continue;
           }
-          result = out.str();
+          result = expansion.rendered;
+          if (primitiveSteps != nullptr) {
+            *primitiveSteps = std::move(expansion.primitives);
+          }
           return true;
         }
       }
@@ -11188,14 +11399,13 @@ bool MegalodonChecker::certificateNativeStepSexpr(
     };
     return true;
   };
-  auto certificateFoolFormulaPrimitiveStep = [&]() {
-    MegalodonKernelSyntax::PrimitiveStep primitiveStep;
-    if (!certificateFoolFormulaStepSexpr(unit, result, &primitiveStep)) {
+  auto certificateFoolFormulaPrimitiveSteps = [&]() {
+    std::vector<MegalodonKernelSyntax::PrimitiveStep> primitiveSteps;
+    if (!certificateFoolFormulaStepSexpr(unit, result, &primitiveSteps)) {
       return false;
     }
-    _certificateNativePrimitiveStepsByUnit[unit->number()] = {
-      std::move(primitiveStep),
-    };
+    _certificateNativePrimitiveStepsByUnit[unit->number()] =
+      std::move(primitiveSteps);
     return true;
   };
   auto certificateFoolBoolPrimitiveStep = [&]() {
@@ -11290,6 +11500,40 @@ bool MegalodonChecker::certificateNativeStepSexpr(
       std::move(primitiveSteps);
     return true;
   };
+  auto certificateParamodulatePrimitiveSteps = [&]() {
+    std::vector<MegalodonKernelSyntax::PrimitiveStep> primitiveSteps;
+    if (!certificateParamodulateStepSexpr(
+          unit, replayInfo, result, &primitiveSteps)) {
+      return false;
+    }
+    _certificateNativePrimitiveStepsByUnit[unit->number()] =
+      std::move(primitiveSteps);
+    return true;
+  };
+  auto certificateDefinitionRewritePrimitiveSteps = [&]() {
+    std::vector<MegalodonKernelSyntax::PrimitiveStep> primitiveSteps;
+    if (!certificateDefinitionRewriteStepsSexpr(
+          unit, result, &primitiveSteps)) {
+      return false;
+    }
+    _certificateNativePrimitiveStepsByUnit[unit->number()] =
+      std::move(primitiveSteps);
+    return true;
+  };
+  auto certificateDefinitionFoldingPrimitiveSteps = [&]() {
+    std::vector<MegalodonKernelSyntax::PrimitiveStep> primitiveSteps;
+    if (!certificateDefinitionFoldingStepsSexpr(
+          unit, result, &primitiveSteps)) {
+      return false;
+    }
+    const std::string unitId = "u" + std::to_string(unit->number());
+    if (!primitiveSteps.empty()
+        && primitiveSteps.back().id == unitId) {
+      _certificateNativePrimitiveStepsByUnit[unit->number()] =
+        std::move(primitiveSteps);
+    }
+    return true;
+  };
   try {
     return certificateInputStepSexpr(unit, result)
       || certificateFormulaInputStepSexpr(unit, result)
@@ -11298,7 +11542,7 @@ bool MegalodonChecker::certificateNativeStepSexpr(
       || certificateFormulaCopyPrimitiveStep()
       || certificateFormulaTermCopyPrimitiveStep()
       || certificateFoolBoolPrimitiveStep()
-      || certificateFoolFormulaPrimitiveStep()
+      || certificateFoolFormulaPrimitiveSteps()
       || certificateEnnfPrimitiveStep()
       || certificateSkolemPrimitiveStep()
       || certificateCnfPrimitiveStep()
@@ -11313,8 +11557,8 @@ bool MegalodonChecker::certificateNativeStepSexpr(
       || certificateAvatarContradictionStepSexpr(unit, result)
       || certificateAvatarRefutationStepSexpr(unit, result)
       || certificateCondensationStepSexpr(unit, result)
-      || certificateDefinitionRewriteStepsSexpr(unit, result)
-      || certificateDefinitionFoldingStepsSexpr(unit, result)
+      || certificateDefinitionRewritePrimitiveSteps()
+      || certificateDefinitionFoldingPrimitiveSteps()
       || certificateFoolExhaustivenessStepSexpr(unit, result)
       || certificateFoolDistinctnessStepSexpr(unit, result)
       || certificateBoolSimplificationStepSexpr(unit, result)
@@ -11328,7 +11572,7 @@ bool MegalodonChecker::certificateNativeStepSexpr(
       || certificateForwardSubsumptionDemodulationPrimitiveSteps()
       || certificateDemodulationPrimitiveSteps()
       || certificateSuperpositionPrimitiveSteps()
-      || certificateParamodulateStepSexpr(unit, replayInfo, result);
+      || certificateParamodulatePrimitiveSteps();
   } catch (const Lib::Exception& ex) {
     if (std::getenv("MEGALODON_CERT_DEBUG")) {
       std::ostringstream msg;
@@ -11636,10 +11880,14 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
         }
       }
     }
+    std::set<std::string> clauseUsedSkolemSteps;
+    for (unsigned function : clauseUsedSkolemFunctions) {
+      clauseUsedSkolemSteps.insert(skolemUseDescriptors.at(function).step);
+    }
     for (auto descriptor = skolemUseDescriptors.begin();
          descriptor != skolemUseDescriptors.end();) {
-      if (clauseUsedSkolemFunctions.find(descriptor->first)
-          == clauseUsedSkolemFunctions.end()) {
+      if (clauseUsedSkolemSteps.find(descriptor->second.step)
+          == clauseUsedSkolemSteps.end()) {
         descriptor = skolemUseDescriptors.erase(descriptor);
       } else {
         ++descriptor;
@@ -11870,7 +12118,8 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
   auto collectGroundingApplications =
     [&](auto&& self,
         Kernel::TermList term,
-        std::vector<MegalodonProofExpander::Application>& applications)
+        std::vector<MegalodonProofExpander::Application>& applications,
+        bool requiresGrounding)
         -> void {
       Kernel::TermList head;
       std::vector<Kernel::TermList> arguments;
@@ -11879,20 +12128,28 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
         auto descriptor = skolemUseDescriptors.find(head.term()->functor());
         if (descriptor != skolemUseDescriptors.end()
             && arguments.size() == descriptor->second.dependencyCount) {
-          applications.push_back({head.term()->functor(), term});
+          applications.push_back({
+            head.term()->functor(),
+            term,
+            requiresGrounding,
+          });
         }
       }
       if (term.isVar()) {
         return;
       }
       if (term.isApplication()) {
-        self(self, term.lhs(), applications);
-        self(self, term.rhs(), applications);
+        self(self, term.lhs(), applications, requiresGrounding);
+        self(self, term.rhs(), applications, requiresGrounding);
         return;
       }
       Kernel::Term* body = term.term();
       for (unsigned index = 0; index < body->arity(); ++index) {
-        self(self, *body->nthArgument(index), applications);
+        self(
+          self,
+          *body->nthArgument(index),
+          applications,
+          requiresGrounding);
       }
     };
   auto collectUnitGroundingApplications =
@@ -11904,7 +12161,8 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
             collectGroundingApplications(
               collectGroundingApplications,
               *literal->nthArgument(index),
-              applications);
+              applications,
+              true);
           }
         }
       } else {
@@ -11917,7 +12175,8 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
                 collectGroundingApplications(
                   collectGroundingApplications,
                   *literal->nthArgument(index),
-                  applications);
+                  applications,
+                  false);
               }
               break;
             }
@@ -11925,7 +12184,8 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
               collectGroundingApplications(
                 collectGroundingApplications,
                 formula->getBooleanTerm(),
-                applications);
+                applications,
+                false);
               break;
             case Kernel::NOT:
               self(self, formula->uarg());
@@ -12063,6 +12323,47 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
   // arbitrary inhabitants because that would create a new Skolem obligation.
   synthesizeGroundTerms(false);
   synthesizeGroundTerms(true);
+  addGroundTerm(
+    Kernel::AtomicSort::boolSort(),
+    Kernel::TermList(Kernel::Term::foolTrue()));
+
+  std::function<bool(Kernel::TermList)> ensureGroundInhabitant =
+    [&](Kernel::TermList sort) {
+      auto existing = std::find_if(
+        groundTerms.begin(),
+        groundTerms.end(),
+        [&](const auto& candidate) {
+          return candidate.sort == sort
+            && !candidate.requiresExistingApplication;
+        });
+      if (existing != groundTerms.end()) {
+        return true;
+      }
+      if (!sort.isArrowSort()
+          || !ensureGroundInhabitant(sort.result())) {
+        return false;
+      }
+      auto body = std::find_if(
+        groundTerms.begin(),
+        groundTerms.end(),
+        [&](const auto& candidate) {
+          return candidate.sort == sort.result()
+            && !candidate.requiresExistingApplication;
+        });
+      ASS(body != groundTerms.end())
+      Kernel::TermList domain = sort.domain();
+      Kernel::TermList lambda = HOL::create::namelessLambda(
+        domain,
+        sort.result(),
+        body->term);
+      return addGroundTerm(sort, lambda);
+    };
+  for (Kernel::Unit* unit : proof) {
+    for (const auto& variable : collectUnitFreeVariableSorts(unit)) {
+      ensureGroundInhabitant(variable.second);
+    }
+  }
+
   for (const auto& descriptor : skolemUseDescriptors) {
     if (descriptor.second.dependencyCount != 0) {
       continue;
@@ -12090,6 +12391,30 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       MegalodonProofExpander::Step step;
       step.id = primitive.id;
       step.parentIds = primitive.parentIds;
+      for (const std::string& parentId : primitive.parentIds) {
+        auto parentUnit = unitById.find(parentId);
+        if (parentUnit != unitById.end()) {
+          collectUnitGroundingApplications(
+            parentUnit->second,
+            step.applications);
+        }
+      }
+      for (const auto& stored : _certificateProducerApplicationTerms) {
+        if (std::get<0>(stored.first) != primitive.id) {
+          continue;
+        }
+        auto descriptor =
+          skolemUseDescriptors.find(std::get<1>(stored.first));
+        if (descriptor == skolemUseDescriptors.end()
+            || stored.second.arguments.size()
+                 != descriptor->second.dependencyCount) {
+          continue;
+        }
+        step.applications.push_back({
+          std::get<1>(stored.first),
+          stored.second.term,
+        });
+      }
       groundingSteps.push_back(std::move(step));
     }
     for (Kernel::Unit* unit : proof) {
@@ -12109,10 +12434,50 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
                 "u" + std::to_string(parent->number()));
             }
           }
+        } else if (rule == Kernel::InferenceRule::DEFINITION_FOLDING_PRED) {
+          Kernel::Unit* sourceParent = nullptr;
+          std::vector<Kernel::Unit*> definitionParents;
+          for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+            if (parent->isClause()) {
+              continue;
+            }
+            if (parent->inference().rule()
+                == Kernel::InferenceRule::PREDICATE_DEFINITION) {
+              definitionParents.push_back(parent);
+            } else if (sourceParent == nullptr) {
+              sourceParent = parent;
+            }
+          }
+          if (sourceParent != nullptr) {
+            sourceStep.parentIds.push_back(
+              "u" + std::to_string(sourceParent->number()));
+          }
+          std::reverse(definitionParents.begin(), definitionParents.end());
+          for (Kernel::Unit* parent : definitionParents) {
+            sourceStep.parentIds.push_back(
+              "u" + std::to_string(parent->number()));
+          }
         }
         collectUnitGroundingApplications(unit, sourceStep.applications);
         groundingSteps.push_back(std::move(sourceStep));
         continue;
+      }
+      std::set<std::string> conclusionChain;
+      std::string conclusionStep =
+        "u" + std::to_string(unit->number());
+      while (true) {
+        auto chainStep = std::find_if(
+          primitiveSteps->second.begin(),
+          primitiveSteps->second.end(),
+          [&](const auto& primitive) {
+            return primitive.id == conclusionStep;
+          });
+        if (chainStep == primitiveSteps->second.end()
+            || !conclusionChain.insert(conclusionStep).second
+            || chainStep->parentIds.size() != 1) {
+          break;
+        }
+        conclusionStep = chainStep->parentIds.front();
       }
       for (const auto& primitive : primitiveSteps->second) {
         MegalodonProofExpander::Step step;
@@ -12138,6 +12503,9 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
           collectUnitGroundingApplications(
             actualUnit->second,
             step.applications);
+        } else if (conclusionChain.find(primitive.id)
+                   != conclusionChain.end()) {
+          collectUnitGroundingApplications(unit, step.applications);
         }
         for (const auto& stored : _certificateProducerApplicationTerms) {
           if (std::get<0>(stored.first) != primitive.id) {
@@ -12174,6 +12542,17 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       INVALID_OPERATION(
         "typed proof grounding failed: " + groundingError);
     }
+    std::set<std::tuple<std::string, std::string, std::string, std::string>>
+      groundedSkolemInventoryKeys;
+    auto applyGroundingEnvironment =
+      [](Kernel::TermList term,
+         const MegalodonProofExpander::Environment& environment) {
+        Kernel::Substitution substitution;
+        for (const auto& binding : environment) {
+          substitution.rebind(binding.first, binding.second);
+        }
+        return Kernel::SubstHelper::apply(term, substitution);
+      };
     renderedGrounding.version = grounding.version;
     renderedGrounding.finalStep =
       MegalodonKernelSyntax::unitRef(grounding.finalStep);
@@ -12181,12 +12560,16 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       MegalodonKernelSyntax::RenderedKernelGroundInstance renderedInstance;
       renderedInstance.index = instance.index;
       renderedInstance.unit = MegalodonKernelSyntax::unitRef(instance.stepId);
+      renderedInstance.parametric = instance.parametric;
       renderedInstance.parentInstances = instance.parentInstances;
       for (const auto& binding : instance.environment) {
         std::string term;
         if (!certificateTermSexpr(binding.second, term)) {
-          INVALID_OPERATION(
-            "typed proof grounding environment term serialization failed");
+          std::ostringstream detail;
+          detail << "typed proof grounding environment term serialization failed at "
+                 << instance.stepId << " for X" << binding.first
+                 << " = " << binding.second << " (" << term << ")";
+          INVALID_OPERATION(detail.str());
         }
         renderedInstance.environment.push_back({
           variableName(binding.first),
@@ -12223,11 +12606,41 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
         groundedUse.occurrenceCount = 1;
         groundedUse.hasGroundInstance = true;
         groundedUse.groundInstance = instance.index;
+        groundedUse.groundInstanceParametric = instance.parametric;
+        groundedUse.groundEnvironmentSize = instance.environment.size();
         groundedSkolemUses.push_back(groundedUse);
         renderedInstance.applications.push_back({
           groundedUse.skolemStep,
           groundedUse.symbol,
           MegalodonKernelSyntax::term(term),
+        });
+      }
+      for (const auto& application : instance.sourceApplications) {
+        auto descriptor = skolemUseDescriptors.find(application.functionSymbol);
+        std::string sourceTerm;
+        if (descriptor == skolemUseDescriptors.end()
+            || !certificateTermSexpr(application.term, sourceTerm)) {
+          INVALID_OPERATION(
+            "typed proof grounding source application serialization failed");
+        }
+        const Kernel::TermList groundedSource = applyGroundingEnvironment(
+          application.term,
+          instance.environment);
+        const bool isEmittedApplication = std::any_of(
+          instance.applications.begin(),
+          instance.applications.end(),
+          [&](const auto& emitted) {
+            return emitted.functionSymbol == application.functionSymbol
+              && emitted.term == groundedSource;
+          });
+        if (!isEmittedApplication) {
+          continue;
+        }
+        groundedSkolemInventoryKeys.insert({
+          descriptor->second.step,
+          descriptor->second.symbol,
+          instance.stepId,
+          sourceTerm,
         });
       }
       renderedGrounding.instances.push_back(std::move(renderedInstance));
@@ -12236,8 +12649,12 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       groundedSkolemSymbols.insert({use.skolemStep, use.symbol});
     }
     for (const auto& use : skolemUses) {
-      if (groundedSkolemSymbols.find({use.skolemStep, use.symbol})
-          != groundedSkolemSymbols.end()) {
+      if (groundedSkolemInventoryKeys.find({
+            use.skolemStep,
+            use.symbol,
+            use.unit,
+            use.term.sexpr,
+          }) != groundedSkolemInventoryKeys.end()) {
         groundedSkolemInventoryUses.push_back(use);
       }
     }
@@ -12287,13 +12704,17 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       groundedSkolemInventoryUses);
   if (!skolemUseBlock.empty()) {
     out << "  " << skolemUseBlock << "\n";
+    std::string unherbrandizationError;
     const std::string unherbrandizationBlock =
       MegalodonKernelBuilder::skolemFiniteUnherbrandizationBlock(
         "u" + std::to_string((*proof.rbegin())->number()),
-        groundedSkolemUses);
+        groundedSkolemUses,
+        renderedGrounding,
+        unherbrandizationError);
     if (unherbrandizationBlock.empty()) {
       INVALID_OPERATION(
-        "typed finite Skolem unherbrandization serialization failed");
+        "typed finite Skolem unherbrandization serialization failed: "
+        + unherbrandizationError);
     }
     out << "  " << unherbrandizationBlock << "\n";
   }
@@ -13671,9 +14092,26 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
   }
 
   if (u->inference().rule() == Kernel::InferenceRule::AVATAR_SPLIT_CLAUSE) {
-    UnitIterator parents = u->getParents();
-    if (parents.hasNext()) {
-      Kernel::Unit* mainParentUnit = parents.next();
+    std::vector<Kernel::Unit*> avatarParents;
+    for (Kernel::Unit* parent : iterTraits(u->getParents())) {
+      avatarParents.push_back(parent);
+    }
+    auto mainParent = std::find_if(
+      avatarParents.begin(),
+      avatarParents.end(),
+      [](Kernel::Unit* parent) {
+        return parent->inference().rule()
+          != Kernel::InferenceRule::AVATAR_DEFINITION;
+      });
+    if (mainParent != avatarParents.end()) {
+      Kernel::Unit* mainParentUnit = *mainParent;
+      avatarParents.erase(mainParent);
+      std::sort(
+        avatarParents.begin(),
+        avatarParents.end(),
+        [](Kernel::Unit* left, Kernel::Unit* right) {
+          return left->number() < right->number();
+        });
       if (mainParentUnit->isClause()) {
         Kernel::Clause* mainParent = mainParentUnit->asClause();
         std::vector<std::string> fields;
@@ -13735,13 +14173,9 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
 
         std::map<unsigned, Kernel::Clause*> components;
         std::map<unsigned, std::pair<unsigned, Kernel::Clause*>> splitToParentMap;
-        unsigned parentIndex = 1;
+        unsigned parentIndex = 2;
         unsigned componentParentRefIndex = 0;
-        for (Kernel::Unit* splitParent : iterTraits(u->getParents())) {
-          if (parentIndex == 1) {
-            ++parentIndex;
-            continue;
-          }
+        for (Kernel::Unit* splitParent : avatarParents) {
           const auto* splitExtraRaw = env.proofExtra.find(splitParent);
           if (splitExtraRaw == nullptr) {
             ++parentIndex;
@@ -26571,6 +27005,7 @@ void MegalodonChecker::print()
   _certificateSkolemWitnessDescriptors.clear();
   _certificateProducerApplicationTerms.clear();
   _certificateProducerSubstitutions.clear();
+  _avatarComponentBySatVar.clear();
   out << "% Megalodon proof reconstruction output generated by Vampire\n";
   out << "% format: vampire-megalodon-proof-outline-v1\n";
   out << "megalodon_reconstruction_start.\n";

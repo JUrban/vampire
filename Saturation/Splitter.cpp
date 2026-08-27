@@ -1132,6 +1132,15 @@ Clause* Splitter::buildAndInsertComponentClause(SplitLevel name, unsigned size, 
     def_u_i.setInductionDepth(orig->inference().inductionDepth());
     def_u = new FormulaUnit(def_f,def_u_i);
     InferenceStore::instance()->recordIntroducedSplitName(def_u,formula_name);
+    if (env.options->proofExtra() == Options::ProofExtra::FULL
+        || env.options->proofExtra() == Options::ProofExtra::LEAN) {
+      // Keep a polarity-independent proof object even when the first observed
+      // ground component is negative. The definition itself always names the
+      // canonical positive component.
+      temp->setSplits(SplitSet::getSingleton(posName));
+      temp->setComponent(true);
+      env.proofExtra.insert(def_u, new SplitDefinitionExtra(temp));
+    }
     // cout << "Add def " << def_u->toString() << " for " << name << endl;
     ALWAYS(_defs.insert(posName,def_u));
   }
@@ -1139,7 +1148,10 @@ Clause* Splitter::buildAndInsertComponentClause(SplitLevel name, unsigned size, 
   Clause* compCl = Clause::fromIterator(arrayIter(lits, size),
           ComponentClauseInference(InferenceRule::AVATAR_COMPONENT,UnitList::singleton(def_u),orig));
 
-  if(posName == name && (env.options->proofExtra() == Options::ProofExtra::FULL||env.options->proofExtra() == Options::ProofExtra::LEAN))
+  if (posName == name
+      && env.proofExtra.find(def_u) == nullptr
+      && (env.options->proofExtra() == Options::ProofExtra::FULL
+          || env.options->proofExtra() == Options::ProofExtra::LEAN))
     env.proofExtra.insert(def_u, new SplitDefinitionExtra(compCl));
 
   // propagate running sums:

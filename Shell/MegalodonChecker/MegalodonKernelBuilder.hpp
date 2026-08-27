@@ -41,7 +41,9 @@ std::string skolemRefutationUseBlock(
 
 std::string skolemFiniteUnherbrandizationBlock(
   const std::string& finalStep,
-  const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemUse>& uses);
+  const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemUse>& uses,
+  const MegalodonKernelSyntax::RenderedKernelGroundProof& proof,
+  std::string& error);
 
 std::string skolemGroundProofBlock(
   const MegalodonKernelSyntax::RenderedKernelGroundProof& proof);
@@ -175,6 +177,7 @@ MegalodonKernelSyntax::PrimitiveStep cnfFormulaClauseStep(
 
 MegalodonKernelSyntax::PrimitiveStep avatarComponentStep(
   const std::string& id,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& definitions,
   const MegalodonKernelSyntax::RenderedKernelClause& result);
 
 MegalodonKernelSyntax::PrimitiveStep avatarDefinitionStep(
