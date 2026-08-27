@@ -39,6 +39,13 @@ std::string skolemRefutationUseBlock(
   const std::vector<MegalodonKernelSyntax::PrimitiveStep>& skolemSteps,
   const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemUse>& uses);
 
+std::string skolemFiniteUnherbrandizationBlock(
+  const std::string& finalStep,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemUse>& uses);
+
+std::string skolemGroundProofBlock(
+  const MegalodonKernelSyntax::RenderedKernelGroundProof& proof);
+
 std::string avatarPrimitiveWithMetadata(
   const MegalodonKernelSyntax::PrimitiveStep& step);
 
@@ -105,6 +112,16 @@ MegalodonKernelSyntax::PrimitiveStep foolAtomLiftStep(
     std::string,
     MegalodonKernelSyntax::RenderedKernelType>>& context);
 
+MegalodonKernelSyntax::PrimitiveStep foolFormulaStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelFormula& result);
+
+MegalodonKernelSyntax::PrimitiveStep foolBoolStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelLiteral& result);
+
 MegalodonKernelSyntax::PrimitiveStep rectifyFormulaStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
@@ -130,6 +147,16 @@ MegalodonKernelSyntax::PrimitiveStep cnfLiteralStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
   const MegalodonKernelSyntax::RenderedKernelClause& result);
+
+MegalodonKernelSyntax::PrimitiveStep formulaCopyStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelLiteral& result);
+
+MegalodonKernelSyntax::PrimitiveStep formulaTermCopyStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelFormula& result);
 
 MegalodonKernelSyntax::PrimitiveStep cnfFormulaClauseStep(
   const std::string& id,

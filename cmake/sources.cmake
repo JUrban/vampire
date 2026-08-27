@@ -691,6 +691,8 @@ set(SOURCES
     Shell/LeanChecker/VariablePrenexOrderingTree.cpp
     Shell/LeanChecker/VariablePrenexOrderingTree.hpp
     Shell/MegalodonChecker/MegalodonChecker.cpp
+    Shell/MegalodonChecker/MegalodonProofExpander.cpp
+    Shell/MegalodonChecker/MegalodonProofExpander.hpp
     Shell/MegalodonChecker/MegalodonChecker.hpp
     Shell/MegalodonChecker/MegalodonKernelBuilder.cpp
     Shell/MegalodonChecker/MegalodonKernelBuilder.hpp

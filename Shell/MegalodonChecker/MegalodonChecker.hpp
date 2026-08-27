@@ -10,6 +10,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace Inferences {
@@ -22,6 +23,7 @@ namespace MegalodonKernelSyntax {
 struct PrimitiveStep;
 struct RenderedKernelCnfProjection;
 struct RenderedKernelRectifyRenamings;
+struct RenderedKernelSkolemUse;
 }
 
 class MegalodonChecker : public Kernel::InferenceStore::AbstractProofPrinter {
@@ -39,6 +41,28 @@ private:
     Kernel::Formula* formula;
   };
 
+  struct CertificateSkolemDependencyDescriptor {
+    unsigned variable = 0;
+    std::string name;
+    std::string typeSexpr;
+  };
+
+  struct CertificateSkolemWitnessDescriptor {
+    std::string step;
+    std::string symbol;
+    std::size_t branchIndex = 0;
+    std::size_t witnessIndex = 0;
+    std::string witnessTypeSexpr;
+    Kernel::Formula* sourceFormula = nullptr;
+    std::string sourceFormulaSexpr;
+    std::vector<CertificateSkolemDependencyDescriptor> dependencies;
+  };
+
+  struct CertificateProducerApplicationTerm {
+    Kernel::TermList term;
+    std::vector<Kernel::TermList> arguments;
+  };
+
   bool inferenceNeedsReplayInformation(const Kernel::InferenceRule& rule) const;
   void printMegalodonSourceCandidate();
   void printMegalodonClaimSkeleton();
@@ -54,6 +78,10 @@ private:
   bool skeletonClauseToMegalodon(Kernel::Clause* clause, std::string& result);
   bool skeletonDisjunctionToMegalodon(const std::vector<std::string>& literals, std::string& result);
   bool certificateTermJson(Kernel::TermList term, std::string& result);
+  bool certificateSkolemUseDetails(
+    unsigned functionSymbol,
+    const std::vector<Kernel::TermList>& arguments,
+    MegalodonKernelSyntax::RenderedKernelSkolemUse& use);
   bool certificateAtomJson(Kernel::Literal* literal, std::string& result);
   bool certificateLiteralJson(Kernel::Literal* literal, std::string& result);
   bool certificateSplitLiteralJson(unsigned split, std::string& result);
@@ -186,8 +214,14 @@ private:
   bool certificateInputStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFormulaInputStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFormulaTermInputStepSexpr(Kernel::Unit* unit, std::string& result);
-  bool certificateFormulaCopyStepSexpr(Kernel::Unit* unit, std::string& result);
-  bool certificateFormulaTermCopyStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateFormulaCopyStepSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
+  bool certificateFormulaTermCopyStepSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
   bool certificateRectifyRenamings(
     const InferenceRecorder::RectifyInferenceExtra* rectifyInfo,
     MegalodonKernelSyntax::RenderedKernelRectifyRenamings& result);
@@ -195,8 +229,14 @@ private:
     Kernel::Unit* unit,
     std::string& result,
     MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
-  bool certificateFoolBoolStepSexpr(Kernel::Unit* unit, std::string& result);
-  bool certificateFoolFormulaStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateFoolBoolStepSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
+  bool certificateFoolFormulaStepSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
   bool certificateEnnfFormulaStepSexpr(
     Kernel::Unit* unit,
     std::string& result,
@@ -261,7 +301,10 @@ private:
     Kernel::Unit* unit,
     std::string& result,
     std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
-  bool certificateFactorStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateFactorStepSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   bool certificateTrivialInequalityRemovalStepsSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateEqualityResolutionStepSexpr(
     Kernel::Unit* unit,
@@ -316,6 +359,13 @@ private:
     _certificateNativePrimitiveStepsByUnit;
   std::map<unsigned, std::string> _certificateResolutionLoweringSourceByUnit;
   std::map<unsigned, std::string> _certificateSuperpositionLoweringSourceByUnit;
+  std::map<unsigned, CertificateSkolemWitnessDescriptor>
+    _certificateSkolemWitnessDescriptors;
+  std::map<std::tuple<std::string, unsigned, std::string>,
+    CertificateProducerApplicationTerm> _certificateProducerApplicationTerms;
+  std::map<std::string,
+    std::vector<std::pair<unsigned, Kernel::TermList>>>
+    _certificateProducerSubstitutions;
 };
 
 } // namespace Shell

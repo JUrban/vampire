@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <limits>
 #include <map>
+#include <queue>
 #include <set>
 #include <tuple>
 #include <utility>
@@ -127,7 +128,7 @@ std::string skolemRefutationScopeBlock(
   }
   dischargeOrder += ")";
   return
-    "(skolem_scope_block \"smolka_refutation_v2\""
+    "(skolem_scope_block \"smolka_refutation_v3\""
     " (final " + quote(finalStep) + ") "
     + entries + " " + dischargeOrder + ")";
 }
@@ -213,8 +214,239 @@ std::string skolemRefutationUseBlock(
   }
   entries += ")";
   return
-    "(skolem_use_block \"smolka_uses_v1\""
+    "(skolem_use_block \"smolka_uses_v2\""
     " (final " + quote(finalStep) + ") " + entries + ")";
+}
+
+std::string skolemFiniteUnherbrandizationBlock(
+  const std::string& finalStep,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemUse>& uses)
+{
+  using SkolemUse = MegalodonKernelSyntax::RenderedKernelSkolemUse;
+  using ApplicationKey = std::tuple<std::string, std::string, std::string>;
+  if (finalStep.empty() || uses.empty()) {
+    return "";
+  }
+
+  struct Application {
+    const SkolemUse* canonical = nullptr;
+    std::vector<const SkolemUse*> occurrences;
+    std::vector<std::size_t> dependencies;
+  };
+  std::map<ApplicationKey, std::size_t> applicationIndex;
+  std::vector<Application> applications;
+  for (const auto& use : uses) {
+    if (use.skolemStep.empty()
+      || use.symbol.empty()
+      || use.witnessTypeSexpr.empty()
+      || use.sourceFormulaSexpr.empty()
+      || use.sourceInstanceSexpr.empty()
+      || use.dependencies.size() != use.dependencyCount
+      || use.unit.empty()
+      || use.term.sexpr.empty()
+      || use.occurrenceCount == 0
+      || !use.hasGroundInstance) {
+      return "";
+    }
+    const ApplicationKey key = {
+      use.skolemStep,
+      use.symbol,
+      use.term.sexpr,
+    };
+    auto inserted = applicationIndex.emplace(key, applications.size());
+    if (inserted.second) {
+      Application application;
+      application.canonical = &use;
+      applications.push_back(std::move(application));
+    } else {
+      const auto& canonical = *applications[inserted.first->second].canonical;
+      if (canonical.dependencyCount != use.dependencyCount
+        || canonical.branchIndex != use.branchIndex
+        || canonical.witnessIndex != use.witnessIndex
+        || canonical.witnessTypeSexpr != use.witnessTypeSexpr
+        || canonical.sourceFormulaSexpr != use.sourceFormulaSexpr
+        || canonical.sourceInstanceSexpr != use.sourceInstanceSexpr
+        || canonical.dependencies.size() != use.dependencies.size()) {
+        return "";
+      }
+      for (std::size_t index = 0; index < use.dependencies.size(); ++index) {
+        const auto& left = canonical.dependencies[index];
+        const auto& right = use.dependencies[index];
+        if (left.variable != right.variable
+          || left.typeSexpr != right.typeSexpr
+          || left.termSexpr != right.termSexpr
+          || left.nestedApplications.size()
+             != right.nestedApplications.size()) {
+          return "";
+        }
+      }
+    }
+    applications[inserted.first->second].occurrences.push_back(&use);
+  }
+
+  std::vector<std::vector<std::size_t>> successors(applications.size());
+  std::vector<std::size_t> indegree(applications.size(), 0);
+  for (std::size_t outer = 0; outer < applications.size(); ++outer) {
+    std::set<std::size_t> nestedIndices;
+    for (const auto& dependency : applications[outer].canonical->dependencies) {
+      for (const auto& nested : dependency.nestedApplications) {
+        auto found = applicationIndex.find({
+          nested.skolemStep,
+          nested.symbol,
+          nested.termSexpr,
+        });
+        if (found == applicationIndex.end() || found->second == outer) {
+          return "";
+        }
+        nestedIndices.insert(found->second);
+      }
+    }
+    applications[outer].dependencies.assign(
+      nestedIndices.begin(), nestedIndices.end());
+    for (std::size_t inner : nestedIndices) {
+      successors[inner].push_back(outer);
+      ++indegree[outer];
+    }
+  }
+
+  std::priority_queue<
+    std::size_t,
+    std::vector<std::size_t>,
+    std::greater<std::size_t>> ready;
+  for (std::size_t index = 0; index < indegree.size(); ++index) {
+    if (indegree[index] == 0) {
+      ready.push(index);
+    }
+  }
+  std::vector<std::size_t> order;
+  while (!ready.empty()) {
+    const std::size_t current = ready.top();
+    ready.pop();
+    order.push_back(current);
+    for (std::size_t successor : successors[current]) {
+      if (--indegree[successor] == 0) {
+        ready.push(successor);
+      }
+    }
+  }
+  if (order.size() != applications.size()) {
+    return "";
+  }
+
+  std::string renderedApplications = "(applications";
+  for (std::size_t index = 0; index < applications.size(); ++index) {
+    const auto& application = applications[index];
+    const auto& canonical = *application.canonical;
+    renderedApplications +=
+      " (application (index " + std::to_string(index) + ")"
+      + " (step " + quote(canonical.skolemStep) + ")"
+      + " (branch " + std::to_string(canonical.branchIndex) + ")"
+      + " (witness " + std::to_string(canonical.witnessIndex) + ")"
+      + " (symbol " + quote(canonical.symbol) + ")"
+      + " (witness_type " + canonical.witnessTypeSexpr + ")"
+      + " (term " + canonical.term.sexpr + ")"
+      + " (source (formula " + canonical.sourceFormulaSexpr + "))"
+      + " (source_instance (formula " + canonical.sourceInstanceSexpr + "))"
+      + " (dependencies";
+    for (std::size_t dependencyIndex = 0;
+         dependencyIndex < canonical.dependencies.size();
+         ++dependencyIndex) {
+      const auto& dependency = canonical.dependencies[dependencyIndex];
+      renderedApplications +=
+        " (dependency (index " + std::to_string(dependencyIndex) + ")"
+        + " (variable " + quote(dependency.variable) + ")"
+        + " (type " + dependency.typeSexpr + ")"
+        + " (term " + dependency.termSexpr + ")"
+        + " (nested";
+      std::set<std::size_t> renderedNested;
+      for (const auto& nested : dependency.nestedApplications) {
+        auto found = applicationIndex.find({
+          nested.skolemStep,
+          nested.symbol,
+          nested.termSexpr,
+        });
+        if (found == applicationIndex.end()) {
+          return "";
+        }
+        if (renderedNested.insert(found->second).second) {
+          renderedApplications +=
+            " (application " + std::to_string(found->second) + ")";
+        }
+      }
+      renderedApplications += "))";
+    }
+    renderedApplications += ") (occurrences";
+    std::size_t occurrenceIndex = 0;
+    for (const auto* use : application.occurrences) {
+      for (std::size_t ordinal = 0; ordinal < use->occurrenceCount; ++ordinal) {
+        renderedApplications +=
+          " (occurrence (index " + std::to_string(occurrenceIndex++) + ")"
+          + " (unit " + quote(use->unit) + ")"
+          + " (instance " + std::to_string(use->groundInstance) + ")"
+          + " (ordinal " + std::to_string(ordinal) + "))";
+      }
+    }
+    renderedApplications += "))";
+  }
+  renderedApplications += ")";
+
+  std::string dischargeOrder = "(discharge_order";
+  for (std::size_t index : order) {
+    dischargeOrder += " " + std::to_string(index);
+  }
+  dischargeOrder += ")";
+  return
+    "(skolem_unherbrandization_block \"smolka_finite_v2\""
+    " (final " + quote(finalStep) + ") "
+    + renderedApplications + " " + dischargeOrder + ")";
+}
+
+std::string skolemGroundProofBlock(
+  const MegalodonKernelSyntax::RenderedKernelGroundProof& proof)
+{
+  if (proof.version != "ivy_ground_v1"
+      || proof.finalStep.value.empty()
+      || proof.instances.empty()) {
+    return "";
+  }
+  std::string result =
+    "(skolem_ground_proof_block " + quote(proof.version)
+    + " (final " + quote(proof.finalStep.value) + ") (instances";
+  for (std::size_t expected = 0; expected < proof.instances.size(); ++expected) {
+    const auto& instance = proof.instances[expected];
+    if (instance.index != expected || instance.unit.value.empty()) {
+      return "";
+    }
+    result +=
+      " (instance (index " + std::to_string(instance.index) + ")"
+      + " (unit " + quote(instance.unit.value) + ")"
+      + " (environment (subst";
+    for (const auto& binding : instance.environment) {
+      if (binding.variable.empty() || binding.term.sexpr.empty()) {
+        return "";
+      }
+      result +=
+        " (" + quote(binding.variable) + " " + binding.term.sexpr + ")";
+    }
+    result += ")) (parents";
+    for (std::size_t parent : instance.parentInstances) {
+      result += " (instance " + std::to_string(parent) + ")";
+    }
+    result += ") (applications";
+    for (const auto& application : instance.applications) {
+      if (application.skolemStep.empty()
+          || application.symbol.empty()
+          || application.term.sexpr.empty()) {
+        return "";
+      }
+      result +=
+        " (application (step " + quote(application.skolemStep) + ")"
+        + " (symbol " + quote(application.symbol) + ")"
+        + " (term " + application.term.sexpr + "))";
+    }
+    result += "))";
+  }
+  return result + "))";
 }
 
 std::string avatarPrimitiveWithMetadata(
@@ -445,6 +677,44 @@ MegalodonKernelSyntax::PrimitiveStep foolAtomLiftStep(
   return step;
 }
 
+MegalodonKernelSyntax::PrimitiveStep foolFormulaStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelFormula& result)
+{
+  MegalodonKernelSyntax::PrimitiveStep step;
+  step.rule = "fool_formula";
+  step.id = id;
+  step.builderOwned = true;
+  step.parentIds = {parent.value};
+  step.hasResultFormula = true;
+  step.resultFormula = result.sexpr;
+  step.fields = {{"result_formula", result.sexpr}};
+  step.rendered =
+    "(fool_formula " + quote(id)
+    + " (parent " + quote(parent.value) + ")"
+    + " (result (formula " + result.sexpr + ")))";
+  return step;
+}
+
+MegalodonKernelSyntax::PrimitiveStep foolBoolStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelLiteral& result)
+{
+  MegalodonKernelSyntax::PrimitiveStep step;
+  step.rule = "fool_bool";
+  step.id = id;
+  step.builderOwned = true;
+  step.parentIds = {parent.value};
+  step.fields = {{"result_literal", result.sexpr}};
+  step.rendered =
+    "(fool_bool " + quote(id)
+    + " (parent " + quote(parent.value) + ")"
+    + " (result " + result.sexpr + "))";
+  return step;
+}
+
 MegalodonKernelSyntax::PrimitiveStep rectifyFormulaStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
@@ -521,6 +791,44 @@ MegalodonKernelSyntax::PrimitiveStep cnfLiteralStep(
     "(cnf_literal " + quote(id)
       + " (parent " + quote(parent.value) + ")"
       + " (result " + result.sexpr + "))");
+}
+
+MegalodonKernelSyntax::PrimitiveStep formulaCopyStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelLiteral& result)
+{
+  MegalodonKernelSyntax::PrimitiveStep step;
+  step.rule = "formula_copy";
+  step.id = id;
+  step.builderOwned = true;
+  step.parentIds = {parent.value};
+  step.fields = {{"result_literal", result.sexpr}};
+  step.rendered =
+    "(formula_copy " + quote(id)
+    + " (parent " + quote(parent.value) + ")"
+    + " (result " + result.sexpr + "))";
+  return step;
+}
+
+MegalodonKernelSyntax::PrimitiveStep formulaTermCopyStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelFormula& result)
+{
+  MegalodonKernelSyntax::PrimitiveStep step;
+  step.rule = "formula_term_copy";
+  step.id = id;
+  step.builderOwned = true;
+  step.parentIds = {parent.value};
+  step.hasResultFormula = true;
+  step.resultFormula = result.sexpr;
+  step.fields = {{"result_formula", result.sexpr}};
+  step.rendered =
+    "(formula_term_copy " + quote(id)
+    + " (parent " + quote(parent.value) + ")"
+    + " (result (formula " + result.sexpr + ")))";
+  return step;
 }
 
 MegalodonKernelSyntax::PrimitiveStep ennfFormulaStep(

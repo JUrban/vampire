@@ -14,10 +14,31 @@ struct PrimitiveExpansion {
   std::string requiredRule;
 };
 
+struct ProducerNestedSkolemApplication {
+  std::string skolemStep;
+  std::string symbol;
+  std::string termSexpr;
+};
+
+struct ProducerSkolemDependency {
+  std::string variable;
+  std::string typeSexpr;
+  std::string termSexpr;
+  std::vector<ProducerNestedSkolemApplication> nestedApplications;
+};
+
 struct ProducerFunctionApplication {
   unsigned functionSymbol = 0;
   std::size_t argumentCount = 0;
   std::string termSexpr;
+  std::size_t occurrenceCount = 1;
+  bool hasSkolemDetails = false;
+  std::size_t branchIndex = 0;
+  std::size_t witnessIndex = 0;
+  std::string witnessTypeSexpr;
+  std::string sourceFormulaSexpr;
+  std::string sourceInstanceSexpr;
+  std::vector<ProducerSkolemDependency> dependencies;
 };
 
 struct PrimitiveStep {
@@ -68,8 +89,53 @@ struct RenderedKernelSkolemUse {
   std::string skolemStep;
   std::string symbol;
   std::size_t dependencyCount = 0;
+  std::size_t branchIndex = 0;
+  std::size_t witnessIndex = 0;
+  std::string witnessTypeSexpr;
+  std::string sourceFormulaSexpr;
+  std::string sourceInstanceSexpr;
+  struct Dependency {
+    std::string variable;
+    std::string typeSexpr;
+    std::string termSexpr;
+    struct NestedApplication {
+      std::string skolemStep;
+      std::string symbol;
+      std::string termSexpr;
+    };
+    std::vector<NestedApplication> nestedApplications;
+  };
+  std::vector<Dependency> dependencies;
   std::string unit;
   RenderedKernelTerm term;
+  std::size_t occurrenceCount = 1;
+  bool hasGroundInstance = false;
+  std::size_t groundInstance = 0;
+};
+
+struct RenderedKernelGroundBinding {
+  std::string variable;
+  RenderedKernelTerm term;
+};
+
+struct RenderedKernelGroundApplication {
+  std::string skolemStep;
+  std::string symbol;
+  RenderedKernelTerm term;
+};
+
+struct RenderedKernelGroundInstance {
+  std::size_t index = 0;
+  RenderedKernelUnitRef unit;
+  std::vector<RenderedKernelGroundBinding> environment;
+  std::vector<std::size_t> parentInstances;
+  std::vector<RenderedKernelGroundApplication> applications;
+};
+
+struct RenderedKernelGroundProof {
+  std::string version;
+  RenderedKernelUnitRef finalStep;
+  std::vector<RenderedKernelGroundInstance> instances;
 };
 
 struct RenderedKernelPosition {
