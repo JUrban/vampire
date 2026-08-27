@@ -127,6 +127,8 @@ std::string skolemRefutationScopeBlock(
       || step.rule != "skolem_formula"
       || step.id.empty()
       || step.certificateLocalSymbols.empty()
+      || step.certificateLocalSymbols.size()
+        != step.producerSkolemChoiceDefinitions.size()
       || !stepIds.insert(step.id).second) {
       return "";
     }
@@ -139,6 +141,34 @@ std::string skolemRefutationScopeBlock(
       }
       entries += " " + quote(symbol);
     }
+    entries += ") (definitions";
+    for (std::size_t definitionIndex = 0;
+         definitionIndex < step.producerSkolemChoiceDefinitions.size();
+         ++definitionIndex) {
+      const auto& definition =
+        step.producerSkolemChoiceDefinitions[definitionIndex];
+      if (definition.symbol != step.certificateLocalSymbols[definitionIndex]
+          || definition.witnessTypeSexpr.empty()
+          || definition.witnessTermSexpr.empty()
+          || definition.sourceFormulaSexpr.empty()) {
+        return "";
+      }
+      entries +=
+        " (choice_definition (index " + std::to_string(definitionIndex) + ")"
+        + " (branch " + std::to_string(definition.branchIndex) + ")"
+        + " (witness " + std::to_string(definition.witnessIndex) + ")"
+        + " (symbol " + quote(definition.symbol) + ")"
+        + " (witness_type " + definition.witnessTypeSexpr + ")"
+        + " (term " + definition.witnessTermSexpr + ")"
+        + " (parameters";
+      for (const auto& parameter : definition.parameters) {
+        entries +=
+          " (variable " + quote(parameter.first) + " "
+          + parameter.second + ")";
+      }
+      entries +=
+        ") (source (formula " + definition.sourceFormulaSexpr + ")))";
+    }
     entries += "))";
   }
   entries += ")";
@@ -149,7 +179,7 @@ std::string skolemRefutationScopeBlock(
   }
   dischargeOrder += ")";
   return
-    "(skolem_scope_block \"smolka_refutation_v3\""
+    "(skolem_scope_block \"smolka_refutation_v4\""
     " (final " + quote(finalStep) + ") "
     + entries + " " + dischargeOrder + ")";
 }
@@ -262,7 +292,7 @@ std::string skolemFiniteUnherbrandizationBlock(
   std::map<std::pair<std::string, std::string>,
     std::vector<const SkolemUse*>> ownerFamilies;
   for (const auto& use : uses) {
-    if (use.unit != use.skolemStep) {
+    if (!use.skolemStepOwner) {
       continue;
     }
     const ApplicationKey key = {use.skolemStep, use.symbol, use.term.sexpr};
@@ -479,6 +509,47 @@ std::string skolemFiniteUnherbrandizationBlock(
     }
   }
 
+  // A retained-ambient application abstracts a whole symbolic family.  Its
+  // concrete members must be discharged first so that the uniform lift sees
+  // the already-specialized branch proof.
+  for (std::size_t symbolicIndex = 0;
+       symbolicIndex < applications.size();
+       ++symbolicIndex) {
+    const SkolemUse& symbolic = *applications[symbolicIndex].canonical;
+    const bool isSymbolic =
+      !symbolic.dependencies.empty()
+      && std::all_of(
+           symbolic.dependencies.begin(),
+           symbolic.dependencies.end(),
+           [](const auto& dependency) {
+             return isCanonicalDependency(dependency);
+           });
+    if (!isSymbolic) {
+      continue;
+    }
+    for (std::size_t concreteIndex = 0;
+         concreteIndex < applications.size();
+         ++concreteIndex) {
+      const SkolemUse& concrete = *applications[concreteIndex].canonical;
+      const bool sameWitness =
+        concrete.skolemStep == symbolic.skolemStep
+        && concrete.symbol == symbolic.symbol
+        && concrete.branchIndex == symbolic.branchIndex
+        && concrete.witnessIndex == symbolic.witnessIndex;
+      const bool isConcrete =
+        concrete.dependencies.empty()
+        || std::any_of(
+             concrete.dependencies.begin(),
+             concrete.dependencies.end(),
+             [](const auto& dependency) {
+               return !isCanonicalDependency(dependency);
+             });
+      if (sameWitness && isConcrete) {
+        addDependency(concreteIndex, symbolicIndex);
+      }
+    }
+  }
+
   for (std::size_t outer = 0; outer < applications.size(); ++outer) {
     const SkolemUse& current = *applications[outer].canonical;
     if (current.witnessIndex == 0) {
@@ -641,7 +712,7 @@ std::string skolemFiniteUnherbrandizationBlock(
 std::string skolemGroundProofBlock(
   const MegalodonKernelSyntax::RenderedKernelGroundProof& proof)
 {
-  if (proof.version != "ivy_instance_v2"
+  if (proof.version != "ivy_instance_v3"
       || proof.finalStep.value.empty()
       || proof.instances.empty()) {
     return "";
@@ -666,9 +737,25 @@ std::string skolemGroundProofBlock(
       result +=
         " (" + quote(binding.variable) + " " + binding.term.sexpr + ")";
     }
+    if (instance.parentInstances.size()
+        != instance.parentEnvironments.size()) {
+      return "";
+    }
     result += ")) (parents";
-    for (std::size_t parent : instance.parentInstances) {
-      result += " (instance " + std::to_string(parent) + ")";
+    for (std::size_t parentIndex = 0;
+         parentIndex < instance.parentInstances.size();
+         ++parentIndex) {
+      result += " (parent (instance "
+        + std::to_string(instance.parentInstances[parentIndex])
+        + ") (environment (subst";
+      for (const auto& binding : instance.parentEnvironments[parentIndex]) {
+        if (binding.variable.empty() || binding.term.sexpr.empty()) {
+          return "";
+        }
+        result +=
+          " (" + quote(binding.variable) + " " + binding.term.sexpr + ")";
+      }
+      result += ")))";
     }
     result += ") (applications";
     for (const auto& application : instance.applications) {

@@ -43,6 +43,16 @@ struct ProducerFunctionApplication {
   std::vector<ProducerSkolemDependency> dependencies;
 };
 
+struct ProducerSkolemChoiceDefinition {
+  std::size_t branchIndex = 0;
+  std::size_t witnessIndex = 0;
+  std::string symbol;
+  std::string witnessTypeSexpr;
+  std::string witnessTermSexpr;
+  std::vector<std::pair<std::string, std::string>> parameters;
+  std::string sourceFormulaSexpr;
+};
+
 struct PrimitiveStep {
   std::string rule;
   std::string id;
@@ -58,6 +68,7 @@ struct PrimitiveStep {
   // primitive fields; the refutation-level Skolem-use builder consumes them.
   std::vector<unsigned> certificateLocalFunctionSymbols;
   std::vector<std::size_t> certificateLocalSymbolDependencyCounts;
+  std::vector<ProducerSkolemChoiceDefinition> producerSkolemChoiceDefinitions;
   std::vector<ProducerFunctionApplication> producerFunctionApplications;
   std::vector<std::pair<std::string, std::string>> fields;
 };
@@ -117,6 +128,7 @@ struct RenderedKernelSkolemUse {
   std::size_t groundInstance = 0;
   bool groundInstanceParametric = false;
   std::size_t groundEnvironmentSize = 0;
+  bool skolemStepOwner = false;
 };
 
 struct RenderedKernelGroundBinding {
@@ -136,6 +148,7 @@ struct RenderedKernelGroundInstance {
   bool parametric = false;
   std::vector<RenderedKernelGroundBinding> environment;
   std::vector<std::size_t> parentInstances;
+  std::vector<std::vector<RenderedKernelGroundBinding>> parentEnvironments;
   std::vector<RenderedKernelGroundApplication> applications;
 };
 

@@ -20,6 +20,7 @@ struct Application {
   unsigned functionSymbol = 0;
   Kernel::TermList term;
   bool requiresGrounding = true;
+  bool skolemOwner = false;
 };
 
 struct GroundTerm {
@@ -27,6 +28,12 @@ struct GroundTerm {
   Kernel::TermList term;
   bool requiresExistingApplication = false;
   unsigned functionSymbol = 0;
+};
+
+struct FunctionDefinition {
+  unsigned functionSymbol = 0;
+  std::vector<unsigned> parameters;
+  Kernel::TermList body;
 };
 
 struct Step {
@@ -44,6 +51,7 @@ struct Instance {
   bool parametric = false;
   Environment environment;
   std::vector<std::size_t> parentInstances;
+  std::vector<Environment> parentEnvironments;
   std::vector<Application> applications;
   std::vector<Application> sourceApplications;
 };
@@ -119,6 +127,7 @@ bool expandGroundProof(
   const std::vector<Step>& steps,
   const std::string& finalStep,
   const std::vector<GroundTerm>& groundTerms,
+  const std::vector<FunctionDefinition>& functionDefinitions,
   Expansion& result,
   std::string& error);
 

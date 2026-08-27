@@ -67,6 +67,12 @@ private:
     std::size_t occurrenceCount = 1;
   };
 
+  struct CertificateFunctionDefinition {
+    unsigned symbol = 0;
+    std::vector<unsigned> parameters;
+    Kernel::TermList body;
+  };
+
   bool inferenceNeedsReplayInformation(const Kernel::InferenceRule& rule) const;
   void printMegalodonSourceCandidate();
   void printMegalodonClaimSkeleton();
@@ -259,6 +265,9 @@ private:
   bool trimTrailingApplications(Kernel::TermList term, unsigned count, Kernel::TermList& trimmed) const;
   bool skolemWitnessTerm(Kernel::Formula* parent, Kernel::Formula* result, unsigned skolemFunctor, unsigned replacedVar, Kernel::TermList& witness, unsigned& parentApplicationCount) const;
   bool decomposeApplicationSpine(Kernel::TermList term, Kernel::TermList& head, std::vector<Kernel::TermList>& args) const;
+  bool certificateFunctionDefinition(
+    Kernel::Unit* unit,
+    CertificateFunctionDefinition& definition) const;
   bool certificateCnfProjection(
     const Inferences::CNFProjection& projection,
     Kernel::Clause* resultClause,
@@ -398,6 +407,9 @@ private:
   std::map<std::string,
     std::vector<std::pair<unsigned, Kernel::TermList>>>
     _certificateProducerSubstitutions;
+  std::map<std::string,
+    std::vector<std::pair<unsigned, Kernel::TermList>>>
+    _certificateProducerFreeVariableSorts;
 };
 
 } // namespace Shell

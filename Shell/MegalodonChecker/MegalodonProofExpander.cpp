@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <set>
 #include <sstream>
 
 namespace Shell {
@@ -271,6 +272,7 @@ bool sameEnvironment(const Environment& left, const Environment& right)
 }
 
 using ApplicationArities = std::map<unsigned, std::size_t>;
+using FunctionDefinitions = std::map<unsigned, const FunctionDefinition*>;
 
 std::size_t applicationArity(Kernel::TermList term)
 {
@@ -282,10 +284,13 @@ std::size_t applicationArity(Kernel::TermList term)
   return arity;
 }
 
-void rememberGroundApplications(
+bool rememberGroundApplications(
   Kernel::TermList term,
   const ApplicationArities& arities,
-  std::vector<Application>& applications)
+  const FunctionDefinitions& definitions,
+  std::set<unsigned>& expandingDefinitions,
+  std::vector<Application>& applications,
+  std::string& error)
 {
   Kernel::TermList head = term;
   while (head.isApplication()) {
@@ -308,19 +313,70 @@ void rememberGroundApplications(
     }
   }
 
+  if (head.isTerm() && !head.term()->isSpecial()) {
+    auto definition = definitions.find(head.term()->functor());
+    if (definition != definitions.end()) {
+      std::vector<Kernel::TermList> arguments;
+      for (unsigned index = 0;
+           index < head.term()->numTermArguments();
+           ++index) {
+        arguments.push_back(*head.term()->nthArgument(index));
+      }
+      Kernel::TermList outer = term;
+      std::vector<Kernel::TermList> outerArguments;
+      while (outer.isApplication()) {
+        outerArguments.push_back(outer.rhs());
+        outer = outer.lhs();
+      }
+      std::reverse(outerArguments.begin(), outerArguments.end());
+      arguments.insert(
+        arguments.end(), outerArguments.begin(), outerArguments.end());
+      if (arguments.size() != definition->second->parameters.size()) {
+        error = "producer function definition is not fully applied while expanding a ground Ivy instance";
+        return false;
+      }
+      expandingDefinitions.insert(definition->first);
+      Kernel::Substitution substitution;
+      for (std::size_t index = 0; index < arguments.size(); ++index) {
+        substitution.rebind(
+          definition->second->parameters[index], arguments[index]);
+      }
+      Kernel::TermList expanded = Kernel::SubstHelper::apply(
+        definition->second->body, substitution);
+      expandingDefinitions.erase(definition->first);
+      if (!rememberGroundApplications(
+            expanded,
+            arities,
+            definitions,
+            expandingDefinitions,
+            applications,
+            error)) {
+        return false;
+      }
+      return true;
+    }
+  }
+
   if (term.isVar()) {
-    return;
+    return true;
   }
   if (term.isApplication()) {
-    rememberGroundApplications(term.lhs(), arities, applications);
-    rememberGroundApplications(term.rhs(), arities, applications);
-    return;
+    return rememberGroundApplications(
+             term.lhs(), arities, definitions, expandingDefinitions,
+             applications, error)
+      && rememberGroundApplications(
+           term.rhs(), arities, definitions, expandingDefinitions,
+           applications, error);
   }
   Kernel::Term* body = term.term();
   for (unsigned index = 0; index < body->arity(); ++index) {
-    rememberGroundApplications(
-      *body->nthArgument(index), arities, applications);
+    if (!rememberGroundApplications(
+          *body->nthArgument(index), arities, definitions,
+          expandingDefinitions, applications, error)) {
+      return false;
+    }
   }
+  return true;
 }
 
 }
@@ -329,6 +385,7 @@ bool expandGroundProof(
   const std::vector<Step>& steps,
   const std::string& finalStep,
   const std::vector<GroundTerm>& groundTerms,
+  const std::vector<FunctionDefinition>& functionDefinitions,
   Expansion& result,
   std::string& error)
 {
@@ -345,6 +402,11 @@ bool expandGroundProof(
   }
 
   ApplicationArities applicationArities;
+  struct SkolemOwnerPattern {
+    std::string stepId;
+    std::vector<unsigned> dependencyVariables;
+  };
+  std::map<unsigned, SkolemOwnerPattern> skolemOwnerPatterns;
   for (const auto& step : steps) {
     for (const auto& application : step.applications) {
       const std::size_t arity = applicationArity(application.term);
@@ -354,10 +416,98 @@ bool expandGroundProof(
         error = "primitive proof uses one Skolem symbol at inconsistent arities";
         return false;
       }
+      if (application.skolemOwner) {
+        Kernel::TermList head = application.term;
+        std::vector<Kernel::TermList> arguments;
+        while (head.isApplication()) {
+          arguments.push_back(head.rhs());
+          head = head.lhs();
+        }
+        std::reverse(arguments.begin(), arguments.end());
+        std::vector<unsigned> dependencyVariables;
+        std::set<unsigned> seenVariables;
+        for (Kernel::TermList argument : arguments) {
+          if (!argument.isVar()
+              || !seenVariables.insert(argument.var()).second) {
+            error = "Skolem owner application does not have distinct variable dependencies";
+            return false;
+          }
+          dependencyVariables.push_back(argument.var());
+        }
+        auto owner = skolemOwnerPatterns.emplace(
+          application.functionSymbol,
+          SkolemOwnerPattern{step.id, dependencyVariables});
+        if (!owner.second
+            && (owner.first->second.stepId != step.id
+                || owner.first->second.dependencyVariables
+                   != dependencyVariables)) {
+          error = "primitive proof has inconsistent Skolem owner patterns";
+          return false;
+        }
+      }
+    }
+  }
+  FunctionDefinitions definitionBySymbol;
+  for (const auto& definition : functionDefinitions) {
+    if (!definitionBySymbol.emplace(
+          definition.functionSymbol, &definition).second) {
+      error = "primitive proof has duplicate producer function definitions";
+      return false;
+    }
+  }
+  std::map<unsigned, unsigned> definitionVisitState;
+  std::function<bool(unsigned)> validateDefinition;
+  validateDefinition = [&](unsigned symbol) {
+    const unsigned state = definitionVisitState[symbol];
+    if (state == 1) {
+      error = "cyclic producer function definitions in the ground Ivy expander";
+      return false;
+    }
+    if (state == 2) {
+      return true;
+    }
+    definitionVisitState[symbol] = 1;
+    std::function<bool(Kernel::TermList)> visitDependencies;
+    visitDependencies = [&](Kernel::TermList term) {
+      Kernel::TermList head = term;
+      while (head.isApplication()) {
+        head = head.lhs();
+      }
+      if (head.isTerm() && !head.term()->isSpecial()) {
+        auto dependency = definitionBySymbol.find(head.term()->functor());
+        if (dependency != definitionBySymbol.end()
+            && !validateDefinition(dependency->first)) {
+          return false;
+        }
+      }
+      if (term.isVar()) {
+        return true;
+      }
+      if (term.isApplication()) {
+        return visitDependencies(term.lhs())
+          && visitDependencies(term.rhs());
+      }
+      Kernel::Term* body = term.term();
+      for (unsigned index = 0; index < body->arity(); ++index) {
+        if (!visitDependencies(*body->nthArgument(index))) {
+          return false;
+        }
+      }
+      return true;
+    };
+    if (!visitDependencies(definitionBySymbol.at(symbol)->body)) {
+      return false;
+    }
+    definitionVisitState[symbol] = 2;
+    return true;
+  };
+  for (const auto& definition : definitionBySymbol) {
+    if (!validateDefinition(definition.first)) {
+      return false;
     }
   }
 
-  result = Expansion{"ivy_instance_v2", finalStep, {}};
+  result = Expansion{"ivy_instance_v3", finalStep, {}};
   std::vector<bool> active;
   std::function<bool(
     const std::string&, const Environment&, bool, std::size_t&)>
@@ -427,6 +577,7 @@ bool expandGroundProof(
           groundedEnvironment,
           {},
           {},
+          {},
           {}});
       active.push_back(true);
 
@@ -459,16 +610,28 @@ bool expandGroundProof(
         }
         result.instances[resultIndex].sourceApplications.push_back(
           application);
-        rememberGroundApplications(
-          grounded,
-          applicationArities,
-          result.instances[resultIndex].applications);
+        std::set<unsigned> expandingDefinitions;
+        if (!rememberGroundApplications(
+              grounded,
+              applicationArities,
+              definitionBySymbol,
+              expandingDefinitions,
+              result.instances[resultIndex].applications,
+              error)) {
+          return false;
+        }
       }
       for (const auto& binding : groundedEnvironment) {
-        rememberGroundApplications(
-          binding.second,
-          applicationArities,
-          result.instances[resultIndex].applications);
+        std::set<unsigned> expandingDefinitions;
+        if (!rememberGroundApplications(
+              binding.second,
+              applicationArities,
+              definitionBySymbol,
+              expandingDefinitions,
+              result.instances[resultIndex].applications,
+              error)) {
+          return false;
+        }
       }
 
       const Environment parentEnvironment =
@@ -493,14 +656,55 @@ bool expandGroundProof(
           return false;
         }
         result.instances[resultIndex].parentInstances.push_back(parentIndex);
+        Environment edgeEnvironment;
+        const Step& parentStep = *stepById.at(parentId);
+        for (const auto& variable : parentStep.freeVariableSorts) {
+          const bool explicitlySubstituted = std::any_of(
+            step.parentSubstitution.begin(),
+            step.parentSubstitution.end(),
+            [&](const auto& binding) {
+              return binding.first == variable.first;
+            });
+          if (explicitlySubstituted) {
+            continue;
+          }
+          const bool retainedByChild = std::any_of(
+            step.freeVariableSorts.begin(),
+            step.freeVariableSorts.end(),
+            [&](const auto& childVariable) {
+              return childVariable.first == variable.first
+                && childVariable.second == variable.second;
+            });
+          if (retainedByChild) {
+            continue;
+          }
+          const auto binding = std::find_if(
+            result.instances[parentIndex].environment.begin(),
+            result.instances[parentIndex].environment.end(),
+            [&](const auto& candidate) {
+              return candidate.first == variable.first;
+            });
+          if (binding != result.instances[parentIndex].environment.end()) {
+            edgeEnvironment.push_back(*binding);
+          }
+        }
+        result.instances[resultIndex].parentEnvironments.push_back(
+          std::move(edgeEnvironment));
         for (const Application& application :
              result.instances[parentIndex].applications) {
           Application inherited = application;
           inherited.term =
             applyEnvironment(application.term, parentEnvironment);
           if (!instanceParametric && !inherited.term.ground()) {
+            if (result.instances[parentIndex].parametric) {
+              // A parametric formula parent may contain Skolem applications in
+              // branches omitted by this child's projection.  The parent
+              // instance keeps those occurrences; only a child occurrence or
+              // an explicit edge substitution may specialize them here.
+              continue;
+            }
             error = "non-parametric proof instance " + stepId
-              + " cannot ground an inherited Skolem application from "
+              + " inherited an unground Skolem application from non-parametric "
               + parentId;
             return false;
           }
@@ -528,6 +732,69 @@ bool expandGroundProof(
   if (rootIndex != 0) {
     error = "primitive proof expansion did not allocate the root first";
     return false;
+  }
+  for (std::size_t instanceIndex = 0;
+       instanceIndex < result.instances.size();
+       ++instanceIndex) {
+    const std::vector<Application> applications =
+      result.instances[instanceIndex].applications;
+    for (const Application& application : applications) {
+      auto owner = skolemOwnerPatterns.find(application.functionSymbol);
+      if (owner == skolemOwnerPatterns.end() || !application.term.ground()) {
+        continue;
+      }
+      const bool existingExactOwner = std::any_of(
+        result.instances.begin(),
+        result.instances.end(),
+        [&](const Instance& candidate) {
+          if (candidate.stepId != owner->second.stepId) {
+            return false;
+          }
+          const Step& ownerStep = *stepById.at(candidate.stepId);
+          return std::any_of(
+            ownerStep.applications.begin(),
+            ownerStep.applications.end(),
+            [&](const Application& source) {
+              return source.skolemOwner
+                && source.functionSymbol == application.functionSymbol
+                && applyEnvironment(source.term, candidate.environment)
+                   == application.term;
+            });
+        });
+      if (existingExactOwner) {
+        continue;
+      }
+      Kernel::TermList head = application.term;
+      std::vector<Kernel::TermList> arguments;
+      while (head.isApplication()) {
+        arguments.push_back(head.rhs());
+        head = head.lhs();
+      }
+      std::reverse(arguments.begin(), arguments.end());
+      if (arguments.size() != owner->second.dependencyVariables.size()) {
+        error = "ground Skolem application does not match its owner pattern";
+        return false;
+      }
+      Environment ownerEnvironment;
+      for (std::size_t index = 0; index < arguments.size(); ++index) {
+        setBinding(
+          ownerEnvironment,
+          owner->second.dependencyVariables[index],
+          arguments[index]);
+      }
+      std::size_t ownerIndex = 0;
+      if (!visit(
+            owner->second.stepId,
+            ownerEnvironment,
+            false,
+            ownerIndex)) {
+        std::ostringstream applicationText;
+        applicationText << application.term;
+        error += " while adding the Skolem owner for "
+          + applicationText.str();
+        return false;
+      }
+    }
   }
   return true;
 }
