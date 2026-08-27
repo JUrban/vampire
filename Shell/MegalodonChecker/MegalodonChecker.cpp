@@ -7158,7 +7158,8 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
         const std::string stepBase = "u" + std::to_string(unit->number());
         const std::string mainParentId = "u" + std::to_string(mainParent->number());
         const std::string sideParentId = "u" + std::to_string(sideParent->number());
-        std::vector<MegalodonKernelSyntax::PrimitiveStep> localPrimitiveSteps;
+        std::vector<MegalodonProofExpander::ClauseStepRequest>
+          expansionRequests;
         auto clauseFromLiterals = [](const std::vector<std::string>& literals) {
           std::ostringstream out;
           out << "(clause";
@@ -7183,78 +7184,46 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
           }
           rememberVariableSorts(substituted);
         }
-        std::string primitivePrefix;
         std::string resolveSideParentId = sideParentId;
-        std::string sideSubstituteStep;
         std::string sideSubstituteId;
-        auto applyRenderedSubstitutionToLiterals = [&](std::vector<std::string>& literals) {
-          if (sideSubstitutionSexpr == "(subst)") {
-            return true;
-          }
-          auto replaceAll = [](std::string& text, const std::string& from, const std::string& to) {
-            if (from.empty()) {
-              return;
-            }
-            std::size_t pos = 0;
-            while ((pos = text.find(from, pos)) != std::string::npos) {
-              text.replace(pos, from.size(), to);
-              pos += to.size();
-            }
-          };
-          std::vector<std::tuple<unsigned, std::string, std::string>> replacements;
-          const std::set<unsigned> variables = certificateClauseVariables(sideParent);
-          Kernel::Substitution sideSubstitutionCopy = sideSubstitution;
-          for (auto [var, term] : iterTraits(sideSubstitutionCopy.items())) {
-            if (variables.find(var) == variables.end()) {
-              continue;
-            }
-            if (term.isVar() && term.var() == var) {
-              continue;
-            }
-            std::string termSexpr;
-            if (!certificateTermSexpr(term, termSexpr)) {
-              return false;
-            }
-            replacements.push_back({var, "(TMH " + sexprQuote(variableName(var)) + ")", termSexpr});
-          }
-          std::sort(replacements.begin(), replacements.end(), [](const auto& left, const auto& right) {
-            return std::get<0>(left) < std::get<0>(right);
-          });
-          for (std::string& literal : literals) {
-            for (std::size_t i = 0; i < replacements.size(); ++i) {
-              replaceAll(literal, std::get<1>(replacements[i]), "(TMH " + sexprQuote("__mg_subst_" + std::to_string(i)) + ")");
-            }
-            for (std::size_t i = 0; i < replacements.size(); ++i) {
-              replaceAll(literal, "(TMH " + sexprQuote("__mg_subst_" + std::to_string(i)) + ")", std::get<2>(replacements[i]));
-            }
-          }
-          return true;
-        };
         if (sideSubstitutionSexpr != "(subst)") {
           sideSubstituteId = stepBase + "_side_subst";
           resolveSideParentId = sideSubstituteId;
-          if (!certificateSubstituteStepSexpr(
-                resolveSideParentId,
+          std::string sideSubstituteStep;
+          std::vector<std::string> substituteMetadata;
+          MegalodonKernelSyntax::PrimitiveStep substitutePrimitive;
+          if (!certificateSubstituteStepPartsSexpr(
+                sideSubstituteId,
                 sideParentId,
                 sideParent,
                 sideSubstitution,
-                sideSubstituteStep)) {
+                sideSubstituteStep,
+                substituteMetadata,
+                &substitutePrimitive)
+            || !substitutePrimitive.hasResultClause) {
             return false;
           }
-          primitivePrefix += sideSubstituteStep;
-          primitivePrefix += "\n  ";
-        }
-        if (!applyRenderedSubstitutionToLiterals(sideClauseLiterals)) {
-          return false;
-        }
-        if (!sideSubstituteId.empty()) {
-          localPrimitiveSteps.push_back(
-            MegalodonKernelBuilder::substituteStep(
+          MegalodonProofExpander::ClauseStepRequest request;
+          request.step = MegalodonProofExpander::SubstituteClauseStep{
               sideSubstituteId,
               MegalodonKernelSyntax::unitRef(sideParentId),
               MegalodonKernelSyntax::substitution(sideSubstitutionSexpr),
               MegalodonKernelSyntax::clause(
-                clauseFromLiterals(sideClauseLiterals))));
+                substitutePrimitive.resultClause,
+                substitutePrimitive.producerFunctionApplications),
+          };
+          request.trailingRecords = std::move(substituteMetadata);
+          expansionRequests.push_back(std::move(request));
+        }
+        sideClauseLiterals.clear();
+        for (Kernel::Literal* literal : sideParent->iterLits()) {
+          Kernel::Literal* substituted = nullptr;
+          std::string rendered;
+          if (!safeApplySubstitution(literal, sideSubstitution, substituted)
+            || !certificateLiteralSexpr(substituted, rendered)) {
+            return false;
+          }
+          sideClauseLiterals.push_back(std::move(rendered));
         }
         std::vector<std::string> actualLiterals;
         if (!appendCertificateClauseLiteralsSexpr(unit->asClause(), actualLiterals)) {
@@ -7279,18 +7248,17 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
           const std::string sideSymmetryParentId = resolveSideParentId;
           const std::string sideSymmetryClause = clauseFromLiterals(sideClauseLiterals);
           std::string metadata = syntheticVariableSortsMetadata(sideSymmetryId, sideClauseLiterals);
-          if (!metadata.empty()) {
-            primitivePrefix += metadata;
-            primitivePrefix += "\n  ";
-          }
-          auto symmetryPrimitive = MegalodonKernelBuilder::equalitySymmetryStep(
+          MegalodonProofExpander::ClauseStepRequest request;
+          request.step = MegalodonProofExpander::EqualitySymmetryClauseStep{
             sideSymmetryId,
             MegalodonKernelSyntax::unitRef(sideSymmetryParentId),
             literalIndex,
-            MegalodonKernelSyntax::clause(sideSymmetryClause));
-          primitivePrefix += symmetryPrimitive.rendered;
-          primitivePrefix += "\n  ";
-          localPrimitiveSteps.push_back(symmetryPrimitive);
+            MegalodonKernelSyntax::clause(sideSymmetryClause),
+          };
+          if (!metadata.empty()) {
+            request.trailingRecords.push_back(std::move(metadata));
+          }
+          expansionRequests.push_back(std::move(request));
           resolveSideParentId = sideSymmetryId;
           return true;
         };
@@ -7339,21 +7307,20 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
         }
         const std::string resolveId = stepBase + "_resolve_0";
         std::string resolveMetadata = syntheticVariableSortsMetadata(resolveId, resolveLiterals);
-        if (!resolveMetadata.empty()) {
-          primitivePrefix += resolveMetadata;
-          primitivePrefix += "\n  ";
-        }
         const std::string resolveResultClause = clauseFromLiterals(resolveLiterals);
-        auto resolvePrimitive = MegalodonKernelBuilder::resolveStep(
+        MegalodonProofExpander::ClauseStepRequest resolveRequest;
+        resolveRequest.step = MegalodonProofExpander::ResolveClauseStep{
           resolveId,
           MegalodonKernelSyntax::unitRef(mainParentId),
           MegalodonKernelSyntax::unitRef(resolveSideParentId),
           selectedIndex,
           sideLiteralIndex,
-          MegalodonKernelSyntax::clause(resolveResultClause));
-        primitivePrefix += resolvePrimitive.rendered;
-        primitivePrefix += "\n  ";
-        localPrimitiveSteps.push_back(resolvePrimitive);
+          MegalodonKernelSyntax::clause(resolveResultClause),
+        };
+        if (!resolveMetadata.empty()) {
+          resolveRequest.trailingRecords.push_back(std::move(resolveMetadata));
+        }
+        expansionRequests.push_back(std::move(resolveRequest));
         std::vector<std::string> currentLiterals = resolveLiterals;
         std::string currentParentId = resolveId;
         unsigned factorCount = 0;
@@ -7371,20 +7338,20 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
               }
               const std::string factorId = stepBase + "_factor" + std::to_string(factorCount++);
               std::string factorMetadata = syntheticVariableSortsMetadata(factorId, candidate);
-              if (!factorMetadata.empty()) {
-                primitivePrefix += factorMetadata;
-                primitivePrefix += "\n  ";
-              }
               const std::string factorResultClause = clauseFromLiterals(candidate);
-              auto factorPrimitive = MegalodonKernelBuilder::factorStep(
+              MegalodonProofExpander::ClauseStepRequest factorRequest;
+              factorRequest.step = MegalodonProofExpander::FactorClauseStep{
                 factorId,
                 MegalodonKernelSyntax::unitRef(currentParentId),
                 left,
                 right,
-                MegalodonKernelSyntax::clause(factorResultClause));
-              primitivePrefix += factorPrimitive.rendered;
-              primitivePrefix += "\n  ";
-              localPrimitiveSteps.push_back(factorPrimitive);
+                MegalodonKernelSyntax::clause(factorResultClause),
+              };
+              if (!factorMetadata.empty()) {
+                factorRequest.trailingRecords.push_back(
+                  std::move(factorMetadata));
+              }
+              expansionRequests.push_back(std::move(factorRequest));
               currentLiterals = candidate;
               currentParentId = factorId;
               factored = true;
@@ -7395,20 +7362,27 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
             return false;
           }
         }
-        const std::string finalStep =
-          "(substitute " + sexprQuote(stepBase)
-          + " (parent " + sexprQuote(currentParentId) + ")"
-          + " (subst)"
-          + " (result " + resultClauseSexpr + "))";
-        result = primitivePrefix + finalStep;
-        localPrimitiveSteps.push_back(
-          MegalodonKernelBuilder::substituteStep(
+        MegalodonProofExpander::ClauseStepRequest finalRequest;
+        finalRequest.step = MegalodonProofExpander::SubstituteClauseStep{
             stepBase,
             MegalodonKernelSyntax::unitRef(currentParentId),
             MegalodonKernelSyntax::substitution("(subst)"),
-            MegalodonKernelSyntax::clause(resultClauseSexpr)));
+            MegalodonKernelSyntax::clause(resultClauseSexpr),
+        };
+        expansionRequests.push_back(std::move(finalRequest));
+
+        MegalodonProofExpander::ClauseExpansion expansion;
+        std::string expansionError;
+        if (!MegalodonProofExpander::expandClauseProof(
+              expansionRequests,
+              stepBase,
+              expansion,
+              expansionError)) {
+          return false;
+        }
+        result = expansion.rendered;
         if (primitiveSteps != nullptr) {
-          *primitiveSteps = localPrimitiveSteps;
+          *primitiveSteps = std::move(expansion.primitives);
         }
         return true;
       }
@@ -7483,8 +7457,8 @@ bool MegalodonChecker::certificateFactorStepSexpr(
 
   const std::string stepBase = "u" + std::to_string(unit->number());
   std::string currentParentId = "u" + std::to_string(parent->number());
-  std::vector<std::string> steps;
-  std::vector<MegalodonKernelSyntax::PrimitiveStep> builtSteps;
+  std::vector<MegalodonProofExpander::ClauseStepRequest>
+    expansionRequests;
   unsigned factorCount = 0;
   while (!sameMultiset(current, actual)) {
     bool factored = false;
@@ -7500,15 +7474,16 @@ bool MegalodonChecker::certificateFactorStepSexpr(
         }
         const bool finalFactor = sameMultiset(candidate, actual);
         const std::string factorId = finalFactor ? stepBase : stepBase + "_factor" + std::to_string(factorCount++);
-        auto factorStep = MegalodonKernelBuilder::factorStep(
+        MegalodonProofExpander::ClauseStepRequest factorRequest;
+        factorRequest.step = MegalodonProofExpander::FactorClauseStep{
           factorId,
           MegalodonKernelSyntax::unitRef(currentParentId),
           left,
           right,
           MegalodonKernelSyntax::clause(
-            clauseSexprFromLiterals(finalFactor ? actual : candidate)));
-        steps.push_back(factorStep.rendered);
-        builtSteps.push_back(std::move(factorStep));
+            clauseSexprFromLiterals(finalFactor ? actual : candidate)),
+        };
+        expansionRequests.push_back(std::move(factorRequest));
         current = finalFactor ? actual : candidate;
         currentParentId = factorId;
         factored = true;
@@ -7519,16 +7494,18 @@ bool MegalodonChecker::certificateFactorStepSexpr(
       return false;
     }
   }
-  std::ostringstream out;
-  for (std::size_t i = 0; i < steps.size(); ++i) {
-    if (i != 0) {
-      out << "\n  ";
-    }
-    out << steps[i];
+  MegalodonProofExpander::ClauseExpansion expansion;
+  std::string expansionError;
+  if (!MegalodonProofExpander::expandClauseProof(
+        expansionRequests,
+        stepBase,
+        expansion,
+        expansionError)) {
+    return false;
   }
-  result = out.str();
+  result = expansion.rendered;
   if (primitiveSteps != nullptr) {
-    *primitiveSteps = std::move(builtSteps);
+    *primitiveSteps = std::move(expansion.primitives);
   }
   return true;
 }
