@@ -32,6 +32,7 @@ struct GroundTerm {
 struct Step {
   std::string id;
   std::vector<std::string> parentIds;
+  std::vector<std::string> parametricParentIds;
   Environment parentSubstitution;
   VariableSorts freeVariableSorts;
   std::vector<Application> applications;

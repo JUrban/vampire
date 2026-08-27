@@ -147,7 +147,30 @@ bool groundEnvironment(
   Environment& result,
   std::string& error)
 {
+  VariableSorts relevant = step.freeVariableSorts;
+  for (const auto& application : step.applications) {
+    if (application.requiresGrounding) {
+      rememberTermVariableSorts(application.term, relevant);
+    }
+  }
+  for (const auto& binding : step.parentSubstitution) {
+    rememberTermVariableSorts(binding.second, relevant);
+  }
+
   result = incoming;
+  result.erase(
+    std::remove_if(
+      result.begin(),
+      result.end(),
+      [&](const auto& binding) {
+        return std::none_of(
+          relevant.begin(),
+          relevant.end(),
+          [&](const auto& variable) {
+            return variable.first == binding.first;
+          });
+      }),
+    result.end());
 
   if (parametric) {
     result.erase(
@@ -348,11 +371,40 @@ bool expandGroundProof(
         return false;
       }
       const Step& step = *found->second;
+      bool instanceParametric = parametric;
+      if (instanceParametric
+          && std::any_of(
+            step.applications.begin(),
+            step.applications.end(),
+            [](const Application& application) {
+              return application.requiresGrounding;
+            })) {
+        Environment probeEnvironment;
+        if (!groundEnvironment(
+              step,
+              environment,
+              true,
+              groundTerms,
+              probeEnvironment,
+              error)) {
+          return false;
+        }
+        const bool requiredApplicationsAreGround = std::all_of(
+          step.applications.begin(),
+          step.applications.end(),
+          [&](const Application& application) {
+            return !application.requiresGrounding
+              || applyEnvironment(application.term, probeEnvironment).ground();
+          });
+        if (requiredApplicationsAreGround) {
+          instanceParametric = false;
+        }
+      }
       Environment groundedEnvironment;
       if (!groundEnvironment(
             step,
             environment,
-            parametric,
+            instanceParametric,
             groundTerms,
             groundedEnvironment,
             error)) {
@@ -360,7 +412,7 @@ bool expandGroundProof(
       }
       for (const auto& instance : result.instances) {
         if (instance.stepId == stepId
-            && instance.parametric == parametric
+            && instance.parametric == instanceParametric
             && sameEnvironment(instance.environment, groundedEnvironment)) {
           resultIndex = instance.index;
           return true;
@@ -369,14 +421,20 @@ bool expandGroundProof(
       resultIndex = result.instances.size();
       result.instances.push_back(
         Instance{
-          resultIndex, stepId, parametric, groundedEnvironment, {}, {}, {}});
+          resultIndex,
+          stepId,
+          instanceParametric,
+          groundedEnvironment,
+          {},
+          {},
+          {}});
       active.push_back(true);
 
       for (const auto& application : step.applications) {
         Kernel::TermList grounded =
           applyEnvironment(application.term, groundedEnvironment);
         if (!grounded.ground()) {
-          if (parametric) {
+          if (instanceParametric) {
             result.instances[resultIndex].sourceApplications.push_back(
               application);
             const auto duplicate = std::find_if(
@@ -416,11 +474,17 @@ bool expandGroundProof(
       const Environment parentEnvironment =
         composeParentEnvironment(groundedEnvironment, step.parentSubstitution);
       for (const std::string& parentId : step.parentIds) {
+        const bool parentParametric =
+          instanceParametric
+          || std::find(
+               step.parametricParentIds.begin(),
+               step.parametricParentIds.end(),
+               parentId) != step.parametricParentIds.end();
         std::size_t parentIndex = 0;
         if (!visit(
               parentId,
               parentEnvironment,
-              parametric,
+              parentParametric,
               parentIndex)) {
           return false;
         }
@@ -431,15 +495,25 @@ bool expandGroundProof(
         result.instances[resultIndex].parentInstances.push_back(parentIndex);
         for (const Application& application :
              result.instances[parentIndex].applications) {
+          Application inherited = application;
+          inherited.term =
+            applyEnvironment(application.term, parentEnvironment);
+          if (!instanceParametric && !inherited.term.ground()) {
+            error = "non-parametric proof instance " + stepId
+              + " cannot ground an inherited Skolem application from "
+              + parentId;
+            return false;
+          }
           const auto duplicate = std::find_if(
             result.instances[resultIndex].applications.begin(),
             result.instances[resultIndex].applications.end(),
             [&](const Application& existing) {
-              return existing.functionSymbol == application.functionSymbol
-                && existing.term == application.term;
+              return existing.functionSymbol == inherited.functionSymbol
+                && existing.term == inherited.term;
             });
           if (duplicate == result.instances[resultIndex].applications.end()) {
-            result.instances[resultIndex].applications.push_back(application);
+            result.instances[resultIndex].applications.push_back(
+              std::move(inherited));
           }
         }
       }

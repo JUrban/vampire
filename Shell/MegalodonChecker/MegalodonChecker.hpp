@@ -321,7 +321,8 @@ private:
     Kernel::Unit* unit,
     const InferenceRecorder::InferenceInformation* replayInfo,
     std::string& result,
-    MegalodonKernelSyntax::PrimitiveStep* equalityResolutionPrimitive = nullptr);
+    MegalodonKernelSyntax::PrimitiveStep* equalityResolutionPrimitive = nullptr,
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   bool certificateEqualityFactoringStepSexpr(
     Kernel::Unit* unit,
     const InferenceRecorder::InferenceInformation* replayInfo,

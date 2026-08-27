@@ -7898,7 +7898,8 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
   Kernel::Unit* unit,
   const InferenceRecorder::InferenceInformation* replayInfo,
   std::string& result,
-  MegalodonKernelSyntax::PrimitiveStep* equalityResolutionPrimitive)
+  MegalodonKernelSyntax::PrimitiveStep* equalityResolutionPrimitive,
+  std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps)
 {
   const Kernel::InferenceRule& rule = unit->inference().rule();
   if (!unit->isClause()
@@ -8129,7 +8130,8 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
         std::vector<std::string>& current,
         std::string& currentParentId,
         const std::vector<std::string>& actual,
-        const std::string& unitId) {
+        const std::string& unitId,
+        std::vector<MegalodonKernelSyntax::PrimitiveStep>* generatedPrimitives) {
       for (unsigned guard = 0; !sameMultiset(current, actual) && guard < current.size(); ++guard) {
         bool changed = false;
         for (unsigned i = 0; i < current.size(); ++i) {
@@ -8147,11 +8149,17 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
           const std::string symmetryId = finalSymmetry
             ? unitId
             : unitId + "_sym" + std::to_string(guard);
-          steps.push_back(
-            "(equality_symmetry " + sexprQuote(symmetryId)
-            + " (parent " + sexprQuote(currentParentId) + ")"
-            + " (literal " + std::to_string(i) + ")"
-            + " (result " + clauseSexprFromLiterals(finalSymmetry ? actual : candidate) + "))");
+          auto symmetryPrimitive =
+            MegalodonKernelBuilder::equalitySymmetryStep(
+              symmetryId,
+              MegalodonKernelSyntax::unitRef(currentParentId),
+              i,
+              MegalodonKernelSyntax::clause(
+                clauseSexprFromLiterals(finalSymmetry ? actual : candidate)));
+          steps.push_back(symmetryPrimitive.rendered);
+          if (generatedPrimitives != nullptr) {
+            generatedPrimitives->push_back(std::move(symmetryPrimitive));
+          }
           current = finalSymmetry ? actual : candidate;
           currentParentId = symmetryId;
           changed = true;
@@ -8184,6 +8192,7 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
   }
 	  std::string substitutionStep;
 	  std::vector<std::string> substitutionMetadata;
+	  MegalodonKernelSyntax::PrimitiveStep substitutionPrimitive;
 	  if (nonIdentitySubstitution) {
 	    activeParentId = unitId + "_subst";
 	    if (!certificateSubstituteStepPartsSexpr(
@@ -8192,7 +8201,8 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
 	          parent,
 	          *selectedSubstitution,
 	          substitutionStep,
-	          substitutionMetadata)) {
+	          substitutionMetadata,
+	          &substitutionPrimitive)) {
 	      return false;
 	    }
 	  }
@@ -8204,6 +8214,10 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
     Kernel::Literal* literal = activeParentLiterals[literalIndex];
     if (literal == nullptr || !literal->isEquality() || !literal->isNegative()) {
       return false;
+    }
+    std::vector<MegalodonKernelSyntax::PrimitiveStep> builtPrimitives;
+    if (nonIdentitySubstitution) {
+      builtPrimitives.push_back(substitutionPrimitive);
     }
     std::string lhs;
     std::string rhs;
@@ -8282,6 +8296,7 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
       if (equalityResolutionPrimitive != nullptr) {
         *equalityResolutionPrimitive = equalityPrimitive;
       }
+      builtPrimitives.push_back(equalityPrimitive);
       std::ostringstream out;
       for (std::size_t i = 0; i < steps.size(); ++i) {
         if (i != 0) {
@@ -8290,6 +8305,9 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
         out << steps[i];
       }
       step = out.str();
+      if (primitiveSteps != nullptr) {
+        *primitiveSteps = std::move(builtPrimitives);
+      }
       return true;
     }
 
@@ -8297,7 +8315,13 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
       std::vector<std::string> current = expected;
       std::vector<std::string> probeSteps;
       std::string probeParentId = unitId + "_eqres";
-      if (!emitEqualitySymmetrySteps(probeSteps, current, probeParentId, actual, unitId)) {
+      if (!emitEqualitySymmetrySteps(
+            probeSteps,
+            current,
+            probeParentId,
+            actual,
+            unitId,
+            nullptr)) {
         return false;
       }
     }
@@ -8328,10 +8352,17 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
     if (equalityResolutionPrimitive != nullptr) {
       *equalityResolutionPrimitive = equalityPrimitive;
     }
+    builtPrimitives.push_back(equalityPrimitive);
     if (!directResult) {
       std::vector<std::string> current = expected;
       std::string currentParentId = equalityResolutionId;
-      if (!emitEqualitySymmetrySteps(steps, current, currentParentId, actual, unitId)) {
+      if (!emitEqualitySymmetrySteps(
+            steps,
+            current,
+            currentParentId,
+            actual,
+            unitId,
+            &builtPrimitives)) {
         return false;
       }
     }
@@ -8347,6 +8378,9 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
       out << steps[i];
     }
     step = out.str();
+    if (primitiveSteps != nullptr) {
+      *primitiveSteps = std::move(builtPrimitives);
+    }
     return true;
   };
 
@@ -11448,14 +11482,20 @@ bool MegalodonChecker::certificateNativeStepSexpr(
     return true;
   };
   auto certificateEqualityResolutionPrimitiveStep = [&]() {
-    MegalodonKernelSyntax::PrimitiveStep primitiveStep;
+    std::vector<MegalodonKernelSyntax::PrimitiveStep> primitiveSteps;
     if (!certificateEqualityResolutionStepSexpr(
-          unit, replayInfo, result, &primitiveStep)) {
+          unit, replayInfo, result, nullptr, &primitiveSteps)) {
       return false;
     }
-    _certificateNativePrimitiveStepsByUnit[unit->number()] = {
-      std::move(primitiveStep),
-    };
+    std::vector<std::string> validationFields;
+    if (!MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
+          validationFields,
+          primitiveSteps,
+          "u" + std::to_string(unit->number()))) {
+      return false;
+    }
+    _certificateNativePrimitiveStepsByUnit[unit->number()] =
+      std::move(primitiveSteps);
     return true;
   };
   auto certificateTruthConflictPrimitiveStep = [&]() {
@@ -12483,6 +12523,10 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
         MegalodonProofExpander::Step step;
         step.id = primitive.id;
         step.parentIds = primitive.parentIds;
+        if (primitive.rule == "cnf_formula_clause"
+            || primitive.rule == "skolem_formula") {
+          step.parametricParentIds = primitive.parentIds;
+        }
         step.freeVariableSorts = collectUnitFreeVariableSorts(unit);
         auto substitution =
           _certificateProducerSubstitutions.find(primitive.id);
@@ -12506,6 +12550,11 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
         } else if (conclusionChain.find(primitive.id)
                    != conclusionChain.end()) {
           collectUnitGroundingApplications(unit, step.applications);
+        }
+        if (primitive.rule == "skolem_formula") {
+          for (auto& application : step.applications) {
+            application.requiresGrounding = true;
+          }
         }
         for (const auto& stored : _certificateProducerApplicationTerms) {
           if (std::get<0>(stored.first) != primitive.id) {
