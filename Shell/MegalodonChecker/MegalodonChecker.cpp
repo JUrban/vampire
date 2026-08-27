@@ -9978,6 +9978,8 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
               }
               if (!acceptedSymmetry) {
                 std::vector<std::string> steps;
+                std::vector<MegalodonKernelSyntax::PrimitiveStep>
+                  localPrimitiveSteps;
                 std::vector<std::string> parentIds(2);
                 std::vector<std::vector<std::string>> substitutedParents(2);
                 for (std::size_t parentIndex = 0; parentIndex < 2; ++parentIndex) {
@@ -9992,15 +9994,25 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                   if (nonIdentity) {
                     std::string substituteId = stepBase + "_subst" + std::to_string(parentIndex);
                     std::string substituteStep;
-                    if (!certificateSubstituteStepSexpr(
+                    std::vector<std::string> substituteMetadata;
+                    MegalodonKernelSyntax::PrimitiveStep substitutePrimitive;
+                    if (!certificateSubstituteStepPartsSexpr(
                           substituteId,
                           parentIds[parentIndex],
                           premises[parentIndex],
                           activeSubstitutions[parentIndex],
-                          substituteStep)) {
+                          substituteStep,
+                          substituteMetadata,
+                          &substitutePrimitive)) {
                       return false;
                     }
-                    steps.push_back(substituteStep);
+                    std::ostringstream renderedSubstitute;
+                    renderedSubstitute << substituteStep;
+                    for (const std::string& metadata : substituteMetadata) {
+                      renderedSubstitute << "\n  " << metadata;
+                    }
+                    steps.push_back(renderedSubstitute.str());
+                    localPrimitiveSteps.push_back(std::move(substitutePrimitive));
                     parentIds[parentIndex] = substituteId;
                   }
                 }
@@ -10035,11 +10047,15 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                     return false;
                   }
                   std::string symmetryStepId = stepBase + "_symmetry";
-                  steps.push_back(
-                    "(equality_symmetry " + sexprQuote(symmetryStepId)
-                    + " (parent " + sexprQuote(equalityParentId) + ")"
-                    + " (literal " + std::to_string(equalityIndex) + ")"
-                    + " (result " + clauseSexprFromLiterals(symmetryClause) + "))");
+                  auto symmetryPrimitive =
+                    MegalodonKernelBuilder::equalitySymmetryStep(
+                      symmetryStepId,
+                      MegalodonKernelSyntax::unitRef(equalityParentId),
+                      equalityIndex,
+                      MegalodonKernelSyntax::clause(
+                        clauseSexprFromLiterals(symmetryClause)));
+                  steps.push_back(symmetryPrimitive.rendered);
+                  localPrimitiveSteps.push_back(std::move(symmetryPrimitive));
                   equalityParentId = symmetryStepId;
                 }
 
@@ -10104,14 +10120,21 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                   nextClause.insert(nextClause.end(), equalityRemainder.begin(), equalityRemainder.end());
                   nextClause.push_back(rewrite.rewritten);
                   const std::string rewriteId = stepBase + "_paramodulate" + std::to_string(rewriteIndex);
-                  steps.push_back(
-                    "(paramodulate " + sexprQuote(rewriteId)
-                    + " (equality " + sexprQuote(equalityParentId) + " " + std::to_string(equalityIndex) + ")"
-                    + " (target " + sexprQuote(currentParentId) + " " + std::to_string(currentTargetIndex) + ") "
-                    + certificatePositionSexpr(rewrite.position)
-                    + " (from " + fromSexpr + ")"
-                    + " (to " + toSexpr + ")"
-                    + " (result " + clauseSexprFromLiterals(nextClause) + "))");
+                  auto paramodulatePrimitive =
+                    MegalodonKernelBuilder::paramodulateStep(
+                      rewriteId,
+                      MegalodonKernelSyntax::unitRef(equalityParentId),
+                      equalityIndex,
+                      MegalodonKernelSyntax::unitRef(currentParentId),
+                      currentTargetIndex,
+                      MegalodonKernelSyntax::position(
+                        certificatePositionSexpr(rewrite.position)),
+                      MegalodonKernelSyntax::term(fromSexpr),
+                      MegalodonKernelSyntax::term(toSexpr),
+                      MegalodonKernelSyntax::clause(
+                        clauseSexprFromLiterals(nextClause)));
+                  steps.push_back(paramodulatePrimitive.rendered);
+                  localPrimitiveSteps.push_back(std::move(paramodulatePrimitive));
                   currentTargetIndex = nextClause.size() - 1;
                   currentClause = nextClause;
                   currentParentId = rewriteId;
@@ -10129,12 +10152,16 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                       const std::string factorId = factorIndex + 1 == factors.size()
                         ? stepBase
                         : stepBase + "_factor" + std::to_string(factorIndex);
-                      candidateSteps.push_back(
-                        "(factor " + sexprQuote(factorId)
-                        + " (parent " + sexprQuote(candidateParentId) + ")"
-                        + " (literals " + std::to_string(factors[factorIndex].first)
-                        + " " + std::to_string(factors[factorIndex].second) + ")"
-                        + " (result " + clauseSexprFromLiterals(factorResults[factorIndex]) + "))");
+                      auto factorPrimitive =
+                        MegalodonKernelBuilder::factorStep(
+                          factorId,
+                          MegalodonKernelSyntax::unitRef(candidateParentId),
+                          factors[factorIndex].first,
+                          factors[factorIndex].second,
+                          MegalodonKernelSyntax::clause(
+                            clauseSexprFromLiterals(factorResults[factorIndex])));
+                      candidateSteps.push_back(factorPrimitive.rendered);
+                      localPrimitiveSteps.push_back(std::move(factorPrimitive));
                       candidateParentId = factorId;
                     }
                   };
@@ -10144,10 +10171,15 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                       std::string candidateParentId) {
                     if (sameMultiset(candidateClause, actual)) {
                       if (candidateParentId != stepBase) {
-                        candidateSteps.push_back(
-                          "(substitute " + sexprQuote(stepBase)
-                          + " (parent " + sexprQuote(candidateParentId) + ") (subst)"
-                          + " (result " + clauseSexprFromLiterals(actual) + "))");
+                        auto substitutePrimitive =
+                          MegalodonKernelBuilder::substituteStep(
+                            stepBase,
+                            MegalodonKernelSyntax::unitRef(candidateParentId),
+                            MegalodonKernelSyntax::substitution("(subst)"),
+                            MegalodonKernelSyntax::clause(
+                              clauseSexprFromLiterals(actual)));
+                        candidateSteps.push_back(substitutePrimitive.rendered);
+                        localPrimitiveSteps.push_back(std::move(substitutePrimitive));
                       }
                       return true;
                     }
@@ -10169,22 +10201,30 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                       std::vector<std::pair<unsigned, unsigned>> symmetryFactors;
                       std::vector<std::vector<std::string>> symmetryFactorResults;
                       if (sameMultiset(symmetryClause, actual)) {
-                        candidateSteps.push_back(
-                          "(equality_symmetry " + sexprQuote(stepBase)
-                          + " (parent " + sexprQuote(candidateParentId) + ")"
-                          + " (literal " + std::to_string(literalIndex) + ")"
-                          + " (result " + clauseSexprFromLiterals(actual) + "))");
+                        auto symmetryPrimitive =
+                          MegalodonKernelBuilder::equalitySymmetryStep(
+                            stepBase,
+                            MegalodonKernelSyntax::unitRef(candidateParentId),
+                            literalIndex,
+                            MegalodonKernelSyntax::clause(
+                              clauseSexprFromLiterals(actual)));
+                        candidateSteps.push_back(symmetryPrimitive.rendered);
+                        localPrimitiveSteps.push_back(std::move(symmetryPrimitive));
                         return true;
                       }
                       if (!factorDuplicateLiteralsToActual(symmetryClause, symmetryFactors, symmetryFactorResults)) {
                         continue;
                       }
                       const std::string symmetryStepId = stepBase + "_symmetry_result";
-                      candidateSteps.push_back(
-                        "(equality_symmetry " + sexprQuote(symmetryStepId)
-                        + " (parent " + sexprQuote(candidateParentId) + ")"
-                        + " (literal " + std::to_string(literalIndex) + ")"
-                        + " (result " + clauseSexprFromLiterals(symmetryClause) + "))");
+                      auto symmetryPrimitive =
+                        MegalodonKernelBuilder::equalitySymmetryStep(
+                          symmetryStepId,
+                          MegalodonKernelSyntax::unitRef(candidateParentId),
+                          literalIndex,
+                          MegalodonKernelSyntax::clause(
+                            clauseSexprFromLiterals(symmetryClause)));
+                      candidateSteps.push_back(symmetryPrimitive.rendered);
+                      localPrimitiveSteps.push_back(std::move(symmetryPrimitive));
                       candidateParentId = symmetryStepId;
                       emitFactors(candidateSteps, candidateParentId, symmetryFactors, symmetryFactorResults);
                       return true;
@@ -10192,6 +10232,14 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                     return false;
                 };
                 if (!finishExpanded(steps, currentClause, currentParentId)) {
+                  continue;
+                }
+
+                std::vector<std::string> validationFields;
+                if (!MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
+                      validationFields,
+                      localPrimitiveSteps,
+                      stepBase)) {
                   continue;
                 }
 
@@ -10203,6 +10251,9 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                   out << steps[i];
                 }
                 result = out.str();
+                if (primitiveSteps != nullptr) {
+                  *primitiveSteps = std::move(localPrimitiveSteps);
+                }
                 return true;
               }
             }
@@ -15918,6 +15969,21 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           addKernelTermField(kernelFields, replayPrefix + "replacement", info->demodulationReplacement);
           addKernelDemodulationRewriteFields(kernelFields);
         }
+        auto primitiveSteps =
+          _certificateNativePrimitiveStepsByUnit.find(u->number());
+        if (primitiveSteps == _certificateNativePrimitiveStepsByUnit.end()
+          || !MegalodonKernelSyntax::appendPrimitiveExpansionChainFields(
+            kernelFields,
+            primitiveSteps->second,
+            "u" + std::to_string(u->number()))) {
+          INVALID_OPERATION(
+            "typed demodulation primitive chain serialization failed");
+        }
+        kernelFields.push_back(
+          std::string("primitive_lowering_source=")
+          + (info != nullptr && info->hasDemodulationRewrite
+            ? "recorder_v1"
+            : "proof_extra_v1"));
         emitKernelV1("rewrite", kernelFields);
       }
       std::vector<std::string> fields;
