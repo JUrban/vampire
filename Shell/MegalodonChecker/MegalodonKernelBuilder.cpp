@@ -1106,6 +1106,32 @@ MegalodonKernelSyntax::PrimitiveStep avatarSplitStep(
       + " (result " + result.sexpr + "))");
 }
 
+MegalodonKernelSyntax::PrimitiveStep avatarContradictionStep(
+  const std::string& id,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& parents,
+  const MegalodonKernelSyntax::RenderedKernelClause& result)
+{
+  std::vector<std::string> parentIds;
+  std::string renderedParents = "(parents";
+  for (const auto& parent : parents) {
+    parentIds.push_back(parent.value);
+    renderedParents += " " + quote(parent.value);
+  }
+  renderedParents += ")";
+  return primitiveClauseStep(
+    "avatar_contradiction",
+    id,
+    parentIds,
+    result.sexpr,
+    {
+      {"selection_source", "avatar_v1"},
+      {"scope", "certificate_local_block_v1"},
+      {"primitive_lowering_source", "avatar_v1"},
+    },
+    "(avatar_contradiction " + quote(id) + " " + renderedParents
+      + " (result " + result.sexpr + "))");
+}
+
 namespace {
 
 using SatLiteral = MegalodonKernelSyntax::RenderedKernelSatLiteral;

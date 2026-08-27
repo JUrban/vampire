@@ -46,6 +46,7 @@ std::vector<std::string> primitiveRules()
 {
   return {
     "avatar_component",
+    "avatar_contradiction",
     "avatar_definition",
     "avatar_refutation",
     "avatar_split",
@@ -89,6 +90,7 @@ std::vector<std::string> requiredPrimitivesForRule(const std::string& rule)
     {"equality_factoring", {"equality_factoring", "equality_factoring_constraints"}},
     {"equality_symmetry", {"equality_symmetry"}},
     {"avatar_component", {"avatar_component"}},
+    {"avatar_contradiction", {"avatar_contradiction"}},
     {"avatar_split", {"avatar_split"}},
     {"avatar_refutation", {"avatar_refutation"}},
     {"avatar_definition", {"avatar_definition"}},
@@ -169,6 +171,7 @@ std::vector<std::string> supportedRules()
     "equality_factoring",
     "equality_symmetry",
     "avatar_component",
+    "avatar_contradiction",
     "avatar_split",
     "avatar_refutation",
     "avatar_definition",

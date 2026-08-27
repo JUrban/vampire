@@ -199,7 +199,8 @@ private:
     const Kernel::Substitution& substitution,
     std::string& step,
     std::vector<std::string>& metadata,
-    MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
+    MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr,
+    std::vector<std::string>* resultLiterals = nullptr);
   bool certificateRewriteTermAtMegalodonPosition(Kernel::TermList term, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::TermList& rewritten);
   bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::Literal*& rewritten);
   bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, std::string& rendered);
@@ -366,6 +367,8 @@ private:
   std::set<unsigned> _certificateNativeStepIds;
   std::map<unsigned, std::vector<MegalodonKernelSyntax::PrimitiveStep>>
     _certificateNativePrimitiveStepsByUnit;
+  std::vector<MegalodonKernelSyntax::PrimitiveStep>
+    _certificateNativeAuxiliaryPrimitiveSteps;
   std::map<unsigned, std::string> _certificateResolutionLoweringSourceByUnit;
   std::map<unsigned, std::string> _certificateSuperpositionLoweringSourceByUnit;
   std::map<unsigned, CertificateSkolemWitnessDescriptor>
