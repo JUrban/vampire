@@ -56,6 +56,7 @@ private:
     Kernel::Formula* sourceFormula = nullptr;
     std::string sourceFormulaSexpr;
     std::vector<CertificateSkolemDependencyDescriptor> dependencies;
+    std::vector<std::size_t> argumentToDependency;
   };
 
   struct CertificateProducerApplicationTerm {

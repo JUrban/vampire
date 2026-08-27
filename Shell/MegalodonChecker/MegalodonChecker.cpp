@@ -493,10 +493,17 @@ bool MegalodonChecker::certificateSkolemUseDetails(
   use.witnessTypeSexpr = witness.witnessTypeSexpr;
   use.sourceFormulaSexpr = witness.sourceFormulaSexpr;
 
+  if (witness.argumentToDependency.size() != arguments.size()) {
+    return false;
+  }
   Kernel::Substitution sourceSubstitution;
   for (std::size_t index = 0; index < arguments.size(); ++index) {
+    const std::size_t dependencyIndex = witness.argumentToDependency[index];
+    if (dependencyIndex >= witness.dependencies.size()) {
+      return false;
+    }
     if (!sourceSubstitution.bind(
-          witness.dependencies[index].variable,
+          witness.dependencies[dependencyIndex].variable,
           arguments[index])) {
       return false;
     }
@@ -509,11 +516,22 @@ bool MegalodonChecker::certificateSkolemUseDetails(
     return false;
   }
 
-  for (std::size_t index = 0; index < arguments.size(); ++index) {
+  for (std::size_t dependencyIndex = 0;
+       dependencyIndex < witness.dependencies.size();
+       ++dependencyIndex) {
+    auto argumentIndex = std::find(
+      witness.argumentToDependency.begin(),
+      witness.argumentToDependency.end(),
+      dependencyIndex);
+    if (argumentIndex == witness.argumentToDependency.end()) {
+      return false;
+    }
+    const Kernel::TermList argument =
+      arguments[argumentIndex - witness.argumentToDependency.begin()];
     MegalodonKernelSyntax::RenderedKernelSkolemUse::Dependency dependency;
-    dependency.variable = witness.dependencies[index].name;
-    dependency.typeSexpr = witness.dependencies[index].typeSexpr;
-    if (!certificateTermSexpr(arguments[index], dependency.termSexpr)) {
+    dependency.variable = witness.dependencies[dependencyIndex].name;
+    dependency.typeSexpr = witness.dependencies[dependencyIndex].typeSexpr;
+    if (!certificateTermSexpr(argument, dependency.termSexpr)) {
       return false;
     }
     std::set<std::tuple<std::string, std::string, std::string>> seenNested;
@@ -561,7 +579,7 @@ bool MegalodonChecker::certificateSkolemUseDetails(
         }
         return true;
       };
-    if (!collectNested(collectNested, arguments[index])) {
+    if (!collectNested(collectNested, argument)) {
       return false;
     }
     use.dependencies.push_back(std::move(dependency));
@@ -3091,6 +3109,49 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
             branches[branchIndex].witnesses[witnessIndex]
               .dependencies[dependencyIndex].type.sexpr,
           });
+        }
+        Kernel::TermList witnessHead;
+        std::vector<Kernel::TermList> witnessArguments;
+        if (recordedWitness.witnessTerm.isApplication()) {
+          decomposeApplicationSpine(
+            recordedWitness.witnessTerm,
+            witnessHead,
+            witnessArguments);
+        } else if (recordedWitness.witnessTerm.isTerm()) {
+          const Kernel::Term* witnessTerm = recordedWitness.witnessTerm.term();
+          witnessHead = recordedWitness.witnessTerm;
+          for (unsigned argumentIndex = 0;
+               argumentIndex < witnessTerm->arity();
+               ++argumentIndex) {
+            witnessArguments.push_back(
+              *witnessTerm->nthArgument(argumentIndex));
+          }
+        }
+        if (!witnessHead.isTerm()
+          || witnessHead.term()->functor() != recordedWitness.symbol
+          || witnessArguments.size() != descriptor.dependencies.size()) {
+          return false;
+        }
+        std::set<std::size_t> mappedDependencies;
+        for (Kernel::TermList argument : witnessArguments) {
+          if (!argument.isVar()) {
+            return false;
+          }
+          auto dependency = std::find_if(
+            descriptor.dependencies.begin(),
+            descriptor.dependencies.end(),
+            [&](const CertificateSkolemDependencyDescriptor& candidate) {
+              return candidate.variable == argument.var();
+            });
+          if (dependency == descriptor.dependencies.end()) {
+            return false;
+          }
+          const std::size_t dependencyIndex =
+            dependency - descriptor.dependencies.begin();
+          if (!mappedDependencies.insert(dependencyIndex).second) {
+            return false;
+          }
+          descriptor.argumentToDependency.push_back(dependencyIndex);
         }
         if (!_certificateSkolemWitnessDescriptors.emplace(
               recordedWitness.symbol,
