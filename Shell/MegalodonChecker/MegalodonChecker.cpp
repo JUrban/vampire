@@ -3667,11 +3667,117 @@ bool MegalodonChecker::certificateDefinitionInputStepSexpr(Kernel::Unit* unit, s
   if (!unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::FUNCTION_DEFINITION) {
     return false;
   }
-  std::string clause;
-  if (!certificateClauseSexpr(unit->asClause(), clause)) {
+  if (!_is->hasIntroducedSymbols(unit)) {
     return false;
   }
-  result = "(definition_input " + sexprQuote("u" + std::to_string(unit->number()))
+  auto& introducedSymbols = _is->getIntroducedSymbols(unit);
+  if (introducedSymbols.size() != 1
+      || introducedSymbols.top().first != SymbolType::FUNC) {
+    return false;
+  }
+  const unsigned introducedSymbol = introducedSymbols.top().second;
+  Kernel::OperatorType* introducedType =
+    env.signature->getFunction(introducedSymbol)->fnType();
+  if (introducedType->numTypeArguments() != 0) {
+    return false;
+  }
+
+  Kernel::Clause* definitionClause = unit->asClause();
+  if (definitionClause->length() != 1) {
+    return false;
+  }
+  Kernel::Literal* definitionLiteral = (*definitionClause)[0];
+  if (!definitionLiteral->isEquality() || !definitionLiteral->isPositive()) {
+    return false;
+  }
+
+  const auto definitionParameters =
+    [&](Kernel::TermList side,
+        std::vector<Kernel::TermList>& parameters) {
+      Kernel::TermList head;
+      std::vector<Kernel::TermList> outerArguments;
+      decomposeApplicationSpine(side, head, outerArguments);
+      if (!head.isTerm()
+          || head.term()->isSpecial()
+          || head.term()->functor() != introducedSymbol) {
+        return false;
+      }
+      parameters.clear();
+      for (unsigned index = 0;
+           index < head.term()->numTermArguments();
+           ++index) {
+        parameters.push_back(*head.term()->nthArgument(index));
+      }
+      parameters.insert(
+        parameters.end(), outerArguments.begin(), outerArguments.end());
+      std::set<unsigned> seen;
+      for (Kernel::TermList parameter : parameters) {
+        if (!parameter.isVar() || !seen.insert(parameter.var()).second) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+  std::vector<Kernel::TermList> parameters;
+  Kernel::TermList body;
+  if (definitionParameters(*definitionLiteral->nthArgument(0), parameters)) {
+    body = *definitionLiteral->nthArgument(1);
+  } else if (definitionParameters(
+               *definitionLiteral->nthArgument(1), parameters)) {
+    body = *definitionLiteral->nthArgument(0);
+  } else {
+    return false;
+  }
+
+  Lib::DHMap<unsigned, Kernel::TermList> variableSorts;
+  Kernel::SortHelper::collectVariableSorts(definitionLiteral, variableSorts);
+  std::map<unsigned, Kernel::TermList> parameterSorts;
+  Lib::DHMap<unsigned, Kernel::TermList>::Iterator sortIterator(variableSorts);
+  while (sortIterator.hasNext()) {
+    unsigned variable;
+    Kernel::TermList sort;
+    sortIterator.next(variable, sort);
+    parameterSorts.emplace(variable, sort);
+  }
+
+  std::string symbolType;
+  if (!certificateTypeSexpr(introducedType->result(), symbolType)) {
+    return false;
+  }
+  for (unsigned index = introducedType->arity(); index > 0; --index) {
+    std::string argumentType;
+    if (!certificateTypeSexpr(introducedType->arg(index - 1), argumentType)) {
+      return false;
+    }
+    symbolType = "(AR " + argumentType + " " + symbolType + ")";
+  }
+
+  std::string bodySexpr;
+  std::string clause;
+  if (!certificateTermSexpr(body, bodySexpr)
+      || !certificateClauseSexpr(definitionClause, clause)) {
+    return false;
+  }
+  std::ostringstream renderedParameters;
+  renderedParameters << "(parameters";
+  for (Kernel::TermList parameter : parameters) {
+    auto found = parameterSorts.find(parameter.var());
+    std::string parameterType;
+    if (found == parameterSorts.end()
+        || !certificateTypeSexpr(found->second, parameterType)) {
+      return false;
+    }
+    renderedParameters
+      << " (parameter (name " << sexprQuote(variableName(parameter.var()))
+      << ") (type " << parameterType << "))";
+  }
+  renderedParameters << ')';
+  result =
+    "(definition_input " + sexprQuote("u" + std::to_string(unit->number()))
+    + " (definition (symbol " + sexprQuote(functionName(introducedSymbol)) + ")"
+    + " (type " + symbolType + ") " + renderedParameters.str()
+    + " (body (term " + bodySexpr + ")))"
     + " (result " + clause + "))";
   return true;
 }
