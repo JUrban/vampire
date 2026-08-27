@@ -25,6 +25,10 @@ struct PrimitiveStep {
   bool hasResultFormula = false;
   std::string resultFormula;
   std::vector<std::string> certificateLocalSymbols;
+  // Producer-only identities and dependency arities. These are not rendered as
+  // primitive fields; the refutation-level Skolem-use builder consumes them.
+  std::vector<unsigned> certificateLocalFunctionSymbols;
+  std::vector<std::size_t> certificateLocalSymbolDependencyCounts;
   std::vector<std::pair<std::string, std::string>> fields;
 };
 
@@ -50,6 +54,14 @@ struct RenderedKernelClause {
 
 struct RenderedKernelSubstitution {
   std::string sexpr;
+};
+
+struct RenderedKernelSkolemUse {
+  std::string skolemStep;
+  std::string symbol;
+  std::size_t dependencyCount = 0;
+  std::string unit;
+  RenderedKernelTerm term;
 };
 
 struct RenderedKernelPosition {

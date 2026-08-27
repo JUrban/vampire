@@ -12,6 +12,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <tuple>
 #include <utility>
 
 namespace Shell {
@@ -123,9 +124,94 @@ std::string skolemRefutationScopeBlock(
   }
   dischargeOrder += ")";
   return
-    "(skolem_scope_block \"smolka_refutation_v1\""
+    "(skolem_scope_block \"smolka_refutation_v2\""
     " (final " + quote(finalStep) + ") "
     + entries + " " + dischargeOrder + ")";
+}
+
+std::string skolemRefutationUseBlock(
+  const std::string& finalStep,
+  const std::vector<MegalodonKernelSyntax::PrimitiveStep>& skolemSteps,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemUse>& uses)
+{
+  if (finalStep.empty() || skolemSteps.empty()) {
+    return "";
+  }
+  std::map<std::pair<std::string, std::string>, std::size_t> declarations;
+  for (const auto& step : skolemSteps) {
+    if (!step.builderOwned
+      || step.rule != "skolem_formula"
+      || step.id.empty()
+      || step.certificateLocalSymbols.empty()
+      || step.certificateLocalSymbols.size()
+        != step.certificateLocalSymbolDependencyCounts.size()) {
+      return "";
+    }
+    for (std::size_t index = 0;
+         index < step.certificateLocalSymbols.size();
+         ++index) {
+      const auto key = std::make_pair(
+        step.id, step.certificateLocalSymbols[index]);
+      if (key.second.empty()
+        || !declarations.emplace(
+          key, step.certificateLocalSymbolDependencyCounts[index]).second) {
+        return "";
+      }
+    }
+  }
+
+  std::map<std::pair<std::string, std::string>,
+    std::vector<MegalodonKernelSyntax::RenderedKernelSkolemUse>> grouped;
+  std::set<std::tuple<std::string, std::string, std::string, std::string>> seen;
+  for (const auto& use : uses) {
+    const auto key = std::make_pair(use.skolemStep, use.symbol);
+    auto declaration = declarations.find(key);
+    if (declaration == declarations.end()
+      || declaration->second != use.dependencyCount
+      || use.unit.empty()
+      || use.term.sexpr.empty()
+      || !seen.emplace(
+        use.skolemStep, use.symbol, use.unit, use.term.sexpr).second) {
+      return "";
+    }
+    grouped[key].push_back(use);
+  }
+
+  std::string entries = "(entries";
+  std::size_t entryIndex = 0;
+  for (const auto& step : skolemSteps) {
+    for (std::size_t symbolIndex = 0;
+         symbolIndex < step.certificateLocalSymbols.size();
+         ++symbolIndex) {
+      const std::string& symbol = step.certificateLocalSymbols[symbolIndex];
+      const auto key = std::make_pair(step.id, symbol);
+      auto found = grouped.find(key);
+      if (found == grouped.end() || found->second.empty()) {
+        return "";
+      }
+      entries +=
+        " (entry (index " + std::to_string(entryIndex++) + ")"
+        + " (step " + quote(step.id) + ")"
+        + " (symbol " + quote(symbol) + ")"
+        + " (dependency_count "
+        + std::to_string(step.certificateLocalSymbolDependencyCounts[symbolIndex])
+        + ") (uses";
+      for (std::size_t useIndex = 0;
+           useIndex < found->second.size();
+           ++useIndex) {
+        const auto& use = found->second[useIndex];
+        entries +=
+          " (use (index " + std::to_string(useIndex) + ")"
+          + " (unit " + quote(use.unit) + ")"
+          + " (term " + use.term.sexpr + "))";
+      }
+      entries += "))";
+    }
+  }
+  entries += ")";
+  return
+    "(skolem_use_block \"smolka_uses_v1\""
+    " (final " + quote(finalStep) + ") " + entries + ")";
 }
 
 std::string avatarPrimitiveWithMetadata(
@@ -530,6 +616,8 @@ MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
          ++witnessIndex) {
       const auto& witness = branch.witnesses[witnessIndex];
       step.certificateLocalSymbols.push_back(witness.symbol);
+      step.certificateLocalSymbolDependencyCounts.push_back(
+        witness.dependencies.size());
       const std::string witnessPrefix =
         prefix + "_witness_" + std::to_string(witnessIndex);
       step.fields.push_back({witnessPrefix + "_symbol", witness.symbol});

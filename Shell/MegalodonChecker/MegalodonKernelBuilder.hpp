@@ -34,6 +34,11 @@ std::string skolemRefutationScopeBlock(
   const std::string& finalStep,
   const std::vector<MegalodonKernelSyntax::PrimitiveStep>& skolemSteps);
 
+std::string skolemRefutationUseBlock(
+  const std::string& finalStep,
+  const std::vector<MegalodonKernelSyntax::PrimitiveStep>& skolemSteps,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemUse>& uses);
+
 std::string avatarPrimitiveWithMetadata(
   const MegalodonKernelSyntax::PrimitiveStep& step);
 

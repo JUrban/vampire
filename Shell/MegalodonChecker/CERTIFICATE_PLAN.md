@@ -41,6 +41,8 @@ Vampire owns all data that would otherwise require guessing:
 - free variables versus ambient typing variables;
 - Skolem witness symbols, replaced binders, dependencies, and witness terms;
 - refutation-wide Skolem scope and discharge order;
+- every typed Skolem application in the emitted proof DAG, including its proof
+  unit and exact dependency arguments;
 - AVATAR split scope and SAT proof evidence;
 - original TPTP source names and roles.
 
@@ -133,23 +135,48 @@ The complete certificate additionally contains exactly one producer-owned
 scope block when any Skolem steps occur:
 
 ```lisp
-(skolem_scope_block "smolka_refutation_v1"
+(skolem_scope_block "smolka_refutation_v2"
   (final "u372")
   (entries
     (entry (index 0) (step "u216") (symbols "sK0"))
     (entry (index 1) (step "u218") (symbols "sK1")))
   (discharge_order "u218" "u216"))
+
+(skolem_use_block "smolka_uses_v1"
+  (final "u372")
+  (entries
+    (entry (index 0) (step "u216") (symbol "sK0")
+      (dependency_count 1)
+      (uses
+        (use (index 0) (unit "u216")
+          (term (AP (TMH "sK0") (TMH "X0"))))))))
 ```
 
 The builder derives entries by walking the typed primitive proof order and
 recording `certificateLocalSymbols` on each Skolem primitive. The final step is
-the actual empty-clause root. Discharge order is exact reverse proof order.
+the actual empty-clause root. Discharge order is exact reverse proof order. The
+use builder walks Vampire's typed formula and clause terms in emitted proof
+units and records applications at exactly the declared dependency arity. It
+uses Vampire function identities rather than recognizing printed `sK` names.
 
 The consumer validates that every entry names a typed Skolem step and exactly
 its introduced symbols. It then uses this block as the replay scope: every
 epsilon replacement is registered against its declared `(step, symbol)`, and
 all declarations must be discharged before returning a proof. The block is
 therefore semantic certificate data, not an audit annotation.
+
+Version 2 scopes require the use block; deleting it is a hard error. The
+consumer checks its root, exact scope coverage, typed declaration and arity,
+indices, uniqueness, application heads, and referenced proof units. Version 1
+scope blocks remain readable only so frozen cached certificates can still be
+measured. They are not newly emitted.
+
+The use block is an inventory, not yet an unherbrandization proof. In
+particular, it does not authorize Megalodon to synthesize a choice function.
+The next producer pass must first expose explicit instantiated parent clauses,
+then derive a finite unherbrandization plan from the exact applications. The
+consumer must finally compare the complete occurrence multiset and reject any
+Skolem alias that survives proof-term construction.
 
 Future scope versions must be explicit. Do not silently change the meaning of
 `smolka_refutation_v1`.
@@ -181,7 +208,8 @@ Implemented and retained:
 - exact recursive ENNF producer trace;
 - exact CNF projection records;
 - typed scoped Skolem branch traces;
-- proof-order `skolem_scope_block` emission;
+- proof-order `skolem_scope_block` emission and typed `skolem_use_block`
+  application inventory;
 - explicit AVATAR scope and SAT/RUP records for the current migrated path;
 - ten-second Vampire and cached parallel corpus workflow.
 
@@ -193,6 +221,9 @@ Still incomplete:
 - the current first-order/THF preprocessing certificate is larger than the
   desired minimal endpoint;
 - broad detached replay does not itself close 100 original Megalodon theorems.
+- finite unherbrandization for nested/dependent witnesses is not implemented;
+  the use inventory therefore changes the contract and E4 evidence, not the
+  67/100 source-target or 14-case E1 scores.
 
 The current files are approximately:
 
@@ -233,17 +264,24 @@ it is not a 100-theorem completion claim.
 
 ## Immediate Producer Work
 
-1. Audit every remaining direct primitive-looking emitter in
-   `MegalodonChecker.cpp` and migrate one coherent frequent family at a time.
-2. Make qualifying serialization reject any remaining unowned record in that
-   family.
-3. Delete duplicated rich metadata after the typed record has equivalent
-   mutation and replay coverage.
-4. Extend scoped producer objects only where the current exact record is
-   insufficient for deterministic proof-term construction, never to encode a
-   consumer guess.
-5. Preserve stable schema versions and compare broad cached result vectors
-   after every migration.
+1. Add a proof-expansion pass analogous to Prover9's `expand_proof_ivy`.
+   Resolution and paramodulation parents must become explicit `instantiate`
+   nodes before the small primitive inference; no consumer unification.
+2. Run Skolem-use collection over those expanded nodes and emit a finite,
+   dependency-ordered unherbrandization plan linked to each typed Skolem
+   branch and source formula.
+3. Make the consumer verify the complete occurrence multiset and eliminate the
+   source existentials without introducing a global choice axiom. Reject every
+   final term containing a certificate-local symbol.
+4. Prove this path first on the known 12-case dependent-Skolem class, then run
+   the cached 100 gate. Do not broaden AVATAR or `UnionI` work meanwhile.
+5. Delete the corresponding old CPS/search route after the producer-expanded
+   path passes. Continue migrating other macro families only through the same
+   expansion pass.
+
+The cross-repository execution design is
+`reports/VAMPIRE-MEGALODON-IVY-SMOLKA-EXECUTION-DESIGN-2026-08-27.md` in the
+Megalodon repository.
 
 The goal is a smaller producer-normalized certificate and a smaller consumer,
 not maximum metadata volume or benchmark-specific pass counts.

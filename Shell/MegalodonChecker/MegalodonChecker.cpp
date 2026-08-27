@@ -2802,6 +2802,18 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
     MegalodonKernelSyntax::formula(sourceFormula),
     branches,
     MegalodonKernelSyntax::formula(resultFormula));
+  for (const auto& recordedBranch : recording->branches) {
+    for (const auto& recordedWitness : recordedBranch.witnesses) {
+      if (!recordedWitness.typeVariable) {
+        built.certificateLocalFunctionSymbols.push_back(
+          recordedWitness.symbol);
+      }
+    }
+  }
+  if (built.certificateLocalFunctionSymbols.size()
+      != built.certificateLocalSymbols.size()) {
+    return false;
+  }
   result = built.rendered;
   if (primitiveStep != nullptr) {
     *primitiveStep = std::move(built);
@@ -10711,7 +10723,7 @@ void MegalodonChecker::printMegalodonCertificateJson() const
   out << "megalodon_certificate_json_end.\n";
 }
 
-void MegalodonChecker::printMegalodonCertificateNativeSexpr() const
+void MegalodonChecker::printMegalodonCertificateNativeSexpr()
 {
   out << "megalodon_certificate_native_sexpr_start.\n";
   out << "(certificate vampire-megalodon 1\n";
@@ -10737,6 +10749,150 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr() const
       skolemSteps);
   if (!skolemScope.empty()) {
     out << "  " << skolemScope << "\n";
+  }
+  std::vector<MegalodonKernelSyntax::RenderedKernelSkolemUse> skolemUses;
+  struct SkolemUseDescriptor {
+    std::string step;
+    std::string symbol;
+    std::size_t dependencyCount;
+  };
+  std::map<unsigned, SkolemUseDescriptor> skolemUseDescriptors;
+  for (const auto& step : skolemSteps) {
+    if (step.certificateLocalFunctionSymbols.size()
+        != step.certificateLocalSymbols.size()
+      || step.certificateLocalSymbolDependencyCounts.size()
+        != step.certificateLocalSymbols.size()) {
+      skolemUseDescriptors.clear();
+      break;
+    }
+    for (std::size_t index = 0;
+         index < step.certificateLocalSymbols.size();
+         ++index) {
+      if (!skolemUseDescriptors.emplace(
+        step.certificateLocalFunctionSymbols[index],
+        SkolemUseDescriptor{
+          step.id,
+          step.certificateLocalSymbols[index],
+          step.certificateLocalSymbolDependencyCounts[index],
+        }).second) {
+        skolemUseDescriptors.clear();
+        break;
+      }
+    }
+    if (skolemUseDescriptors.empty()) {
+      break;
+    }
+  }
+  std::set<std::tuple<std::string, std::string, std::string, std::string>> seenUses;
+  auto collectTermUses = [&](auto&& self, Kernel::TermList term,
+                             const std::string& unitId) -> void {
+    Kernel::TermList head;
+    std::vector<Kernel::TermList> args;
+    decomposeApplicationSpine(term, head, args);
+    if (head.isTerm() && head.term()->arity() == 0) {
+      auto descriptor = skolemUseDescriptors.find(head.term()->functor());
+      if (descriptor != skolemUseDescriptors.end()
+        && args.size() == descriptor->second.dependencyCount) {
+        std::string rendered;
+        if (certificateTermSexpr(term, rendered)) {
+          const auto key = std::make_tuple(
+            descriptor->second.step,
+            descriptor->second.symbol,
+            unitId,
+            rendered);
+          if (seenUses.insert(key).second) {
+            MegalodonKernelSyntax::RenderedKernelSkolemUse use;
+            use.skolemStep = descriptor->second.step;
+            use.symbol = descriptor->second.symbol;
+            use.dependencyCount = descriptor->second.dependencyCount;
+            use.unit = unitId;
+            use.term = MegalodonKernelSyntax::term(rendered);
+            skolemUses.push_back(std::move(use));
+          }
+        }
+      }
+    }
+    if (term.isVar()) {
+      return;
+    }
+    if (term.isApplication()) {
+      self(self, term.lhs(), unitId);
+      self(self, term.rhs(), unitId);
+      return;
+    }
+    Kernel::Term* body = term.term();
+    for (unsigned index = 0; index < body->arity(); ++index) {
+      self(self, *body->nthArgument(index), unitId);
+    }
+  };
+  auto collectFormulaUses = [&](auto&& self, Kernel::Formula* formula,
+                                const std::string& unitId) -> void {
+    switch (formula->connective()) {
+    case Kernel::LITERAL: {
+      Kernel::Literal* literal = formula->literal();
+      for (unsigned index = 0; index < literal->arity(); ++index) {
+        collectTermUses(
+          collectTermUses, *literal->nthArgument(index), unitId);
+      }
+      break;
+    }
+    case Kernel::BOOL_TERM:
+      collectTermUses(collectTermUses, formula->getBooleanTerm(), unitId);
+      break;
+    case Kernel::NOT:
+      self(self, formula->uarg(), unitId);
+      break;
+    case Kernel::IMP:
+    case Kernel::IFF:
+    case Kernel::XOR:
+      self(self, formula->left(), unitId);
+      self(self, formula->right(), unitId);
+      break;
+    case Kernel::AND:
+    case Kernel::OR: {
+      auto arguments = formula->args()->iter();
+      while (arguments.hasNext()) {
+        self(self, arguments.next(), unitId);
+      }
+      break;
+    }
+    case Kernel::FORALL:
+    case Kernel::EXISTS:
+      self(self, formula->qarg(), unitId);
+      break;
+    default:
+      break;
+    }
+  };
+  if (!skolemUseDescriptors.empty()) {
+    for (Kernel::Unit* unit : proof) {
+      if (_certificateNativeStepIds.find(unit->number())
+          == _certificateNativeStepIds.end()) {
+        continue;
+      }
+      const std::string unitId = "u" + std::to_string(unit->number());
+      if (unit->isClause()) {
+        for (Kernel::Literal* literal : *unit->asClause()) {
+          for (unsigned index = 0; index < literal->arity(); ++index) {
+            collectTermUses(
+              collectTermUses, *literal->nthArgument(index), unitId);
+          }
+        }
+      } else {
+        collectFormulaUses(
+          collectFormulaUses,
+          static_cast<Kernel::FormulaUnit*>(unit)->formula(),
+          unitId);
+      }
+    }
+  }
+  const std::string skolemUseBlock =
+    MegalodonKernelBuilder::skolemRefutationUseBlock(
+      "u" + std::to_string((*proof.rbegin())->number()),
+      skolemSteps,
+      skolemUses);
+  if (!skolemUseBlock.empty()) {
+    out << "  " << skolemUseBlock << "\n";
   }
   for (const std::string& step : _certificateNativeSteps) {
     out << "  " << step << "\n";

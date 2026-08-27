@@ -281,7 +281,7 @@ private:
   std::string certificateJsonWithStepIds(Kernel::Unit* unit, const std::string& certificateJson);
   std::string certificateFallbackSourceJson(Kernel::Unit* unit);
   void printMegalodonCertificateJson() const;
-  void printMegalodonCertificateNativeSexpr() const;
+  void printMegalodonCertificateNativeSexpr();
   std::string parents(Kernel::Unit* u) const;
   std::string unitKind(Kernel::Unit* u) const;
   std::string replayKind(const Kernel::InferenceRule& rule) const;
