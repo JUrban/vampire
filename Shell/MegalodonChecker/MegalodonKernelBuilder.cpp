@@ -422,6 +422,18 @@ std::string skolemFiniteUnherbrandizationBlock(
 
   std::vector<std::vector<std::size_t>> successors(applications.size());
   std::vector<std::size_t> indegree(applications.size(), 0);
+  const auto addDependency =
+    [&](std::size_t predecessor, std::size_t successor) {
+      if (predecessor == successor
+          || std::find(
+               successors[predecessor].begin(),
+               successors[predecessor].end(),
+               successor) != successors[predecessor].end()) {
+        return;
+      }
+      successors[predecessor].push_back(successor);
+      ++indegree[successor];
+    };
   for (std::size_t outer = 0; outer < applications.size(); ++outer) {
     std::set<std::size_t> nestedIndices;
     for (const auto& dependency : applications[outer].canonical->dependencies) {
@@ -445,8 +457,25 @@ std::string skolemFiniteUnherbrandizationBlock(
     applications[outer].dependencies.assign(
       nestedIndices.begin(), nestedIndices.end());
     for (std::size_t inner : nestedIndices) {
-      successors[inner].push_back(outer);
-      ++indegree[outer];
+      addDependency(inner, outer);
+    }
+  }
+
+  // Scoped branch paths are recorded against the formula produced by all
+  // earlier branches of the same Skolemization step.  Preserve that producer
+  // chronology explicitly in the finite discharge plan.
+  for (std::size_t successor = 0;
+       successor < applications.size();
+       ++successor) {
+    const SkolemUse& current = *applications[successor].canonical;
+    for (std::size_t predecessor = 0;
+         predecessor < applications.size();
+         ++predecessor) {
+      const SkolemUse& prior = *applications[predecessor].canonical;
+      if (prior.skolemStep == current.skolemStep
+          && prior.branchIndex < current.branchIndex) {
+        addDependency(predecessor, successor);
+      }
     }
   }
 
@@ -473,13 +502,7 @@ std::string skolemFiniteUnherbrandizationBlock(
       return "";
     }
     const std::size_t predecessor = predecessors.front();
-    if (std::find(
-          successors[predecessor].begin(),
-          successors[predecessor].end(),
-          outer) == successors[predecessor].end()) {
-      successors[predecessor].push_back(outer);
-      ++indegree[outer];
-    }
+    addDependency(predecessor, outer);
   }
 
   std::priority_queue<
