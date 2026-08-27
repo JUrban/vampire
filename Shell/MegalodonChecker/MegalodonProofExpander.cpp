@@ -187,6 +187,15 @@ bool expandClauseProof(
         step->literal,
         step->result);
     } else if (const auto* step =
+                 std::get_if<ResolveClauseStep>(&request.step)) {
+      primitive = MegalodonKernelBuilder::resolveStep(
+        step->id,
+        step->leftParent,
+        step->rightParent,
+        step->leftPivot,
+        step->rightPivot,
+        step->result);
+    } else if (const auto* step =
                  std::get_if<ParamodulateClauseStep>(&request.step)) {
       primitive = MegalodonKernelBuilder::paramodulateStep(
         step->id,
@@ -224,6 +233,12 @@ bool expandClauseProof(
     result = ClauseExpansion{};
     error = "clausal primitive expansion is not a connected final-step chain";
     return false;
+  }
+  for (std::size_t index = 0; index < result.renderedSteps.size(); ++index) {
+    if (index != 0) {
+      result.rendered += "\n  ";
+    }
+    result.rendered += result.renderedSteps[index];
   }
   return true;
 }

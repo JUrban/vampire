@@ -55,6 +55,15 @@ struct EqualitySymmetryClauseStep {
   MegalodonKernelSyntax::RenderedKernelClause result;
 };
 
+struct ResolveClauseStep {
+  std::string id;
+  MegalodonKernelSyntax::RenderedKernelUnitRef leftParent;
+  MegalodonKernelSyntax::RenderedKernelUnitRef rightParent;
+  std::size_t leftPivot = 0;
+  std::size_t rightPivot = 0;
+  MegalodonKernelSyntax::RenderedKernelClause result;
+};
+
 struct ParamodulateClauseStep {
   std::string id;
   MegalodonKernelSyntax::RenderedKernelUnitRef equalityParent;
@@ -78,6 +87,7 @@ struct FactorClauseStep {
 using ClauseStep = std::variant<
   SubstituteClauseStep,
   EqualitySymmetryClauseStep,
+  ResolveClauseStep,
   ParamodulateClauseStep,
   FactorClauseStep>;
 
@@ -89,6 +99,7 @@ struct ClauseStepRequest {
 struct ClauseExpansion {
   std::vector<MegalodonKernelSyntax::PrimitiveStep> primitives;
   std::vector<std::string> renderedSteps;
+  std::string rendered;
 };
 
 bool expandGroundProof(
