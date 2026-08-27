@@ -55,6 +55,8 @@ private:
     std::string witnessTypeSexpr;
     Kernel::Formula* sourceFormula = nullptr;
     std::string sourceFormulaSexpr;
+    Kernel::Formula* stageSourceFormula = nullptr;
+    Kernel::Formula* stageTargetFormula = nullptr;
     std::vector<CertificateSkolemDependencyDescriptor> dependencies;
     std::vector<std::size_t> argumentToDependency;
   };
@@ -314,8 +316,15 @@ private:
     const InferenceRecorder::InferenceInformation* replayInfo,
     std::string& result,
     MegalodonKernelSyntax::PrimitiveStep* equalityResolutionPrimitive = nullptr);
-  bool certificateEqualityFactoringStepSexpr(Kernel::Unit* unit, const InferenceRecorder::InferenceInformation* replayInfo, std::string& result);
-  bool certificateTruthConflictStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateEqualityFactoringStepSexpr(
+    Kernel::Unit* unit,
+    const InferenceRecorder::InferenceInformation* replayInfo,
+    std::string& result,
+    MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
+  bool certificateTruthConflictStepSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
   bool certificateForwardSubsumptionDemodulationStepsSexpr(
     Kernel::Unit* unit,
     std::string& result,

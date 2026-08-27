@@ -92,6 +92,12 @@ MegalodonKernelSyntax::PrimitiveStep equalityResolutionConstraintsStep(
   const MegalodonKernelSyntax::RenderedKernelClause& result,
   const std::vector<std::pair<std::string, std::string>>& metadataFields);
 
+MegalodonKernelSyntax::PrimitiveStep truthConflictStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  std::size_t literal,
+  const MegalodonKernelSyntax::RenderedKernelClause& result);
+
 MegalodonKernelSyntax::PrimitiveStep paramodulateStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& equalityParent,

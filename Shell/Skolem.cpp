@@ -405,12 +405,36 @@ Formula* Skolem::skolemise (Formula* f)
       std::vector<InferenceRecorder::SkolemInferenceExtra::ScopedVariable> recordedContext;
       std::vector<InferenceRecorder::SkolemInferenceExtra::ScopedVariable> recordedAmbient;
       std::vector<InferenceRecorder::SkolemInferenceExtra::Witness> recordedWitnesses;
+      std::vector<std::pair<unsigned, TermList>> recordedBlockVariables;
 
       if (_recording) {
         for (const auto& [variable, sort] : _recordingAmbient) {
           recordedAmbient.push_back({variable, sort});
         }
+        VSList::Iterator variableIterator(f->vars());
+        while (variableIterator.hasNext()) {
+          recordedBlockVariables.push_back(variableIterator.next());
+        }
       }
+
+      auto recordedStageFormula = [&](std::size_t firstVariable) {
+        Formula* body = SubstHelper::apply(f->qarg(), _subst);
+        if (firstVariable >= recordedBlockVariables.size()) {
+          return body;
+        }
+        VSList::FIFO variables;
+        for (std::size_t index = firstVariable;
+             index < recordedBlockVariables.size();
+             ++index) {
+          auto [variable, sort] = recordedBlockVariables[index];
+          if (sort.isVar() || !sort.term()->shared() || !sort.term()->ground()) {
+            sort = SubstHelper::apply(sort, _subst);
+          }
+          variables.pushBack({variable, sort});
+        }
+        return static_cast<Formula*>(
+          new QuantifiedFormula(EXISTS, variables.list(), body));
+      };
 
       ExVarDepInfo& depInfo = _varDeps.get(f);
 
@@ -483,6 +507,7 @@ Formula* Skolem::skolemise (Formula* f)
       }
       SortHelper::normaliseArgSorts(typeVars, termVarSorts);
 
+      std::size_t recordedWitnessIndex = 0;
       VSList::Iterator vs(f->vars());
       while (vs.hasNext()) {
         unsigned v = vs.next().first;
@@ -526,6 +551,8 @@ Formula* Skolem::skolemise (Formula* f)
           witness.replacedVariable = v;
           witness.replacedSort = rangeSort;
           witness.witnessTerm = TermList(skolemTerm);
+          witness.stageSourceFormula =
+            recordedStageFormula(recordedWitnessIndex);
           witness.dependencies = recordedContext;
           recordedWitnesses.push_back(std::move(witness));
         }
@@ -533,6 +560,12 @@ Formula* Skolem::skolemise (Formula* f)
         env.statistics->skolemFunctions++;
 
         _subst.bindUnbound(v,skolemTerm);
+
+        if (_recording) {
+          recordedWitnesses.back().stageTargetFormula =
+            recordedStageFormula(recordedWitnessIndex + 1);
+          ++recordedWitnessIndex;
+        }
 
         if (env.options->showSkolemisations()) {
           std::cout << "Skolemising: "<<skolemTerm->toString()<<" for X"<< v

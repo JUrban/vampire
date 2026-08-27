@@ -1,12 +1,15 @@
 #include "Shell/MegalodonChecker/MegalodonProofExpander.hpp"
 
+#include "Kernel/SortHelper.hpp"
 #include "Kernel/SubstHelper.hpp"
 #include "Kernel/Substitution.hpp"
 #include "Shell/MegalodonChecker/MegalodonKernelBuilder.hpp"
+#include "Lib/DHMap.hpp"
 
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <sstream>
 
 namespace Shell {
 namespace MegalodonProofExpander {
@@ -60,6 +63,151 @@ Environment composeParentEnvironment(
   return result;
 }
 
+void closeEnvironment(Environment& environment)
+{
+  for (std::size_t pass = 0; pass <= environment.size(); ++pass) {
+    bool changed = false;
+    for (auto& binding : environment) {
+      Kernel::TermList normalized = applyEnvironment(binding.second, environment);
+      if (normalized != binding.second) {
+        binding.second = normalized;
+        changed = true;
+      }
+    }
+    if (!changed) {
+      return;
+    }
+  }
+}
+
+const Kernel::TermList* findGroundTerm(
+  Kernel::TermList sort,
+  const std::vector<GroundTerm>& groundTerms,
+  const Step& step,
+  const Environment& environment)
+{
+  auto found = std::find_if(
+    groundTerms.begin(),
+    groundTerms.end(),
+    [&](const GroundTerm& candidate) {
+      return candidate.sort == sort
+        && candidate.term.ground()
+        && (!candidate.requiresExistingApplication
+            || std::any_of(
+              environment.begin(),
+              environment.end(),
+              [&](const auto& binding) {
+                return binding.second == candidate.term;
+              })
+            || std::any_of(
+              step.applications.begin(),
+              step.applications.end(),
+              [&](const Application& application) {
+                return application.functionSymbol == candidate.functionSymbol
+                  && application.term == candidate.term;
+              }));
+    });
+  return found == groundTerms.end() ? nullptr : &found->term;
+}
+
+void rememberVariableSort(
+  VariableSorts& sorts,
+  unsigned variable,
+  Kernel::TermList sort)
+{
+  auto found = std::find_if(
+    sorts.begin(),
+    sorts.end(),
+    [&](const auto& binding) { return binding.first == variable; });
+  if (found == sorts.end()) {
+    sorts.push_back({variable, sort});
+  }
+}
+
+void rememberTermVariableSorts(
+  Kernel::TermList term,
+  VariableSorts& sorts)
+{
+  if (!term.isTerm()) {
+    return;
+  }
+  Lib::DHMap<unsigned, Kernel::TermList> collected;
+  Kernel::SortHelper::collectVariableSorts(term.term(), collected);
+  Lib::DHMap<unsigned, Kernel::TermList>::Iterator iterator(collected);
+  while (iterator.hasNext()) {
+    unsigned variable;
+    Kernel::TermList sort;
+    iterator.next(variable, sort);
+    rememberVariableSort(sorts, variable, sort);
+  }
+}
+
+bool groundEnvironment(
+  const Step& step,
+  const Environment& incoming,
+  const std::vector<GroundTerm>& groundTerms,
+  Environment& result,
+  std::string& error)
+{
+  result = incoming;
+  closeEnvironment(result);
+
+  VariableSorts needed = step.freeVariableSorts;
+  for (const auto& binding : result) {
+    auto bindingSort = std::find_if(
+      step.freeVariableSorts.begin(),
+      step.freeVariableSorts.end(),
+      [&](const auto& item) { return item.first == binding.first; });
+    if (binding.second.isVar() && bindingSort != step.freeVariableSorts.end()) {
+      rememberVariableSort(needed, binding.second.var(), bindingSort->second);
+    } else {
+      rememberTermVariableSorts(binding.second, needed);
+    }
+  }
+  for (const auto& application : step.applications) {
+    rememberTermVariableSorts(application.term, needed);
+  }
+
+  Environment completion;
+  for (const auto& variable : needed) {
+    const Kernel::TermList* groundTerm =
+      findGroundTerm(variable.second, groundTerms, step, result);
+    if (groundTerm == nullptr) {
+      std::ostringstream renderedSort;
+      renderedSort << variable.second;
+      error = "proof instance " + step.id
+        + " has no producer ground inhabitant for variable X"
+        + std::to_string(variable.first)
+        + " of sort " + renderedSort.str();
+      return false;
+    }
+    setBinding(completion, variable.first, *groundTerm);
+    auto existing = std::find_if(
+      result.begin(),
+      result.end(),
+      [&](const auto& binding) { return binding.first == variable.first; });
+    const bool isStepVariable = std::any_of(
+      step.freeVariableSorts.begin(),
+      step.freeVariableSorts.end(),
+      [&](const auto& item) { return item.first == variable.first; });
+    if (existing == result.end() && isStepVariable) {
+      setBinding(result, variable.first, *groundTerm);
+    }
+  }
+  for (auto& binding : result) {
+    binding.second = applyEnvironment(binding.second, completion);
+  }
+  closeEnvironment(result);
+  for (const auto& binding : result) {
+    if (!binding.second.ground()) {
+      error = "proof instance " + step.id
+        + " retains a variable after typed grounding";
+      return false;
+    }
+  }
+  return true;
+}
+
 bool sameEnvironment(const Environment& left, const Environment& right)
 {
   return left == right;
@@ -70,6 +218,7 @@ bool sameEnvironment(const Environment& left, const Environment& right)
 bool expandGroundProof(
   const std::vector<Step>& steps,
   const std::string& finalStep,
+  const std::vector<GroundTerm>& groundTerms,
   Expansion& result,
   std::string& error)
 {
@@ -91,27 +240,36 @@ bool expandGroundProof(
     visit = [&](const std::string& stepId,
                 const Environment& environment,
                 std::size_t& resultIndex) {
-      for (const auto& instance : result.instances) {
-        if (instance.stepId == stepId
-            && sameEnvironment(instance.environment, environment)) {
-          resultIndex = instance.index;
-          return true;
-        }
-      }
       auto found = stepById.find(stepId);
       if (found == stepById.end()) {
         error = "primitive proof instance references unknown parent " + stepId;
         return false;
       }
+      const Step& step = *found->second;
+      Environment groundedEnvironment;
+      if (!groundEnvironment(
+            step,
+            environment,
+            groundTerms,
+            groundedEnvironment,
+            error)) {
+        return false;
+      }
+      for (const auto& instance : result.instances) {
+        if (instance.stepId == stepId
+            && sameEnvironment(instance.environment, groundedEnvironment)) {
+          resultIndex = instance.index;
+          return true;
+        }
+      }
       resultIndex = result.instances.size();
       result.instances.push_back(
-        Instance{resultIndex, stepId, environment, {}, {}});
+        Instance{resultIndex, stepId, groundedEnvironment, {}, {}});
       active.push_back(true);
 
-      const Step& step = *found->second;
       for (const auto& application : step.applications) {
         Kernel::TermList grounded =
-          applyEnvironment(application.term, environment);
+          applyEnvironment(application.term, groundedEnvironment);
         if (!grounded.ground()) {
           error = "proof instance " + stepId
             + " retains a variable in a Skolem application";
@@ -131,7 +289,7 @@ bool expandGroundProof(
       }
 
       const Environment parentEnvironment =
-        composeParentEnvironment(environment, step.parentSubstitution);
+        composeParentEnvironment(groundedEnvironment, step.parentSubstitution);
       for (const std::string& parentId : step.parentIds) {
         std::size_t parentIndex = 0;
         if (!visit(parentId, parentEnvironment, parentIndex)) {

@@ -241,6 +241,8 @@ std::string skolemFiniteUnherbrandizationBlock(
       || use.witnessTypeSexpr.empty()
       || use.sourceFormulaSexpr.empty()
       || use.sourceInstanceSexpr.empty()
+      || use.stageSourceInstanceSexpr.empty()
+      || use.stageTargetInstanceSexpr.empty()
       || use.dependencies.size() != use.dependencyCount
       || use.unit.empty()
       || use.term.sexpr.empty()
@@ -266,6 +268,10 @@ std::string skolemFiniteUnherbrandizationBlock(
         || canonical.witnessTypeSexpr != use.witnessTypeSexpr
         || canonical.sourceFormulaSexpr != use.sourceFormulaSexpr
         || canonical.sourceInstanceSexpr != use.sourceInstanceSexpr
+        || canonical.stageSourceInstanceSexpr
+           != use.stageSourceInstanceSexpr
+        || canonical.stageTargetInstanceSexpr
+           != use.stageTargetInstanceSexpr
         || canonical.dependencies.size() != use.dependencies.size()) {
         return "";
       }
@@ -347,6 +353,10 @@ std::string skolemFiniteUnherbrandizationBlock(
       + " (term " + canonical.term.sexpr + ")"
       + " (source (formula " + canonical.sourceFormulaSexpr + "))"
       + " (source_instance (formula " + canonical.sourceInstanceSexpr + "))"
+      + " (stage_source_instance (formula "
+      + canonical.stageSourceInstanceSexpr + "))"
+      + " (stage_target_instance (formula "
+      + canonical.stageTargetInstanceSexpr + "))"
       + " (dependencies";
     for (std::size_t dependencyIndex = 0;
          dependencyIndex < canonical.dependencies.size();
@@ -396,7 +406,7 @@ std::string skolemFiniteUnherbrandizationBlock(
   }
   dischargeOrder += ")";
   return
-    "(skolem_unherbrandization_block \"smolka_finite_v2\""
+    "(skolem_unherbrandization_block \"smolka_finite_v3\""
     " (final " + quote(finalStep) + ") "
     + renderedApplications + " " + dischargeOrder + ")";
 }
@@ -596,6 +606,24 @@ MegalodonKernelSyntax::PrimitiveStep equalityResolutionConstraintsStep(
       + " (literal " + literalText + ")"
       + " (selected " + selected.sexpr + ")"
       + " (constraints " + constraints.sexpr + ")"
+      + " (result " + result.sexpr + "))");
+}
+
+MegalodonKernelSyntax::PrimitiveStep truthConflictStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  std::size_t literal,
+  const MegalodonKernelSyntax::RenderedKernelClause& result)
+{
+  return primitiveClauseStep(
+    "truth_conflict",
+    id,
+    {parent.value},
+    result.sexpr,
+    {{"literal", std::to_string(literal)}},
+    "(truth_conflict " + quote(id)
+      + " (parent " + quote(parent.value) + ")"
+      + " (literal " + std::to_string(literal) + ")"
       + " (result " + result.sexpr + "))");
 }
 

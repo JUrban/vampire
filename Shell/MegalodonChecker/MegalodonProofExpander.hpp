@@ -14,16 +14,25 @@ namespace Shell {
 namespace MegalodonProofExpander {
 
 using Environment = std::vector<std::pair<unsigned, Kernel::TermList>>;
+using VariableSorts = std::vector<std::pair<unsigned, Kernel::TermList>>;
 
 struct Application {
   unsigned functionSymbol = 0;
   Kernel::TermList term;
 };
 
+struct GroundTerm {
+  Kernel::TermList sort;
+  Kernel::TermList term;
+  bool requiresExistingApplication = false;
+  unsigned functionSymbol = 0;
+};
+
 struct Step {
   std::string id;
   std::vector<std::string> parentIds;
   Environment parentSubstitution;
+  VariableSorts freeVariableSorts;
   std::vector<Application> applications;
 };
 
@@ -105,6 +114,7 @@ struct ClauseExpansion {
 bool expandGroundProof(
   const std::vector<Step>& steps,
   const std::string& finalStep,
+  const std::vector<GroundTerm>& groundTerms,
   Expansion& result,
   std::string& error);
 

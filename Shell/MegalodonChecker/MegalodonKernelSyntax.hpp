@@ -38,6 +38,8 @@ struct ProducerFunctionApplication {
   std::string witnessTypeSexpr;
   std::string sourceFormulaSexpr;
   std::string sourceInstanceSexpr;
+  std::string stageSourceInstanceSexpr;
+  std::string stageTargetInstanceSexpr;
   std::vector<ProducerSkolemDependency> dependencies;
 };
 
@@ -94,6 +96,8 @@ struct RenderedKernelSkolemUse {
   std::string witnessTypeSexpr;
   std::string sourceFormulaSexpr;
   std::string sourceInstanceSexpr;
+  std::string stageSourceInstanceSexpr;
+  std::string stageTargetInstanceSexpr;
   struct Dependency {
     std::string variable;
     std::string typeSexpr;

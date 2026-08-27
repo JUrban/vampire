@@ -88,6 +88,8 @@ public:
         unsigned replacedVariable = 0;
         Kernel::TermList replacedSort;
         Kernel::TermList witnessTerm;
+        Kernel::Formula* stageSourceFormula = nullptr;
+        Kernel::Formula* stageTargetFormula = nullptr;
         std::vector<ScopedVariable> dependencies;
       };
       struct Branch {
