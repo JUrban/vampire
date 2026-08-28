@@ -1427,6 +1427,54 @@ MegalodonKernelSyntax::PrimitiveStep cnfFormulaClauseStep(
       + " (builder \"typed_v2\"))");
 }
 
+MegalodonKernelSyntax::PrimitiveStep predicateDefinitionStep(
+  const std::string& id,
+  const std::string& symbol,
+  const MegalodonKernelSyntax::RenderedKernelPredicateDefinition& definition)
+{
+  MegalodonKernelSyntax::PrimitiveStep step;
+  step.rule = "predicate_definition_intro";
+  step.id = id;
+  step.builderOwned = true;
+  step.hasResultFormula = true;
+  step.resultFormula = definition.resultFormula.sexpr;
+
+  std::string binders = "(binders";
+  for (const auto& binder : definition.binders) {
+    binders += " (variable (index " + std::to_string(binder.index) + ")"
+      + " (name " + quote(binder.variable) + ")"
+      + " (type " + binder.type.sexpr + "))";
+  }
+  binders += ")";
+  const std::string program =
+    "(program \"ivy_predicate_definition_v1\" " + binders
+    + " (body (formula " + definition.bodyFormula.sexpr + "))"
+    + " (definiendum (formula " + definition.definiendumFormula.sexpr + "))"
+    + " (negative (formula " + definition.negativeFormula.sexpr + "))"
+    + " (target (formula " + definition.targetFormula.sexpr + "))"
+    + " (body_side \"" + definition.bodySide + "\")"
+    + " (definiendum_elimination \"" + definition.definiendumElimination + "\")"
+    + " (steps"
+      " (step (index 0) (rule \"or_intro_right\") (premise \"body\") (result \"target\"))"
+      " (step (index 1) (rule \"not_body_to_negated_definiendum\") (premise \"not_body\") (result \"negative\"))"
+      " (step (index 2) (rule \"or_intro_left\") (premise \"negative\") (result \"target\"))"
+      " (step (index 3) (rule \"excluded_middle\") (premises \"body_branch\" \"negative_branch\") (result \"target\")))"
+    + ")";
+  step.fields = {
+    {"predicate_definition_program", program},
+    {"body_formula", definition.bodyFormula.sexpr},
+    {"definiendum_formula", definition.definiendumFormula.sexpr},
+    {"negative_formula", definition.negativeFormula.sexpr},
+    {"target_formula", definition.targetFormula.sexpr},
+  };
+  step.rendered =
+    "(predicate_definition " + quote(id)
+    + " (symbol " + quote(symbol) + ")"
+    + " (result (formula " + definition.resultFormula.sexpr + ")) "
+    + program + " (builder \"typed_v2\"))";
+  return step;
+}
+
 MegalodonKernelSyntax::PrimitiveStep avatarComponentStep(
   const std::string& id,
   const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& definitions,

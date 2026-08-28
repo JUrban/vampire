@@ -4882,7 +4882,10 @@ bool MegalodonChecker::certificatePredicateDefinitionSymbol(Kernel::Formula* for
   return negativeDefiniendumSymbol(formula, result);
 }
 
-bool MegalodonChecker::certificatePredicateDefinitionStepSexpr(Kernel::Unit* unit, std::string& result)
+bool MegalodonChecker::certificatePredicateDefinitionStepSexpr(
+  Kernel::Unit* unit,
+  std::string& result,
+  MegalodonKernelSyntax::PrimitiveStep* primitiveStep)
 {
   if (unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::PREDICATE_DEFINITION) {
     return false;
@@ -4894,17 +4897,120 @@ bool MegalodonChecker::certificatePredicateDefinitionStepSexpr(Kernel::Unit* uni
   if (symbols.size() != 1 || symbols.top().first != SymbolType::PRED) {
     return false;
   }
+  Kernel::Formula* resultFormula = static_cast<Kernel::FormulaUnit*>(unit)->formula();
   std::string formula;
-  if (!certificateFormulaTermSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), formula)) {
+  if (!certificateFormulaTermSexpr(resultFormula, formula)) {
     return false;
   }
   std::string symbolName;
   if (!certificatePredicateDefinitionSymbol(static_cast<Kernel::FormulaUnit*>(unit)->formula(), symbolName)) {
     symbolName = predicateName(symbols.top().second);
   }
-  result = "(predicate_definition " + sexprQuote("u" + std::to_string(unit->number()))
-    + " (symbol " + sexprQuote(symbolName) + ")"
-    + " (result (formula " + formula + ")))";
+  MegalodonKernelSyntax::RenderedKernelPredicateDefinition definition;
+  definition.introducedSymbol = symbolName;
+  definition.hasDefiniendumSymbol = true;
+  definition.definiendumSymbol = symbolName;
+  definition.hasResultFormula = true;
+  definition.resultFormula = MegalodonKernelSyntax::formula(formula);
+
+  Kernel::Formula* targetFormula = resultFormula;
+  std::size_t binderIndex = 0;
+  while (targetFormula->connective() == Kernel::FORALL) {
+    Kernel::VSList::Iterator variables(targetFormula->vars());
+    while (variables.hasNext()) {
+      const auto variable = variables.next();
+      std::string type;
+      if (!certificateTypeSexpr(variable.second, type)) {
+        return false;
+      }
+      MegalodonKernelSyntax::RenderedKernelPredicateDefinitionBinder binder;
+      binder.index = binderIndex++;
+      binder.variable = variableName(variable.first);
+      binder.type = MegalodonKernelSyntax::type(type);
+      definition.binders.push_back(std::move(binder));
+    }
+    targetFormula = targetFormula->qarg();
+  }
+  if (targetFormula->connective() != Kernel::OR) {
+    return false;
+  }
+  std::string target;
+  if (!certificateFormulaTermSexpr(targetFormula, target)) {
+    return false;
+  }
+  definition.hasTargetFormula = true;
+  definition.targetFormula = MegalodonKernelSyntax::formula(target);
+
+  Kernel::FormulaList::Iterator targetArguments(targetFormula->args());
+  if (!targetArguments.hasNext()) {
+    return false;
+  }
+  Kernel::Formula* negativeFormula = targetArguments.next();
+  std::vector<std::string> bodyArguments;
+  while (targetArguments.hasNext()) {
+    std::string argument;
+    if (!certificateFormulaTermSexpr(targetArguments.next(), argument)) {
+      return false;
+    }
+    bodyArguments.push_back(std::move(argument));
+  }
+  if (bodyArguments.empty()) {
+    return false;
+  }
+  std::string body = bodyArguments.back();
+  for (auto it = bodyArguments.rbegin() + 1; it != bodyArguments.rend(); ++it) {
+    body = "(AP (AP (TMH \"vampire_or\") " + *it + ") " + body + ")";
+  }
+  definition.hasBodyFormula = true;
+  definition.bodyFormula = MegalodonKernelSyntax::formula(std::move(body));
+
+  Kernel::Formula* definiendumFormula = nullptr;
+  if (negativeFormula->connective() == Kernel::NOT) {
+    definiendumFormula = negativeFormula->uarg();
+  } else if (negativeFormula->connective() == Kernel::IMP
+             && negativeFormula->right()->connective() == Kernel::FALSE) {
+    definiendumFormula = negativeFormula->left();
+  }
+  if (definiendumFormula == nullptr) {
+    return false;
+  }
+  std::string negative;
+  std::string definiendum;
+  if (!certificateFormulaTermSexpr(negativeFormula, negative)
+      || !certificateFormulaTermSexpr(definiendumFormula, definiendum)) {
+    return false;
+  }
+  definition.hasDefiniendumFormula = true;
+  definition.definiendumFormula = MegalodonKernelSyntax::formula(definiendum);
+  definition.hasNegativeFormula = true;
+  definition.negativeFormula = MegalodonKernelSyntax::formula(negative);
+  definition.bodySide = "right";
+  definition.definiendumElimination = "definition_unfold";
+
+  if (definiendumFormula->connective() == Kernel::LITERAL) {
+    Kernel::Literal* literal = definiendumFormula->literal();
+    Kernel::Literal* positive = literal->isPositive()
+      ? literal : Kernel::Literal::complementaryLiteral(literal);
+    if (positive->isEquality()) {
+      auto isTrue = [](Kernel::TermList term) {
+        return term.isTerm()
+          && !term.term()->isSpecial()
+          && env.signature->isFoolConstantSymbol(true, term.term()->functor());
+      };
+      if (isTrue(*positive->nthArgument(0))) {
+        definition.definiendumElimination = "true_eq_to_body";
+      } else if (isTrue(*positive->nthArgument(1))) {
+        definition.definiendumElimination = "eq_true_to_body";
+      }
+    }
+  }
+
+  auto built = MegalodonKernelBuilder::predicateDefinitionStep(
+    "u" + std::to_string(unit->number()), symbolName, definition);
+  result = built.rendered;
+  if (primitiveStep != nullptr) {
+    *primitiveStep = std::move(built);
+  }
   return true;
 }
 
@@ -13094,6 +13200,16 @@ bool MegalodonChecker::certificateNativeStepSexpr(
       std::move(primitiveSteps);
     return true;
   };
+  auto certificatePredicateDefinitionPrimitiveStep = [&]() {
+    MegalodonKernelSyntax::PrimitiveStep primitiveStep;
+    if (!certificatePredicateDefinitionStepSexpr(unit, result, &primitiveStep)) {
+      return false;
+    }
+    _certificateNativePrimitiveStepsByUnit[unit->number()] = {
+      std::move(primitiveStep),
+    };
+    return true;
+  };
   try {
     return certificateInputStepSexpr(unit, result)
       || certificateFormulaInputStepSexpr(unit, result)
@@ -13106,7 +13222,7 @@ bool MegalodonChecker::certificateNativeStepSexpr(
       || certificateEnnfPrimitiveStep()
       || certificateSkolemPrimitiveStep()
       || certificateCnfPrimitiveStep()
-      || certificatePredicateDefinitionStepSexpr(unit, result)
+      || certificatePredicateDefinitionPrimitiveStep()
       || certificatePredicateDefinitionFoldStepSexpr(unit, result)
       || certificateDefinitionInputStepSexpr(unit, result)
       || certificateInequalitySplittingNameIntroductionStepSexpr(unit, result)

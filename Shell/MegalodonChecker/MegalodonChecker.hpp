@@ -303,7 +303,10 @@ private:
     Kernel::Unit* unit,
     std::string& result,
     MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
-  bool certificatePredicateDefinitionStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificatePredicateDefinitionStepSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr);
   bool certificatePredicateDefinitionFoldStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateDefinitionInputStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateInequalitySplittingNameIntroductionStepSexpr(Kernel::Unit* unit, std::string& result);

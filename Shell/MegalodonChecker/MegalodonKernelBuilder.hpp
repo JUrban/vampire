@@ -175,6 +175,11 @@ MegalodonKernelSyntax::PrimitiveStep cnfFormulaClauseStep(
   const MegalodonKernelSyntax::RenderedKernelCnfProjection& projection,
   const MegalodonKernelSyntax::RenderedKernelClause& result);
 
+MegalodonKernelSyntax::PrimitiveStep predicateDefinitionStep(
+  const std::string& id,
+  const std::string& symbol,
+  const MegalodonKernelSyntax::RenderedKernelPredicateDefinition& definition);
+
 MegalodonKernelSyntax::PrimitiveStep avatarComponentStep(
   const std::string& id,
   const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& definitions,

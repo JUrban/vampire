@@ -765,6 +765,12 @@ struct RenderedKernelPredicateDefinitionVariable {
   std::string renderedSort;
 };
 
+struct RenderedKernelPredicateDefinitionBinder {
+  std::size_t index = 0;
+  std::string variable;
+  RenderedKernelType type;
+};
+
 struct RenderedKernelPredicateDefinition {
   std::string introducedSymbol;
   bool hasSort = false;
@@ -775,6 +781,15 @@ struct RenderedKernelPredicateDefinition {
   RenderedKernelFormula bodyFormula;
   bool hasResultFormula = false;
   RenderedKernelFormula resultFormula;
+  std::vector<RenderedKernelPredicateDefinitionBinder> binders;
+  bool hasDefiniendumFormula = false;
+  RenderedKernelFormula definiendumFormula;
+  bool hasNegativeFormula = false;
+  RenderedKernelFormula negativeFormula;
+  bool hasTargetFormula = false;
+  RenderedKernelFormula targetFormula;
+  std::string bodySide = "right";
+  std::string definiendumElimination;
   std::vector<RenderedKernelPredicateDefinitionVariable> bodyVariables;
   std::string proofShape = "classical_definitional_split";
   std::string classicalPrinciple = "xm";
