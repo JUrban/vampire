@@ -150,7 +150,8 @@ MegalodonKernelSyntax::PrimitiveStep paramodulateIvyStep(
   const std::vector<std::string>& targetLiterals,
   const std::string& rewrittenLiteral,
   const std::vector<std::string>& resultLiterals,
-  bool rewriteSymmetry = false);
+  bool rewriteSymmetry,
+  const std::string& producerProof);
 
 MegalodonKernelSyntax::PrimitiveStep foolAtomLiftStep(
   const std::string& id,

@@ -7,6 +7,7 @@
 #include "Lib/DHMap.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <functional>
 #include <map>
 #include <set>
@@ -870,7 +871,8 @@ bool expandClauseProof(
             step->targetLiterals,
             step->rewrittenLiteral,
             step->resultLiterals,
-            step->rewriteSymmetry)
+            step->rewriteSymmetry,
+            step->producerProof)
         : MegalodonKernelBuilder::paramodulateStep(
             step->id,
             step->equalityParent,
@@ -1550,6 +1552,222 @@ bool expandGoalReplay(
 
 namespace {
 
+struct PreservedSexpr {
+  bool atom = true;
+  std::string token;
+  std::vector<PreservedSexpr> items;
+
+  std::string render() const
+  {
+    if (atom) return token;
+    std::string result = "(";
+    for (std::size_t index = 0; index < items.size(); ++index) {
+      if (index != 0) result += ' ';
+      result += items[index].render();
+    }
+    return result + ')';
+  }
+
+  bool operator==(const PreservedSexpr& other) const
+  {
+    return atom == other.atom && token == other.token && items == other.items;
+  }
+};
+
+class PreservedSexprParser {
+public:
+  bool parse(const std::string& source, PreservedSexpr& result)
+  {
+    _source = &source;
+    _cursor = 0;
+    skipWhitespace();
+    if (!parseOne(result)) return false;
+    skipWhitespace();
+    return _cursor == _source->size();
+  }
+
+private:
+  const std::string* _source = nullptr;
+  std::size_t _cursor = 0;
+
+  void skipWhitespace()
+  {
+    while (_cursor < _source->size()
+      && std::isspace(static_cast<unsigned char>((*_source)[_cursor]))) {
+      ++_cursor;
+    }
+  }
+
+  bool parseOne(PreservedSexpr& result)
+  {
+    if (_cursor >= _source->size() || (*_source)[_cursor] == ')') {
+      return false;
+    }
+    if ((*_source)[_cursor] == '(') {
+      result.atom = false;
+      result.token.clear();
+      result.items.clear();
+      ++_cursor;
+      skipWhitespace();
+      while (_cursor < _source->size() && (*_source)[_cursor] != ')') {
+        PreservedSexpr item;
+        if (!parseOne(item)) return false;
+        result.items.push_back(std::move(item));
+        skipWhitespace();
+      }
+      if (_cursor >= _source->size()) return false;
+      ++_cursor;
+      return true;
+    }
+
+    result.atom = true;
+    result.items.clear();
+    const std::size_t start = _cursor;
+    if ((*_source)[_cursor] == '"') {
+      ++_cursor;
+      bool escaped = false;
+      while (_cursor < _source->size()) {
+        const char ch = (*_source)[_cursor++];
+        if (escaped) {
+          escaped = false;
+        } else if (ch == '\\') {
+          escaped = true;
+        } else if (ch == '"') {
+          result.token = _source->substr(start, _cursor - start);
+          return true;
+        }
+      }
+      return false;
+    }
+    while (_cursor < _source->size()
+      && !std::isspace(static_cast<unsigned char>((*_source)[_cursor]))
+      && (*_source)[_cursor] != '('
+      && (*_source)[_cursor] != ')') {
+      ++_cursor;
+    }
+    if (_cursor == start) return false;
+    result.token = _source->substr(start, _cursor - start);
+    return true;
+  }
+};
+
+bool sexprHead(const PreservedSexpr& value, const char* head)
+{
+  return !value.atom && !value.items.empty() && value.items[0].atom
+    && value.items[0].token == head;
+}
+
+PreservedSexpr quotedTmh(const std::string& quotedName)
+{
+  PreservedSexpr head;
+  head.token = "TMH";
+  PreservedSexpr name;
+  name.token = quotedName;
+  PreservedSexpr result;
+  result.atom = false;
+  result.items = {std::move(head), std::move(name)};
+  return result;
+}
+
+PreservedSexpr* sexprTermChild(
+  PreservedSexpr& term,
+  unsigned position)
+{
+  if (sexprHead(term, "TPAP") && term.items.size() == 3 && position == 0) {
+    return &term.items[1];
+  }
+  if (sexprHead(term, "AP") && term.items.size() == 3) {
+    if (position == 0 && sexprHead(term.items[1], "TMH")
+        && term.items[1].items.size() == 2
+        && term.items[1].items[1].atom
+        && term.items[1].items[1].token == "\"vLAM\"") {
+      return &term.items[2];
+    }
+    if (position <= 1) return &term.items[position + 1];
+  }
+  if ((sexprHead(term, "LAM") || sexprHead(term, "ALL"))
+      && term.items.size() == 3 && position == 0) {
+    return &term.items[2];
+  }
+  if ((sexprHead(term, "LAMV") || sexprHead(term, "VLAMV")
+       || sexprHead(term, "ALLV"))
+      && term.items.size() == 4 && position == 0) {
+    return &term.items[3];
+  }
+  if (sexprHead(term, "IMP") && term.items.size() == 3 && position <= 1) {
+    return &term.items[position + 1];
+  }
+  return nullptr;
+}
+
+bool replaceSexprTermAtPosition(
+  const PreservedSexpr& source,
+  const std::vector<unsigned>& position,
+  const PreservedSexpr& replacement,
+  PreservedSexpr& result,
+  PreservedSexpr* selected = nullptr)
+{
+  result = source;
+  PreservedSexpr* cursor = &result;
+  for (unsigned child : position) {
+    cursor = sexprTermChild(*cursor, child);
+    if (cursor == nullptr) return false;
+  }
+  if (selected != nullptr) *selected = *cursor;
+  *cursor = replacement;
+  return true;
+}
+
+bool typedEqualitySexpr(
+  const PreservedSexpr& atom,
+  PreservedSexpr& type,
+  PreservedSexpr& left,
+  PreservedSexpr& right)
+{
+  static const char* equalityHash =
+    "\"5a6af35fb6d6bea477dd0f822b8e01ca0d57cc50dfd41744307bc94597fdaa4a\"";
+  if (!sexprHead(atom, "AP") || atom.items.size() != 3
+      || !sexprHead(atom.items[1], "AP") || atom.items[1].items.size() != 3
+      || !sexprHead(atom.items[1].items[1], "TPAP")
+      || atom.items[1].items[1].items.size() != 3
+      || !sexprHead(atom.items[1].items[1].items[1], "TMH")
+      || atom.items[1].items[1].items[1].items.size() != 2
+      || !atom.items[1].items[1].items[1].items[1].atom
+      || atom.items[1].items[1].items[1].items[1].token != equalityHash) {
+    return false;
+  }
+  type = atom.items[1].items[1].items[2];
+  left = atom.items[1].items[2];
+  right = atom.items[2];
+  return true;
+}
+
+PreservedSexpr equalityAtomSexpr(
+  const PreservedSexpr& type,
+  const PreservedSexpr& left,
+  const PreservedSexpr& right)
+{
+  PreservedSexprParser parser;
+  PreservedSexpr result;
+  const std::string rendered =
+    "(AP (AP (TPAP (TMH \"5a6af35fb6d6bea477dd0f822b8e01ca0d57cc50dfd41744307bc94597fdaa4a\") "
+    + type.render() + ") " + left.render() + ") " + right.render() + ")";
+  if (!parser.parse(rendered, result)) result = PreservedSexpr();
+  return result;
+}
+
+PreservedSexpr literalSexpr(
+  bool positive,
+  const PreservedSexpr& atom)
+{
+  PreservedSexpr sign;
+  sign.token = positive ? "pos" : "neg";
+  PreservedSexpr result;
+  result.atom = false;
+  result.items = {std::move(sign), atom};
+  return result;
+}
+
 class IvyClauseProofBuilder {
 public:
   std::string parent(const std::string& name) const
@@ -1641,6 +1859,129 @@ public:
             return target.empty()
               ? contradiction
               : termApply(contradiction, targetTerm);
+          });
+      });
+    return !result.empty();
+  }
+
+  bool paramodulation(
+    const std::string& equalityParent,
+    const std::vector<std::string>& equalityParentArguments,
+    const std::vector<std::string>& equalityClause,
+    std::size_t equalityIndex,
+    const std::string& targetParent,
+    const std::vector<std::string>& targetParentArguments,
+    const std::vector<std::string>& targetClause,
+    std::size_t targetIndex,
+    const std::vector<unsigned>& position,
+    const std::string& from,
+    const std::string& to,
+    const std::string& rewrittenLiteral,
+    const std::vector<std::string>& target,
+    bool rewriteSymmetry,
+    std::string& result)
+  {
+    if (equalityIndex >= equalityClause.size()
+        || targetIndex >= targetClause.size()) {
+      return false;
+    }
+    PreservedSexprParser parser;
+    PreservedSexpr equality;
+    PreservedSexpr selectedTarget;
+    PreservedSexpr fromTerm;
+    PreservedSexpr toTerm;
+    PreservedSexpr declaredRewritten;
+    if (!parser.parse(equalityClause[equalityIndex], equality)
+        || !parser.parse(targetClause[targetIndex], selectedTarget)
+        || !parser.parse(from, fromTerm)
+        || !parser.parse(to, toTerm)
+        || !parser.parse(rewrittenLiteral, declaredRewritten)
+        || !sexprHead(equality, "pos") || equality.items.size() != 2
+        || (!sexprHead(selectedTarget, "pos")
+            && !sexprHead(selectedTarget, "neg"))
+        || selectedTarget.items.size() != 2) {
+      return false;
+    }
+
+    PreservedSexpr equalityType;
+    PreservedSexpr equalityLeft;
+    PreservedSexpr equalityRight;
+    if (!typedEqualitySexpr(
+          equality.items[1], equalityType, equalityLeft, equalityRight)) {
+      return false;
+    }
+    const bool leftToRight = equalityLeft == fromTerm && equalityRight == toTerm;
+    const bool rightToLeft = equalityRight == fromTerm && equalityLeft == toTerm;
+    if (!leftToRight && !rightToLeft) return false;
+
+    PreservedSexpr directAtom;
+    PreservedSexpr selectedAtPosition;
+    if (!replaceSexprTermAtPosition(
+          selectedTarget.items[1], position, toTerm,
+          directAtom, &selectedAtPosition)
+        || !(selectedAtPosition == fromTerm)) {
+      return false;
+    }
+    const bool targetPositive = sexprHead(selectedTarget, "pos");
+    const PreservedSexpr directLiteral = literalSexpr(targetPositive, directAtom);
+    if (!rewriteSymmetry) {
+      if (!(directLiteral == declaredRewritten)) return false;
+    } else {
+      PreservedSexpr directType;
+      PreservedSexpr directLeft;
+      PreservedSexpr directRight;
+      if (!typedEqualitySexpr(
+            directAtom, directType, directLeft, directRight)
+          || !(literalSexpr(
+                 targetPositive,
+                 equalityAtomSexpr(directType, directRight, directLeft))
+               == declaredRewritten)) {
+        return false;
+      }
+    }
+
+    const std::string targetTerm = clauseTerm(target);
+    result = eliminate(
+      equalityClause,
+      0,
+      instantiate(parent(equalityParent), equalityParentArguments),
+      targetTerm,
+      [&](std::size_t equalityLiteralIndex,
+          const std::string& equalityProof) {
+        if (equalityLiteralIndex != equalityIndex) {
+          return injectLiteral(
+            target,
+            equalityClause[equalityLiteralIndex],
+            equalityProof);
+        }
+        return eliminate(
+          targetClause,
+          0,
+          instantiate(parent(targetParent), targetParentArguments),
+          targetTerm,
+          [&](std::size_t targetLiteralIndex,
+              const std::string& targetProof) {
+            if (targetLiteralIndex != targetIndex) {
+              return injectLiteral(
+                target,
+                targetClause[targetLiteralIndex],
+                targetProof);
+            }
+            std::string directProof = equalityTransport(
+              equalityType,
+              selectedTarget,
+              directAtom,
+              position,
+              leftToRight,
+              equalityProof,
+              targetProof);
+            if (directProof.empty()) return std::string();
+            if (rewriteSymmetry) {
+              directProof = equalitySymmetry(directLiteral, directProof);
+            }
+            return directProof.empty()
+              ? std::string()
+              : injectLiteral(target, rewrittenLiteral, directProof);
           });
       });
     return !result.empty();
@@ -1758,6 +2099,120 @@ private:
   std::string fresh(const char* stem)
   {
     return std::string("ivy_sat_") + stem + std::to_string(_fresh++);
+  }
+
+  std::string equalityTransport(
+    const PreservedSexpr& equalityType,
+    const PreservedSexpr& selectedTarget,
+    const PreservedSexpr& directAtom,
+    const std::vector<unsigned>& position,
+    bool leftToRight,
+    const std::string& equalityProof,
+    const std::string& targetProof)
+  {
+    const bool positive = sexprHead(selectedTarget, "pos");
+    const std::string leftName = fresh("eq_left");
+    const std::string rightName = fresh("eq_right");
+    const std::string replacementName = positive
+      ? (leftToRight ? leftName : rightName)
+      : (leftToRight ? rightName : leftName);
+    PreservedSexpr contextAtom;
+    if (!replaceSexprTermAtPosition(
+          selectedTarget.items[1],
+          position,
+          quotedTmh(quote(replacementName)),
+          contextAtom)) {
+      return std::string();
+    }
+    std::string contextFormula = contextAtom.render();
+    PreservedSexpr contextType;
+    PreservedSexpr contextLeft;
+    PreservedSexpr contextRight;
+    if (typedEqualitySexpr(
+          contextAtom, contextType, contextLeft, contextRight)) {
+      const std::string relationName = fresh("eq_relation");
+      const std::string relation = "(TMH " + quote(relationName) + ")";
+      contextFormula =
+        "(ALLV " + quote(relationName)
+        + " (AR " + contextType.render()
+        + " (AR " + contextType.render() + " (PROP)))"
+        + " (IMP (AP (AP " + relation + " " + contextLeft.render()
+        + ") " + contextRight.render() + ")"
+        + " (AP (AP " + relation + " " + contextRight.render()
+        + ") " + contextLeft.render() + ")))";
+    }
+    const std::string motive =
+      "(term (LAMV " + quote(leftName) + " " + equalityType.render()
+      + " (LAMV " + quote(rightName) + " " + equalityType.render()
+      + " " + contextFormula + ")))";
+    if (positive) {
+      return proofApply(termApply(equalityProof, motive), targetProof);
+    }
+    const std::string directName = fresh("direct");
+    const std::string transported = proofApply(
+      termApply(equalityProof, motive),
+      hypothesis(directName));
+    return proofLambda(
+      directName,
+      formula(directAtom.render()),
+      proofApply(targetProof, transported));
+  }
+
+  std::string positiveEqualitySymmetry(
+    const PreservedSexpr& type,
+    const PreservedSexpr& left,
+    const PreservedSexpr& right,
+    const std::string& proof)
+  {
+    const std::string predicateName = fresh("eq_predicate");
+    const std::string leftName = fresh("sym_left");
+    const std::string rightName = fresh("sym_right");
+    const std::string premiseName = fresh("sym_premise");
+    const std::string predicate = "(TMH " + quote(predicateName) + ")";
+    const std::string premise =
+      "(AP (AP " + predicate + " " + right.render() + ") "
+      + left.render() + ")";
+    const std::string motive =
+      "(term (LAMV " + quote(leftName) + " " + type.render()
+      + " (LAMV " + quote(rightName) + " " + type.render()
+      + " (AP (AP " + predicate + " (TMH " + quote(rightName)
+      + ")) (TMH " + quote(leftName) + ")))))";
+    return termLambda(
+      predicateName,
+      "(AR " + type.render() + " (AR " + type.render() + " (PROP)))",
+      proofLambda(
+        premiseName,
+        formula(premise),
+        proofApply(
+          termApply(proof, motive),
+          hypothesis(premiseName))));
+  }
+
+  std::string equalitySymmetry(
+    const PreservedSexpr& literal,
+    const std::string& proof)
+  {
+    if ((!sexprHead(literal, "pos") && !sexprHead(literal, "neg"))
+        || literal.items.size() != 2) {
+      return std::string();
+    }
+    PreservedSexpr type;
+    PreservedSexpr left;
+    PreservedSexpr right;
+    if (!typedEqualitySexpr(literal.items[1], type, left, right)) {
+      return std::string();
+    }
+    if (sexprHead(literal, "pos")) {
+      return positiveEqualitySymmetry(type, left, right, proof);
+    }
+    const std::string swappedName = fresh("swapped");
+    const PreservedSexpr swappedAtom = equalityAtomSexpr(type, right, left);
+    const std::string sourceEquality = positiveEqualitySymmetry(
+      type, right, left, hypothesis(swappedName));
+    return proofLambda(
+      swappedName,
+      formula(swappedAtom.render()),
+      proofApply(proof, sourceEquality));
   }
 
   bool clauseFormula(
@@ -1927,6 +2382,48 @@ bool expandClauseResolutionProof(
            rightParentId, rightParentArguments, rightLiterals, rightPivot,
            resultLiterals, result)) {
     error = "AVATAR SAT resolution is not the declared producer pivot step";
+    return false;
+  }
+  return true;
+}
+
+bool expandClauseParamodulationProof(
+  const std::string& equalityParentId,
+  const std::vector<std::string>& equalityParentArguments,
+  const std::vector<std::string>& equalityLiterals,
+  std::size_t equalityLiteral,
+  const std::string& targetParentId,
+  const std::vector<std::string>& targetParentArguments,
+  const std::vector<std::string>& targetLiterals,
+  std::size_t targetLiteral,
+  const std::vector<unsigned>& position,
+  const std::string& from,
+  const std::string& to,
+  const std::string& rewrittenLiteral,
+  const std::vector<std::string>& resultLiterals,
+  bool rewriteSymmetry,
+  std::string& result,
+  std::string& error)
+{
+  IvyClauseProofBuilder builder;
+  if (equalityParentId.empty() || targetParentId.empty()
+      || !builder.paramodulation(
+           equalityParentId,
+           equalityParentArguments,
+           equalityLiterals,
+           equalityLiteral,
+           targetParentId,
+           targetParentArguments,
+           targetLiterals,
+           targetLiteral,
+           position,
+           from,
+           to,
+           rewrittenLiteral,
+           resultLiterals,
+           rewriteSymmetry,
+           result)) {
+    error = "paramodulation is not the declared producer rewrite step";
     return false;
   }
   return true;

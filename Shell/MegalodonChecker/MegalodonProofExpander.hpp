@@ -107,6 +107,7 @@ struct ParamodulateClauseStep {
   std::string rewrittenLiteral;
   std::vector<std::string> resultLiterals;
   bool rewriteSymmetry = false;
+  std::string producerProof;
 };
 
 struct FactorClauseStep {
@@ -272,6 +273,24 @@ bool expandClauseResolutionProof(
   const std::vector<std::string>& rightLiterals,
   std::size_t rightPivot,
   const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error);
+
+bool expandClauseParamodulationProof(
+  const std::string& equalityParentId,
+  const std::vector<std::string>& equalityParentArguments,
+  const std::vector<std::string>& equalityLiterals,
+  std::size_t equalityLiteral,
+  const std::string& targetParentId,
+  const std::vector<std::string>& targetParentArguments,
+  const std::vector<std::string>& targetLiterals,
+  std::size_t targetLiteral,
+  const std::vector<unsigned>& position,
+  const std::string& from,
+  const std::string& to,
+  const std::string& rewrittenLiteral,
+  const std::vector<std::string>& resultLiterals,
+  bool rewriteSymmetry,
   std::string& result,
   std::string& error);
 

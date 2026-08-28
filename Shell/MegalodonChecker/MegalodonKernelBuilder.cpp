@@ -1213,11 +1213,13 @@ MegalodonKernelSyntax::PrimitiveStep paramodulateIvyStep(
   const std::vector<std::string>& targetLiterals,
   const std::string& rewrittenLiteral,
   const std::vector<std::string>& resultLiterals,
-  bool rewriteSymmetry)
+  bool rewriteSymmetry,
+  const std::string& producerProof)
 {
   if (equalityLiteral >= equalityLiterals.size()
     || targetLiteral >= targetLiterals.size()
     || rewrittenLiteral.empty()
+    || producerProof.empty()
     || resultLiterals.size() + 1
        != equalityLiterals.size() + targetLiterals.size()) {
     return paramodulateStep(
@@ -1301,9 +1303,11 @@ MegalodonKernelSyntax::PrimitiveStep paramodulateIvyStep(
     id, equalityParent, equalityLiteral, targetParent, targetLiteral,
     position, from, to, result);
   step.rendered.pop_back();
-  step.rendered += " (program \"ivy_paramodulate_v1\" "
+  step.rendered += " (program \"ivy_paramodulate_v2\" "
     + equalityProgram + " " + targetProgram
-    + " (rewritten " + rewrittenLiteral + ")))";
+    + " (rewritten " + rewrittenLiteral + ")"
+    + " (producer_proof (program \"ivy_nd_v1\" (proof "
+    + producerProof + ")))))";
   return step;
 }
 

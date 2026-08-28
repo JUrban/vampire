@@ -125,6 +125,16 @@ parents created while lowering unit-resulting and subsumption resolution must
 therefore enter the same producer variable-contract table before their proof
 blocks are built.
 
+Direct `paramodulate` records follow the same contract in
+`ivy_paramodulate_v2`. Vampire validates the selected typed Megalodon equality,
+the exact target position, rewrite direction, direct result, and optional
+canonical-orientation symmetry. It then emits clause elimination, explicit
+Leibniz transport through a two-argument motive, optional equality symmetry,
+and result-literal injection as an `ivy_nd_v1` tree. Every parent is explicitly
+instantiated in producer contract order. Megalodon may check the structural
+action list and replay the attached proof tree, but it must not reconstruct the
+transport or synthesize helper claims on this v2 path.
+
 ### AVATAR
 
 AVATAR remains a separate layer. A qualifying refutation has explicit split
@@ -355,9 +365,11 @@ objects present.
 ## Immediate Producer Work
 
 1. Extend the producer proof-expansion pass analogous to Prover9's
-   `expand_proof_ivy` beyond the now-direct AVATAR and local Skolem objects.
-   Resolution and paramodulation parents must become explicit `instantiate`
-   nodes before the small primitive inference; no consumer unification.
+   `expand_proof_ivy` beyond the now-direct AVATAR, local Skolem, resolution,
+   factor, and single-site paramodulation objects. Equality resolution and
+   equality factoring are the next clausal macros; their parents must become
+   explicit `instantiate` nodes before small primitive proofs, with no consumer
+   unification or case synthesis.
 2. Run Skolem-use collection over those expanded nodes and emit a finite,
    dependency-ordered unherbrandization plan linked to each typed Skolem
    branch and source formula.
