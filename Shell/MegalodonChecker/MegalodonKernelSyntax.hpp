@@ -276,6 +276,10 @@ struct RenderedKernelAvatarDefinition {
   RenderedKernelClause componentClauseSexpr;
   std::vector<std::string> componentClauseVariableSorts;
   std::vector<std::string> componentClauseDbSorts;
+  std::vector<std::string> componentLiterals;
+  std::vector<std::pair<std::string, RenderedKernelType>> componentVariables;
+  bool hasProducerProof = false;
+  std::string producerProof;
   bool hasResultClause = false;
   RenderedKernelClause resultClause;
 };

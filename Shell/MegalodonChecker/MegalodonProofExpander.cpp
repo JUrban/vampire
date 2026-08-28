@@ -1740,6 +1740,151 @@ bool expandAvatarContradictionProof(
   return true;
 }
 
+bool expandAvatarDefinitionProof(
+  const MegalodonKernelSyntax::RenderedKernelAvatarDefinition& request,
+  std::string& result,
+  std::string& error)
+{
+  auto quote = [](const std::string& value) {
+    std::string rendered = "\"";
+    for (char ch : value) {
+      switch (ch) {
+        case '\\': rendered += "\\\\"; break;
+        case '"': rendered += "\\\""; break;
+        case '\n': rendered += "\\n"; break;
+        case '\r': rendered += "\\r"; break;
+        case '\t': rendered += "\\t"; break;
+        default: rendered += ch; break;
+      }
+    }
+    return rendered + '"';
+  };
+  auto literalFormula = [](const std::string& literal, std::string& formula) {
+    if (literal.size() < 7 || literal.back() != ')') {
+      return false;
+    }
+    const bool positive = literal.compare(0, 5, "(pos ") == 0;
+    const bool negative = literal.compare(0, 5, "(neg ") == 0;
+    if (!positive && !negative) {
+      return false;
+    }
+    const std::string atom = literal.substr(5, literal.size() - 6);
+    formula = positive
+      ? atom
+      : "(IMP " + atom + " (TMH \"vampire_false\"))";
+    return true;
+  };
+  auto formulaOr = [](const std::string& left, const std::string& right) {
+    return "(AP (AP (TMH \"vampire_or\") " + left + ") " + right + ")";
+  };
+  auto formulaImp = [](const std::string& left, const std::string& right) {
+    return "(IMP " + left + " " + right + ")";
+  };
+  auto formula = [](const std::string& value) {
+    return "(formula " + value + ")";
+  };
+  auto hypothesis = [&](const std::string& name) {
+    return "(hyp " + quote(name) + ")";
+  };
+  auto known = [&](const std::string& name) {
+    return "(known " + quote(name) + ")";
+  };
+  auto termApply = [](const std::string& proof, const std::string& term) {
+    return "(term_apply " + proof + " " + term + ")";
+  };
+  auto proofApply = [](const std::string& left, const std::string& right) {
+    return "(proof_apply " + left + " " + right + ")";
+  };
+  auto proofLambda = [&](const std::string& name,
+                         const std::string& proposition,
+                         const std::string& body) {
+    return "(proof_lambda " + quote(name) + " " + proposition
+      + " " + body + ")";
+  };
+  auto termLambda = [&](const std::string& name,
+                        const std::string& type,
+                        const std::string& body) {
+    return "(term_lambda " + quote(name) + " " + type
+      + " " + body + ")";
+  };
+
+  if (!request.componentSplit.positive) {
+    error = "AVATAR definition direct proof requires a positive split definition";
+    return false;
+  }
+  if (request.componentLiterals.empty()) {
+    error = "AVATAR definition direct proof has an empty component";
+    return false;
+  }
+  std::vector<std::string> literalFormulas;
+  literalFormulas.reserve(request.componentLiterals.size());
+  for (const std::string& literal : request.componentLiterals) {
+    std::string rendered;
+    if (!literalFormula(literal, rendered)) {
+      error = "AVATAR definition direct proof has a malformed component literal";
+      return false;
+    }
+    literalFormulas.push_back(std::move(rendered));
+  }
+  std::string component = literalFormulas.back();
+  for (std::size_t offset = literalFormulas.size() - 1; offset > 0; --offset) {
+    component = formulaOr(literalFormulas[offset - 1], component);
+  }
+  for (auto variable = request.componentVariables.rbegin();
+       variable != request.componentVariables.rend(); ++variable) {
+    component = "(ALLV " + quote(variable->first) + " "
+      + variable->second.sexpr + " " + component + ")";
+  }
+
+  const std::string split =
+    "(TMH " + quote("split_" + std::to_string(request.componentSplit.variable)) + ")";
+  const std::string left = formulaImp(split, component);
+  const std::string right = formulaImp(component, split);
+  const std::string qName = "ivy_definition_q";
+  const std::string introName = "ivy_definition_intro";
+  const std::string splitName = "ivy_definition_split";
+  const std::string componentName = "ivy_definition_component";
+  const std::string notSplitName = "ivy_definition_not_split";
+  const std::string q = "(TMH " + quote(qName) + ")";
+
+  std::string splitToComponent = hypothesis(splitName);
+  for (const auto& variable : request.componentVariables) {
+    splitToComponent = termApply(
+      splitToComponent,
+      "(term (TMH " + quote(variable.first) + "))");
+  }
+  for (auto variable = request.componentVariables.rbegin();
+       variable != request.componentVariables.rend(); ++variable) {
+    splitToComponent = termLambda(
+      variable->first, variable->second.sexpr, splitToComponent);
+  }
+  splitToComponent = proofLambda(
+    splitName, formula(split), splitToComponent);
+
+  const std::string dnegHash =
+    "e4b03c310442ae760be9945e176494db51515dfb952ee60fbd42e05527752af0";
+  const std::string componentToSplit = proofLambda(
+    componentName,
+    formula(component),
+    proofApply(
+      termApply(known(dnegHash), formula(split)),
+      proofLambda(
+        notSplitName,
+        formula(formulaImp(split, "(TMH \"vampire_false\")")),
+        proofApply(hypothesis(notSplitName), hypothesis(componentName)))));
+
+  result = termLambda(
+    qName,
+    "(PROP)",
+    proofLambda(
+      introName,
+      formula(formulaImp(left, formulaImp(right, q))),
+      proofApply(
+        proofApply(hypothesis(introName), splitToComponent),
+        componentToSplit)));
+  return true;
+}
+
 bool expandAvatarSplitProof(
   const MegalodonKernelSyntax::RenderedKernelAvatarSplitStep& request,
   std::string& result,

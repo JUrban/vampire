@@ -1859,7 +1859,8 @@ MegalodonKernelSyntax::PrimitiveStep avatarDefinitionStep(
   const std::string& id,
   unsigned splitVariable,
   bool splitPositive,
-  const MegalodonKernelSyntax::RenderedKernelClause& result)
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::string& producerProof)
 {
   const std::string splitVariableText = std::to_string(splitVariable);
   const std::string splitPositiveText = splitPositive ? "true" : "false";
@@ -1877,7 +1878,9 @@ MegalodonKernelSyntax::PrimitiveStep avatarDefinitionStep(
     },
     "(avatar_definition " + quote(id)
       + " (split " + splitVariableText + " " + splitPositiveText + ")"
-      + " (result " + result.sexpr + "))");
+      + " (result " + result.sexpr + ")"
+      + " (producer_proof (program \"ivy_nd_v1\" (proof "
+      + producerProof + "))))");
 }
 
 MegalodonKernelSyntax::PrimitiveStep splitDependencyStep(

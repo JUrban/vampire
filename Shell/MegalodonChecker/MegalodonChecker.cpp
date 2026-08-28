@@ -16995,6 +16995,46 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
           avatarDefinition.hasComponentClauseSexpr = true;
           avatarDefinition.componentClauseSexpr = MegalodonKernelSyntax::clause(componentClause);
         }
+        for (Kernel::Literal* literal : splitExtra->component->iterLits()) {
+          std::string renderedLiteral;
+          if (!certificateLiteralSexpr(literal, renderedLiteral)) {
+            INVALID_OPERATION("cannot render an AVATAR definition component literal");
+          }
+          avatarDefinition.componentLiterals.push_back(std::move(renderedLiteral));
+        }
+        Lib::DHMap<unsigned, Kernel::TermList> componentVariableSorts;
+        Kernel::SortHelper::collectVariableSorts(
+          splitExtra->component, componentVariableSorts);
+        std::vector<std::pair<unsigned, Kernel::TermList>> componentVariables;
+        Lib::DHMap<unsigned, Kernel::TermList>::Iterator componentVariableSortIterator(
+          componentVariableSorts);
+        while (componentVariableSortIterator.hasNext()) {
+          unsigned variable;
+          Kernel::TermList sort;
+          componentVariableSortIterator.next(variable, sort);
+          componentVariables.push_back({variable, sort});
+        }
+        std::sort(componentVariables.begin(), componentVariables.end());
+        for (const auto& [variable, sort] : componentVariables) {
+          std::string renderedType;
+          if (!certificateTypeSexpr(sort, renderedType)) {
+            INVALID_OPERATION("cannot render an AVATAR definition component variable type");
+          }
+          avatarDefinition.componentVariables.push_back({
+            variableName(variable),
+            MegalodonKernelSyntax::type(renderedType),
+          });
+        }
+        std::string producerProof;
+        std::string producerProofError;
+        if (!MegalodonProofExpander::expandAvatarDefinitionProof(
+              avatarDefinition, producerProof, producerProofError)) {
+          INVALID_OPERATION(
+            "cannot lower AVATAR definition to a direct Ivy proof: "
+            + producerProofError);
+        }
+        avatarDefinition.hasProducerProof = true;
+        avatarDefinition.producerProof = producerProof;
         avatarDefinition.componentClauseVariableSorts = collectClauseVariableSorts(splitExtra->component);
         avatarDefinition.componentClauseDbSorts = collectClauseDbIndexSorts(splitExtra->component);
         addClauseVariableSortFields(fields, "component_clause", splitExtra->component);
@@ -17006,7 +17046,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               "u" + std::to_string(u->number()),
               componentLiteral.var(),
               componentLiteral.positive(),
-              MegalodonKernelSyntax::clause(componentClause));
+              MegalodonKernelSyntax::clause(componentClause),
+              producerProof);
           _certificateNativeSteps.push_back(
             MegalodonKernelBuilder::avatarPrimitiveWithMetadata(nativeStep));
           _certificateEmittedNativeStepIds.insert(u->number());

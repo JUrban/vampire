@@ -203,6 +203,11 @@ bool expandAvatarContradictionProof(
   std::string& result,
   std::string& error);
 
+bool expandAvatarDefinitionProof(
+  const MegalodonKernelSyntax::RenderedKernelAvatarDefinition& request,
+  std::string& result,
+  std::string& error);
+
 bool expandAvatarSplitProof(
   const MegalodonKernelSyntax::RenderedKernelAvatarSplitStep& request,
   std::string& result,
