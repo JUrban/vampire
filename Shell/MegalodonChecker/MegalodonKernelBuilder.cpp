@@ -1606,7 +1606,8 @@ MegalodonKernelSyntax::PrimitiveStep ennfFormulaStep(
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
   const MegalodonKernelSyntax::RenderedKernelFormula& source,
   const MegalodonKernelSyntax::RenderedKernelEnnfTrace& trace,
-  const MegalodonKernelSyntax::RenderedKernelFormula& result)
+  const MegalodonKernelSyntax::RenderedKernelFormula& result,
+  const std::string& producerProof)
 {
   MegalodonKernelSyntax::PrimitiveStep step;
   const std::string renderedTrace =
@@ -1617,6 +1618,7 @@ MegalodonKernelSyntax::PrimitiveStep ennfFormulaStep(
   step.parentIds = {parent.value};
   step.hasResultFormula = true;
   step.resultFormula = result.sexpr;
+  step.producerProof = producerProof;
   step.fields = {
     {"source_formula", source.sexpr},
     {"ennf_trace", renderedTrace},
@@ -1628,8 +1630,10 @@ MegalodonKernelSyntax::PrimitiveStep ennfFormulaStep(
     + " (parent " + quote(parent.value) + ")"
     + " (source (formula " + source.sexpr + "))"
     + " (trace " + renderedTrace + ")"
+    + " (producer_proof (program \"ivy_nd_v1\" (proof "
+    + producerProof + ")))"
     + " (result (formula " + result.sexpr + "))"
-    + " (builder \"typed_v1\"))";
+    + " (builder \"typed_v2\"))";
   return step;
 }
 

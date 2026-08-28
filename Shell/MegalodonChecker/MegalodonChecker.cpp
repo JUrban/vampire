@@ -5722,12 +5722,43 @@ bool MegalodonChecker::certificateEnnfFormulaStepSexpr(
     || resultFormula != rootResultFormula) {
     return false;
   }
+  const std::string unitId = "u" + std::to_string(unit->number());
+  const std::string parentId = "u" + std::to_string(parent->number());
+  std::vector<std::string> parentArguments;
+  std::string producerProof;
+  std::string producerProofError;
+  if (!producerParentArguments(
+        _certificateProducerFreeVariableSorts,
+        parentId,
+        parentArguments,
+        producerProofError)
+      || !MegalodonProofExpander::expandEnnfFormulaProof(
+        unitId,
+        parentId,
+        parentArguments,
+        trace,
+        producerProof,
+        producerProofError)
+      || !closeProducerProofOverEliminatedVariables(
+        _certificateProducerFreeVariableSorts,
+        {parentId},
+        unitId,
+        producerProof,
+        producerProofError)) {
+    if (std::getenv("MEGALODON_CERT_DEBUG")
+        && !producerProofError.empty()) {
+      std::cerr << "megalodon ENNF proof " << unitId
+                << ": " << producerProofError << std::endl;
+    }
+    return false;
+  }
   auto built = MegalodonKernelBuilder::ennfFormulaStep(
-    "u" + std::to_string(unit->number()),
-    MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number())),
+    unitId,
+    MegalodonKernelSyntax::unitRef(parentId),
     MegalodonKernelSyntax::formula(sourceFormula),
     trace,
-    MegalodonKernelSyntax::formula(resultFormula));
+    MegalodonKernelSyntax::formula(resultFormula),
+    producerProof);
   result = built.rendered;
   if (primitiveStep != nullptr) {
     *primitiveStep = std::move(built);

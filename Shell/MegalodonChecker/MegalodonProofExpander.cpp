@@ -1579,6 +1579,11 @@ struct PreservedSexpr {
   {
     return atom == other.atom && token == other.token && items == other.items;
   }
+
+  bool operator!=(const PreservedSexpr& other) const
+  {
+    return !(*this == other);
+  }
 };
 
 class PreservedSexprParser {
@@ -2517,6 +2522,392 @@ public:
     return !result.empty();
   }
 
+  bool ennfFormula(
+    const std::string& stepId,
+    const std::string& parentId,
+    const std::vector<std::string>& parentArguments,
+    const MegalodonKernelSyntax::RenderedKernelEnnfTrace& trace,
+    std::string& result,
+    std::string& error)
+  {
+    static const std::string falseFormula = "(TMH \"vampire_false\")";
+    static const std::string dnegHash =
+      "e4b03c310442ae760be9945e176494db51515dfb952ee60fbd42e05527752af0";
+    PreservedSexprParser parser;
+    _freshPrefix = "ivy_ennf_" + stepId + "_";
+    _reservedNames.clear();
+
+    const auto reserveNames = [&](const PreservedSexpr& value, const auto& self) -> void {
+      if (value.atom) {
+        std::string name;
+        if (preservedName(value, name)) _reservedNames.insert(name);
+        return;
+      }
+      for (const auto& item : value.items) self(item, self);
+    };
+    std::function<bool(const MegalodonKernelSyntax::RenderedKernelEnnfTrace&)>
+      reserveTrace;
+    reserveTrace = [&](const auto& node) {
+      PreservedSexpr source;
+      PreservedSexpr target;
+      if (!node.hasSourceFormula || !node.hasResultFormula
+          || !parser.parse(node.sourceFormula.sexpr, source)
+          || !parser.parse(node.resultFormula.sexpr, target)) {
+        return false;
+      }
+      reserveNames(source, reserveNames);
+      reserveNames(target, reserveNames);
+      for (const auto& child : node.children) {
+        if (!reserveTrace(child)) return false;
+      }
+      return true;
+    };
+    if (stepId.empty() || parentId.empty() || !reserveTrace(trace)) {
+      error = "ENNF recorder trace has no exact producer formulas";
+      return false;
+    }
+
+    const auto rawTerm = [](const std::string& value) {
+      return "(term " + value + ")";
+    };
+    const auto known = [&](const std::string& name) {
+      return "(known " + quote(name) + ")";
+    };
+    const auto namedTerm = [&](const std::string& name) {
+      return "(TMH " + quote(name) + ")";
+    };
+    const auto isFalse = [](const PreservedSexpr& value) {
+      return namedTermSexpr(value, "vampire_false")
+        || namedTermSexpr(value, "f__false");
+    };
+    const auto parseRendered = [&](const std::string& value,
+                                   PreservedSexpr& parsed) {
+      return parser.parse(value, parsed);
+    };
+    const auto parseNode = [&](const auto& node,
+                               PreservedSexpr& source,
+                               PreservedSexpr& target) {
+      return node.hasSourceFormula && node.hasResultFormula
+        && parseRendered(node.sourceFormula.sexpr, source)
+        && parseRendered(node.resultFormula.sexpr, target);
+    };
+    const auto notFormula = [&](const PreservedSexpr& value,
+                                PreservedSexpr& resultFormula) {
+      return parseRendered(
+        formulaImp(value.render(), falseFormula), resultFormula);
+    };
+    const auto primitiveIs = [](const auto& node,
+                                const std::string& connective,
+                                bool polarity) {
+      return node.sourceConnective == connective
+        && node.polarity == polarity
+        && node.primitive == "ennf_" + connective
+          + (polarity ? "_positive" : "_negative");
+    };
+    const auto orIntroduction = [&](const PreservedSexpr& left,
+                                    const PreservedSexpr& right,
+                                    const std::string& proof,
+                                    bool injectLeft) {
+      const std::string qName = fresh("or_q");
+      const std::string leftName = fresh("or_left");
+      const std::string rightName = fresh("or_right");
+      const std::string q = namedTerm(qName);
+      return termLambda(
+        qName,
+        "(PROP)",
+        proofLambda(
+          leftName,
+          formula(formulaImp(left.render(), q)),
+          proofLambda(
+            rightName,
+            formula(formulaImp(right.render(), q)),
+            proofApply(hypothesis(injectLeft ? leftName : rightName), proof))));
+    };
+    const auto andIntroduction = [&](const PreservedSexpr& left,
+                                     const PreservedSexpr& right,
+                                     const std::string& leftProof,
+                                     const std::string& rightProof) {
+      const std::string qName = fresh("and_q");
+      const std::string handlerName = fresh("and_handler");
+      const std::string q = namedTerm(qName);
+      return termLambda(
+        qName,
+        "(PROP)",
+        proofLambda(
+          handlerName,
+          formula(formulaImp(
+            left.render(), formulaImp(right.render(), q))),
+          proofApply(
+            proofApply(hypothesis(handlerName), leftProof),
+            rightProof)));
+    };
+    const auto dneg = [&](const PreservedSexpr& proposition,
+                          const std::string& doubleNegation) {
+      return proofApply(
+        termApply(known(dnegHash), formula(proposition.render())),
+        doubleNegation);
+    };
+    const auto notForallKnown = [](const std::string& type) {
+      if (type == "(SET)") return std::string("vampire_not_forall_exists_set");
+      if (type == "(PROP)") return std::string("vampire_not_forall_exists_prop");
+      if (type == "(AR (SET) (PROP))") {
+        return std::string("vampire_not_forall_exists_set_prop");
+      }
+      if (type == "(AR (SET) (SET))") {
+        return std::string("vampire_not_forall_exists_set_set");
+      }
+      if (type == "(AR (SET) (AR (SET) (PROP)))") {
+        return std::string("vampire_not_forall_exists_set_set_prop");
+      }
+      return std::string();
+    };
+    const auto quantified = [&](const PreservedSexpr& value,
+                                const char* head,
+                                std::string& name,
+                                PreservedSexpr& type,
+                                PreservedSexpr& body) {
+      if (!sexprHead(value, head) || value.items.size() != 4
+          || !preservedName(value.items[1], name)) {
+        return false;
+      }
+      type = value.items[2];
+      body = value.items[3];
+      return true;
+    };
+    const auto existsFormula = [&](const PreservedSexpr& value,
+                                   std::string& name,
+                                   PreservedSexpr& type,
+                                   PreservedSexpr& body) {
+      return sexprHead(value, "AP") && value.items.size() == 3
+        && namedTermSexpr(value.items[1], "vampire_exists_prop")
+        && quantified(value.items[2], "VLAMV", name, type, body);
+    };
+    std::function<std::string(
+      const MegalodonKernelSyntax::RenderedKernelEnnfTrace&,
+      const std::string&)> convert;
+    convert = [&](const auto& node, const std::string& input) -> std::string {
+      PreservedSexpr source;
+      PreservedSexpr target;
+      if (!parseNode(node, source, target)
+          || !primitiveIs(node, node.sourceConnective, node.polarity)) {
+        if (error.empty()) error = "ENNF node has inconsistent exact metadata";
+        return std::string();
+      }
+      const auto fail = [&](const std::string& message) {
+        if (error.empty()) {
+          error = "ENNF " + node.primitive + " node "
+            + std::to_string(node.index) + " " + message;
+        }
+        return std::string();
+      };
+      const auto requireChild = [&](std::size_t index,
+                                    const PreservedSexpr& childSource,
+                                    bool childPolarity) {
+        if (index >= node.children.size()) return false;
+        PreservedSexpr childTarget;
+        PreservedSexpr declaredSource;
+        return parseNode(node.children[index], declaredSource, childTarget)
+          && declaredSource == childSource
+          && node.children[index].polarity == childPolarity;
+      };
+
+      if (node.sourceConnective == "literal"
+          || node.sourceConnective == "bool_term"
+          || node.sourceConnective == "true"
+          || node.sourceConnective == "false") {
+        if (!node.children.empty()) return fail("has children");
+        PreservedSexpr expected = source;
+        if (!node.polarity && !notFormula(source, expected)) {
+          return fail("cannot render its negative leaf");
+        }
+        return target == expected ? input : fail("has the wrong leaf result");
+      }
+
+      if (node.sourceConnective == "not") {
+        if (!sexprHead(source, "IMP") || source.items.size() != 3
+            || !isFalse(source.items[2]) || node.children.size() != 1
+            || !requireChild(0, source.items[1], !node.polarity)) {
+          return fail("does not expose one negated child");
+        }
+        PreservedSexpr childSource;
+        PreservedSexpr childTarget;
+        if (!parseNode(node.children[0], childSource, childTarget)
+            || target != childTarget) {
+          return fail("does not preserve its child result");
+        }
+        const std::string childInput = node.polarity
+          ? input : dneg(source.items[1], input);
+        return convert(node.children[0], childInput);
+      }
+
+      if (node.sourceConnective == "imp") {
+        if (!sexprHead(source, "IMP") || source.items.size() != 3
+            || node.children.size() != 2
+            || !requireChild(0, source.items[1], !node.polarity)
+            || !requireChild(1, source.items[2], node.polarity)) {
+          return fail("does not expose its two polarity-switched children");
+        }
+        PreservedSexpr leftTarget;
+        PreservedSexpr rightTarget;
+        PreservedSexpr ignored;
+        if (!parseNode(node.children[0], ignored, leftTarget)
+            || !parseNode(node.children[1], ignored, rightTarget)) {
+          return fail("has malformed child formulas");
+        }
+        PreservedSexpr declaredLeft;
+        PreservedSexpr declaredRight;
+        if (node.polarity) {
+          if (!binaryNamedApplicationSexpr(
+                target, "vampire_or", declaredLeft, declaredRight)
+              || declaredLeft != leftTarget || declaredRight != rightTarget) {
+            return fail("does not declare the child disjunction result");
+          }
+          const std::string positiveName = fresh("imp_source_left");
+          const std::string rightProof = convert(
+            node.children[1],
+            proofApply(input, hypothesis(positiveName)));
+          if (rightProof.empty()) return rightProof;
+          const std::string positiveProof = orIntroduction(
+            leftTarget, rightTarget, rightProof, false);
+          const std::string negativeName = fresh("imp_not_left");
+          const std::string leftProof = convert(
+            node.children[0], hypothesis(negativeName));
+          if (leftProof.empty()) return leftProof;
+          const std::string negativeProof = orIntroduction(
+            leftTarget, rightTarget, leftProof, true);
+          return excludedMiddle(
+            source.items[1].render(),
+            target.render(),
+            positiveName,
+            positiveProof,
+            negativeName,
+            negativeProof);
+        }
+
+        if (!binaryNamedApplicationSexpr(
+              target, "vampire_and", declaredLeft, declaredRight)
+            || declaredLeft != leftTarget || declaredRight != rightTarget) {
+          return fail("does not declare the child conjunction result");
+        }
+        PreservedSexpr notLeft;
+        if (!notFormula(source.items[1], notLeft)) {
+          return fail("cannot render its negated premise");
+        }
+        const std::string notLeftName = fresh("imp_not_left");
+        const std::string leftAssumption = fresh("imp_left");
+        const std::string falseProof = proofApply(
+          hypothesis(notLeftName), hypothesis(leftAssumption));
+        const std::string sourceImplication = proofLambda(
+          leftAssumption,
+          formula(source.items[1].render()),
+          termApply(falseProof, formula(source.items[2].render())));
+        const std::string leftDoubleNegation = proofLambda(
+          notLeftName,
+          formula(notLeft.render()),
+          proofApply(input, sourceImplication));
+        const std::string sourceLeftProof = dneg(
+          source.items[1], leftDoubleNegation);
+        const std::string leftProof = convert(
+          node.children[0], sourceLeftProof);
+        if (leftProof.empty()) return leftProof;
+        const std::string rightAssumption = fresh("imp_right");
+        const std::string unusedLeft = fresh("imp_unused_left");
+        const std::string notRightProof = proofLambda(
+          rightAssumption,
+          formula(source.items[2].render()),
+          proofApply(
+            input,
+            proofLambda(
+              unusedLeft,
+              formula(source.items[1].render()),
+              hypothesis(rightAssumption))));
+        const std::string rightProof = convert(
+          node.children[1], notRightProof);
+        return rightProof.empty()
+          ? rightProof
+          : andIntroduction(leftTarget, rightTarget, leftProof, rightProof);
+      }
+
+      if (node.sourceConnective == "forall") {
+        std::string sourceName;
+        PreservedSexpr sourceType;
+        PreservedSexpr sourceBody;
+        if (!quantified(
+              source, "ALLV", sourceName, sourceType, sourceBody)
+            || node.children.size() != 1
+            || !requireChild(0, sourceBody, node.polarity)) {
+          return fail("does not expose one quantified child");
+        }
+        PreservedSexpr childSource;
+        PreservedSexpr childTarget;
+        if (!parseNode(node.children[0], childSource, childTarget)) {
+          return fail("has malformed quantified child formulas");
+        }
+        if (node.polarity) {
+          std::string targetName;
+          PreservedSexpr targetType;
+          PreservedSexpr targetBody;
+          if (!quantified(
+                target, "ALLV", targetName, targetType, targetBody)
+              || sourceName != targetName || sourceType != targetType
+              || targetBody != childTarget) {
+            return fail("does not preserve its universal binder");
+          }
+          const std::string bodyProof = convert(
+            node.children[0],
+            termApply(input, rawTerm(namedTerm(sourceName))));
+          return bodyProof.empty()
+            ? bodyProof
+            : termLambda(sourceName, sourceType.render(), bodyProof);
+        }
+
+        std::string targetName;
+        PreservedSexpr targetType;
+        PreservedSexpr targetBody;
+        if (!existsFormula(target, targetName, targetType, targetBody)
+            || sourceName != targetName || sourceType != targetType
+            || targetBody != childTarget) {
+          return fail("does not declare the child existential result");
+        }
+        const std::string theoremName = notForallKnown(sourceType.render());
+        if (theoremName.empty()) {
+          return fail("uses a quantifier type without a declared not-forall principle");
+        }
+        const std::string sourcePredicate =
+          "(LAMV " + quote(sourceName) + " " + sourceType.render()
+          + " " + sourceBody.render() + ")";
+        const std::string targetPredicate =
+          "(LAMV " + quote(targetName) + " " + targetType.render()
+          + " " + targetBody.render() + ")";
+        const std::string sourceNotName = fresh("forall_not_body");
+        const std::string childProof = convert(
+          node.children[0], hypothesis(sourceNotName));
+        if (childProof.empty()) return childProof;
+        const std::string pointwise = termLambda(
+          sourceName,
+          sourceType.render(),
+          proofLambda(
+            sourceNotName,
+            formula(formulaImp(sourceBody.render(), falseFormula)),
+            childProof));
+        return proofApply(
+          proofApply(
+            termApply(
+              termApply(
+                known(theoremName), formula(sourcePredicate)),
+              formula(targetPredicate)),
+            pointwise),
+          input);
+      }
+
+      return fail("is outside the direct producer ENNF basis");
+    };
+
+    std::string parentProof = instantiate(parent(parentId), parentArguments);
+    result = convert(trace, parentProof);
+    return !result.empty();
+  }
+
   bool resolution(
     const std::string& leftParent,
     const std::vector<std::string>& leftParentArguments,
@@ -3006,6 +3397,8 @@ public:
 
 private:
   std::size_t _fresh = 0;
+  std::string _freshPrefix = "ivy_sat_";
+  std::set<std::string> _reservedNames;
 
   static std::string quote(const std::string& value)
   {
@@ -3125,7 +3518,12 @@ private:
 
   std::string fresh(const char* stem)
   {
-    return std::string("ivy_sat_") + stem + std::to_string(_fresh++);
+    std::string result;
+    do {
+      result = _freshPrefix + stem + std::to_string(_fresh++);
+    } while (_reservedNames.find(result) != _reservedNames.end());
+    _reservedNames.insert(result);
+    return result;
   }
 
   std::string expandedEqualityProposition(
@@ -3541,6 +3939,25 @@ bool expandFoolFormulaProof(
   if (!builder.foolFormula(
         parentId, parentArguments, program, result)) {
     error = "FOOL program does not lower to an explicit Ivy proof";
+    return false;
+  }
+  return true;
+}
+
+bool expandEnnfFormulaProof(
+  const std::string& stepId,
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const MegalodonKernelSyntax::RenderedKernelEnnfTrace& trace,
+  std::string& result,
+  std::string& error)
+{
+  IvyClauseProofBuilder builder;
+  if (!builder.ennfFormula(
+        stepId, parentId, parentArguments, trace, result, error)) {
+    if (error.empty()) {
+      error = "ENNF trace does not lower to an explicit producer Ivy proof";
+    }
     return false;
   }
   return true;

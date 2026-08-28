@@ -196,7 +196,8 @@ MegalodonKernelSyntax::PrimitiveStep ennfFormulaStep(
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
   const MegalodonKernelSyntax::RenderedKernelFormula& source,
   const MegalodonKernelSyntax::RenderedKernelEnnfTrace& trace,
-  const MegalodonKernelSyntax::RenderedKernelFormula& result);
+  const MegalodonKernelSyntax::RenderedKernelFormula& result,
+  const std::string& producerProof);
 
 MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
   const std::string& id,

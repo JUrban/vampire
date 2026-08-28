@@ -270,6 +270,14 @@ bool expandFoolFormulaProof(
   std::string& result,
   std::string& error);
 
+bool expandEnnfFormulaProof(
+  const std::string& stepId,
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const MegalodonKernelSyntax::RenderedKernelEnnfTrace& trace,
+  std::string& result,
+  std::string& error);
+
 bool buildFoolFormulaProgram(
   const std::string& sourceFormula,
   const std::string& targetFormula,
