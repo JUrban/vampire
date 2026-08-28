@@ -1089,9 +1089,10 @@ MegalodonKernelSyntax::PrimitiveStep substituteStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
   const MegalodonKernelSyntax::RenderedKernelSubstitution& substitution,
-  const MegalodonKernelSyntax::RenderedKernelClause& result)
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::string& producerProof)
 {
-  return primitiveClauseStep(
+  MegalodonKernelSyntax::PrimitiveStep step = primitiveClauseStep(
     "substitute",
     id,
     {parent.value},
@@ -1101,6 +1102,15 @@ MegalodonKernelSyntax::PrimitiveStep substituteStep(
       + " (parent " + quote(parent.value) + ") " + substitution.sexpr
       + " (result " + result.sexpr + "))",
     result.producerFunctionApplications);
+  if (!producerProof.empty()) {
+    step.rendered.pop_back();
+    step.rendered +=
+      " (program \"ivy_substitute_v2\""
+      " (producer_proof (program \"ivy_nd_v1\" (proof "
+      + producerProof + ")))))";
+    step.producerProof = producerProof;
+  }
+  return step;
 }
 
 MegalodonKernelSyntax::PrimitiveStep equalityResolutionStep(

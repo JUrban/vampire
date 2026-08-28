@@ -114,6 +114,16 @@ subsumption resolution, and similar macros must lower into these explicit
 records where possible. Macro labels may remain diagnostic metadata but cannot
 replace the primitive chain.
 
+Fresh `substitute` records carry `ivy_substitute_v2`. Vampire applies the exact
+recorded substitution to every quantified parent variable, in authoritative
+producer-contract order, and emits the resulting parent theorem application as
+an `ivy_nd_v1` proof. Identity substitutions still apply every live parent
+variable explicitly. Megalodon checks the declared parent boundary and replays
+this term generically; it does not infer a substitution or reconstruct theorem
+applications on the v2 path. Every synthetic primitive also receives explicit
+`step_variable_sorts` and `step_free_variable_sorts` records, because literal
+occurrence order is not a valid substitute for the producer's binder order.
+
 Direct `resolve` and duplicate-deleting `factor` records carry an
 `ivy_nd_v1` proof block (`ivy_resolve_v2` and `ivy_factor_v2`). Vampire applies
 every quantified parent variable explicitly, in the order of the producer
@@ -286,6 +296,10 @@ Implemented and retained:
 - typed builder provenance and cross-repository vocabulary checks;
 - exact substitutions, selected literals, equality positions, and free-variable
   records for migrated clausal families;
+- direct `ivy_substitute_v2`, `ivy_resolve_v2`, `ivy_factor_v2`,
+  `ivy_paramodulate_v2`, `ivy_equality_resolution_v2`, and
+  `ivy_equality_factoring_v2` proof trees emitted by Vampire and replayed by the
+  generic Megalodon Ivy elaborator;
 - exact recursive ENNF producer trace;
 - exact CNF projection records;
 - typed scoped Skolem branch traces;
@@ -317,10 +331,10 @@ Still incomplete:
 The current files are approximately:
 
 ```text
-MegalodonChecker.cpp       25,344 lines
-MegalodonKernelBuilder.cpp  1,225 lines
-MegalodonKernelBuilder.hpp    177 lines
-MegalodonKernelSyntax.hpp     848 lines
+MegalodonChecker.cpp       32,124 lines
+MegalodonKernelBuilder.cpp  2,918 lines
+MegalodonKernelBuilder.hpp    297 lines
+MegalodonKernelSyntax.hpp   1,111 lines
 ```
 
 These numbers are architectural warnings, not progress metrics. New work should
@@ -389,12 +403,12 @@ objects present.
 ## Immediate Producer Work
 
 1. Extend the producer proof-expansion pass analogous to Prover9's
-   `expand_proof_ivy` beyond the now-direct AVATAR, local Skolem, resolution,
-   factor, single-site paramodulation, and reflexive equality-resolution
-   objects. Equality-resolution constraints, compound trivial-inequality
-   cleanup, and equality factoring are the next clausal macros; their parents
-   must become explicit `instantiate` nodes before small primitive proofs, with
-   no consumer unification or case synthesis.
+   `expand_proof_ivy` beyond the now-direct AVATAR, local Skolem, substitution,
+   resolution, factor, single-site paramodulation, reflexive equality
+   resolution, and equality factoring objects. Equality-resolution constraints
+   and compound trivial-inequality cleanup are the next clausal macros; their
+   parents must become explicit `instantiate` nodes before small primitive
+   proofs, with no consumer unification or case synthesis.
 2. Run Skolem-use collection over those expanded nodes and emit a finite,
    dependency-ordered unherbrandization plan linked to each typed Skolem
    branch and source formula.

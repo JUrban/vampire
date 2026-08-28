@@ -70,6 +70,7 @@ struct PrimitiveStep {
   std::vector<std::size_t> certificateLocalSymbolDependencyCounts;
   std::vector<ProducerSkolemChoiceDefinition> producerSkolemChoiceDefinitions;
   std::vector<ProducerFunctionApplication> producerFunctionApplications;
+  std::string producerProof;
   std::vector<std::pair<std::string, std::string>> fields;
 };
 

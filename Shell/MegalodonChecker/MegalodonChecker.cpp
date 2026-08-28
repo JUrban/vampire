@@ -73,6 +73,40 @@ bool producerParentArguments(
   return true;
 }
 
+bool producerParentArgumentTerms(
+  const ProducerVariableSortMap& producerVariableSorts,
+  const std::string& parentId,
+  std::vector<std::string>& arguments,
+  std::string& error)
+{
+  if (!producerParentArguments(
+        producerVariableSorts, parentId, arguments, error)) {
+    return false;
+  }
+  for (std::string& argument : arguments) {
+    argument = "(TMH \"" + argument + "\")";
+  }
+  return true;
+}
+
+bool attachIvyInstantiationProof(
+  MegalodonProofExpander::SubstituteClauseStep& step,
+  const ProducerVariableSortMap& producerVariableSorts,
+  std::string& error)
+{
+  std::vector<std::string> parentArguments;
+  return producerParentArgumentTerms(
+           producerVariableSorts,
+           step.parent.value,
+           parentArguments,
+           error)
+    && MegalodonProofExpander::expandClauseInstantiationProof(
+         step.parent.value,
+         parentArguments,
+         step.producerProof,
+         error);
+}
+
 MegalodonProofExpander::FactorClauseStep ivyFactorClauseStep(
   const std::string& id,
   const std::string& parentId,
@@ -1491,6 +1525,32 @@ bool MegalodonChecker::certificateSubstituteStepPartsSexpr(
   _certificateProducerFreeVariableSorts[id] =
     std::move(producerResultVarSorts);
 
+  const auto parentProducerSorts =
+    _certificateProducerFreeVariableSorts.find(parentId);
+  if (parentProducerSorts == _certificateProducerFreeVariableSorts.end()) {
+    return failSubstitution("missing producer parent variable contract");
+  }
+  std::vector<std::string> parentArgumentTerms;
+  for (const auto& binding : parentProducerSorts->second) {
+    std::string argument;
+    if (!certificateTermSexpr(
+          Kernel::SubstHelper::apply(
+            Kernel::TermList(binding.first, false), substitution),
+          argument)) {
+      return failSubstitution("producer parent argument serialization");
+    }
+    parentArgumentTerms.push_back(std::move(argument));
+  }
+  std::string producerProof;
+  std::string producerProofError;
+  if (!MegalodonProofExpander::expandClauseInstantiationProof(
+        parentId,
+        parentArgumentTerms,
+        producerProof,
+        producerProofError)) {
+    return failSubstitution(producerProofError.c_str());
+  }
+
   MegalodonKernelSyntax::PrimitiveStep builtStep =
     MegalodonKernelBuilder::substituteStep(
       id,
@@ -1498,7 +1558,8 @@ bool MegalodonChecker::certificateSubstituteStepPartsSexpr(
       MegalodonKernelSyntax::substitution(substitutionSexpr),
       MegalodonKernelSyntax::clause(
         resultClause,
-        producerFunctionApplications));
+        producerFunctionApplications),
+      producerProof);
   std::vector<std::pair<unsigned, Kernel::TermList>> producerSubstitution;
   Kernel::Substitution producerSubstitutionCopy = substitution;
   for (auto [variable, term] : iterTraits(producerSubstitutionCopy.items())) {
@@ -3172,12 +3233,28 @@ bool MegalodonChecker::certificateCondensationStepSexpr(
     if (!sameMultiset(current, actualRaw)) {
       return false;
     }
+    std::vector<std::string> finalParentArguments;
+    std::string finalProducerProof;
+    std::string finalProducerProofError;
+    if (!producerParentArgumentTerms(
+          _certificateProducerFreeVariableSorts,
+          currentParentId,
+          finalParentArguments,
+          finalProducerProofError)
+        || !MegalodonProofExpander::expandClauseInstantiationProof(
+          currentParentId,
+          finalParentArguments,
+          finalProducerProof,
+          finalProducerProofError)) {
+      return false;
+    }
     MegalodonKernelSyntax::PrimitiveStep finalStep =
       MegalodonKernelBuilder::substituteStep(
         stepBase,
         MegalodonKernelSyntax::unitRef(currentParentId),
         MegalodonKernelSyntax::substitution("(subst)"),
-        MegalodonKernelSyntax::clause(clauseSexprFromLiterals(actualRaw)));
+        MegalodonKernelSyntax::clause(clauseSexprFromLiterals(actualRaw)),
+        finalProducerProof);
     steps.push_back(finalStep.rendered);
     primitives.push_back(std::move(finalStep));
     std::vector<std::string> validationFields;
@@ -8846,12 +8923,47 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         const std::string& resultClause,
         const Kernel::Substitution* producerSubstitution = nullptr) {
       MegalodonProofExpander::ClauseStepRequest request;
-      request.step = MegalodonProofExpander::SubstituteClauseStep{
+      MegalodonProofExpander::SubstituteClauseStep substituteStep{
         stepId,
         MegalodonKernelSyntax::unitRef(parentId),
         MegalodonKernelSyntax::substitution(substitution),
         MegalodonKernelSyntax::clause(resultClause),
       };
+      std::string producerProofError;
+      if (producerSubstitution == nullptr) {
+        if (!attachIvyInstantiationProof(
+              substituteStep,
+              _certificateProducerFreeVariableSorts,
+              producerProofError)) {
+          return false;
+        }
+      } else {
+        const auto parentProducerSorts =
+          _certificateProducerFreeVariableSorts.find(parentId);
+        if (parentProducerSorts == _certificateProducerFreeVariableSorts.end()) {
+          return false;
+        }
+        std::vector<std::string> parentArguments;
+        for (const auto& binding : parentProducerSorts->second) {
+          std::string argument;
+          if (!certificateTermSexpr(
+                Kernel::SubstHelper::apply(
+                  Kernel::TermList(binding.first, false),
+                  *producerSubstitution),
+                argument)) {
+            return false;
+          }
+          parentArguments.push_back(std::move(argument));
+        }
+        if (!MegalodonProofExpander::expandClauseInstantiationProof(
+              parentId,
+              parentArguments,
+              substituteStep.producerProof,
+              producerProofError)) {
+          return false;
+        }
+      }
+      request.step = std::move(substituteStep);
       expansionRequests.push_back(std::move(request));
       MegalodonProofExpander::Environment environment;
       if (producerSubstitution != nullptr) {
@@ -8870,6 +8982,7 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
       }
       _certificateProducerSubstitutions[stepId] =
         std::move(environment);
+      return true;
     };
   auto addEqualitySymmetryStep =
     [&](const std::string& stepId,
@@ -9057,12 +9170,14 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
       const std::string substituteId = unitId + "_current_subst" + std::to_string(traceIndex);
       const std::string substituteResultClause =
         certificateClauseSexprFromRenderedLiterals(substitutedRendered);
-      addSubstituteStep(
+      if (!addSubstituteStep(
         substituteId,
         currentParentId,
         subst,
         substituteResultClause,
-        &currentSubstitution);
+        &currentSubstitution)) {
+        return fail("current direct substitution proof failed");
+      }
       addSyntheticInstantiationMetadata(
         substituteId,
         currentParentId,
@@ -9139,12 +9254,14 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
             substituteStep)) {
         return fail("unit substitute step render failed");
       }
-      addSubstituteStep(
+      if (!addSubstituteStep(
         substituteId,
         unitParentId,
         subst,
         certificateClauseSexprFromRenderedLiterals(unitRendered),
-        &unitSubstitution);
+        &unitSubstitution)) {
+        return fail("unit direct substitution proof failed");
+      }
       addSyntheticInstantiationMetadata(
         substituteId,
         unitParentId,
@@ -9285,12 +9402,14 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         const std::string renameId = unitId + "_final_rename";
         const std::string renameResultClause =
           certificateClauseSexprFromRenderedLiterals(renamedRendered);
-        addSubstituteStep(
+        if (!addSubstituteStep(
           renameId,
           currentParentId,
           finalRenameSubst,
           renameResultClause,
-          &finalRenameSubstitution);
+          &finalRenameSubstitution)) {
+          return fail("final rename direct substitution proof failed");
+        }
         addSyntheticInstantiationMetadata(
           renameId,
           currentParentId,
@@ -9383,11 +9502,13 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
     if (!certificateClauseSexpr(unit->asClause(), clause)) {
       return fail("final clause render failed");
     }
-    addSubstituteStep(
+    if (!addSubstituteStep(
       unitId,
       currentParentId,
       "(subst)",
-      clause);
+      clause)) {
+      return fail("final direct substitution proof failed");
+    }
   }
 
   MegalodonProofExpander::ClauseExpansion expansion;
@@ -9772,12 +9893,20 @@ bool MegalodonChecker::certificateResolveStepSexpr(
       }
       const std::string finalClause = clauseSexprFromLiterals(actual);
       MegalodonProofExpander::ClauseStepRequest request;
-      request.step = MegalodonProofExpander::SubstituteClauseStep{
+      MegalodonProofExpander::SubstituteClauseStep substituteStep{
         stepBase,
         MegalodonKernelSyntax::unitRef(currentParentId),
         MegalodonKernelSyntax::substitution("(subst)"),
         MegalodonKernelSyntax::clause(finalClause),
       };
+      std::string substitutionProofError;
+      if (!attachIvyInstantiationProof(
+            substituteStep,
+            _certificateProducerFreeVariableSorts,
+            substitutionProofError)) {
+        return false;
+      }
+      request.step = std::move(substituteStep);
       expansionRequests.push_back(std::move(request));
     }
 
@@ -10277,6 +10406,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
             MegalodonKernelSyntax::clause(
               substitutePrimitive.resultClause,
               substitutePrimitive.producerFunctionApplications),
+            substitutePrimitive.producerProof,
           };
         request.trailingRecords = std::move(substituteMetadata);
         expansionRequests.push_back(std::move(request));
@@ -10557,6 +10687,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
               MegalodonKernelSyntax::clause(
                 substitutePrimitive.resultClause,
                 substitutePrimitive.producerFunctionApplications),
+              substitutePrimitive.producerProof,
             };
           request.trailingRecords = std::move(substituteMetadata);
           expansionRequests.push_back(std::move(request));
@@ -10702,13 +10833,20 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
             continue;
           }
           MegalodonProofExpander::ClauseStepRequest request;
-          request.step =
-            MegalodonProofExpander::SubstituteClauseStep{
+          MegalodonProofExpander::SubstituteClauseStep substituteStep{
               stepBase,
               MegalodonKernelSyntax::unitRef(currentParentId),
               MegalodonKernelSyntax::substitution("(subst)"),
               MegalodonKernelSyntax::clause(conclusion),
-            };
+          };
+          std::string substitutionProofError;
+          if (!attachIvyInstantiationProof(
+                substituteStep,
+                _certificateProducerFreeVariableSorts,
+                substitutionProofError)) {
+            continue;
+          }
+          request.step = std::move(substituteStep);
           expansionRequests.push_back(std::move(request));
         }
 
@@ -10720,6 +10858,42 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
               expansion,
               expansionError)) {
           continue;
+        }
+        for (const auto& primitive : expansion.primitives) {
+          if (primitive.id == stepBase) {
+            continue;
+          }
+          const auto scope =
+            _certificateProducerFreeVariableSorts.find(primitive.id);
+          if (scope == _certificateProducerFreeVariableSorts.end()) {
+            return false;
+          }
+          std::ostringstream renderedSorts;
+          renderedSorts << '(';
+          bool first = true;
+          for (const auto& binding : scope->second) {
+            std::string sortText;
+            if (!sortToMegalodon(binding.second, sortText)) {
+              return false;
+            }
+            if (!first) {
+              renderedSorts << ' ';
+            }
+            first = false;
+            renderedSorts << sexprQuote(
+              variableName(binding.first) + ":" + sortText);
+          }
+          renderedSorts << ')';
+          for (const std::string& tag : {
+                 std::string("step_variable_sorts"),
+                 std::string("step_free_variable_sorts")}) {
+            const std::string prefix =
+              "(" + tag + " " + sexprQuote(primitive.id) + " ";
+            if (expansion.rendered.find(prefix) == std::string::npos) {
+              expansion.rendered +=
+                "\n  " + prefix + renderedSorts.str() + ")";
+            }
+          }
         }
         result = expansion.rendered;
         if (primitiveSteps != nullptr) {
@@ -11043,6 +11217,7 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
               MegalodonKernelSyntax::clause(
                 substitutePrimitive.resultClause,
                 substitutePrimitive.producerFunctionApplications),
+              substitutePrimitive.producerProof,
           };
           request.trailingRecords = std::move(substituteMetadata);
           expansionRequests.push_back(std::move(request));
@@ -11239,12 +11414,20 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
           }
         }
         MegalodonProofExpander::ClauseStepRequest finalRequest;
-        finalRequest.step = MegalodonProofExpander::SubstituteClauseStep{
+        MegalodonProofExpander::SubstituteClauseStep substituteStep{
             stepBase,
             MegalodonKernelSyntax::unitRef(currentParentId),
             MegalodonKernelSyntax::substitution("(subst)"),
             MegalodonKernelSyntax::clause(resultClauseSexpr),
         };
+        std::string substitutionProofError;
+        if (!attachIvyInstantiationProof(
+              substituteStep,
+              _certificateProducerFreeVariableSorts,
+              substitutionProofError)) {
+          return debugFailure(substitutionProofError.c_str());
+        }
+        finalRequest.step = std::move(substituteStep);
         expansionRequests.push_back(std::move(finalRequest));
 
         MegalodonProofExpander::ClauseExpansion expansion;
@@ -12878,12 +13061,20 @@ bool MegalodonChecker::certificateParamodulateStepSexpr(
 
           if (needsDuplicateFactors) {
             MegalodonProofExpander::ClauseStepRequest request;
-            request.step = MegalodonProofExpander::SubstituteClauseStep{
+            MegalodonProofExpander::SubstituteClauseStep substituteStep{
               "u" + std::to_string(unit->number()),
               MegalodonKernelSyntax::unitRef(currentParentId),
               MegalodonKernelSyntax::substitution("(subst)"),
               MegalodonKernelSyntax::clause(clauseSexprFromLiterals(actual)),
             };
+            std::string substitutionProofError;
+            if (!attachIvyInstantiationProof(
+                  substituteStep,
+                  _certificateProducerFreeVariableSorts,
+                  substitutionProofError)) {
+              continue;
+            }
+            request.step = std::move(substituteStep);
             expansionRequests.push_back(std::move(request));
           }
 
@@ -13404,6 +13595,7 @@ bool MegalodonChecker::certificateForwardSubsumptionDemodulationStepsSexpr(
                 MegalodonKernelSyntax::clause(
                   sideSubstitutePrimitive.resultClause,
                   sideSubstitutePrimitive.producerFunctionApplications),
+                sideSubstitutePrimitive.producerProof,
               };
               request.trailingRecords = std::move(sideSubstituteMetadata);
               expansionRequests.push_back(std::move(request));
@@ -14241,6 +14433,7 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                         MegalodonKernelSyntax::clause(
                           substitutePrimitive.resultClause,
                           substitutePrimitive.producerFunctionApplications),
+                        substitutePrimitive.producerProof,
                       };
                     request.trailingRecords = std::move(substituteMetadata);
                     expansionRequests.push_back(std::move(request));
@@ -14438,15 +14631,22 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                     if (sameMultiset(candidateClause, actual)) {
                       if (candidateParentId != stepBase) {
                         MegalodonProofExpander::ClauseStepRequest request;
-                        request.step =
-                          MegalodonProofExpander::SubstituteClauseStep{
+                        MegalodonProofExpander::SubstituteClauseStep substituteStep{
                             stepBase,
                             MegalodonKernelSyntax::unitRef(
                               candidateParentId),
                             MegalodonKernelSyntax::substitution("(subst)"),
                             MegalodonKernelSyntax::clause(
                               clauseSexprFromLiterals(actual)),
-                          };
+                        };
+                        std::string substitutionProofError;
+                        if (!attachIvyInstantiationProof(
+                              substituteStep,
+                              _certificateProducerFreeVariableSorts,
+                              substitutionProofError)) {
+                          return false;
+                        }
+                        request.step = std::move(substituteStep);
                         candidateSteps.push_back(std::move(request));
                       }
                       return true;
@@ -14582,6 +14782,7 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                     MegalodonKernelSyntax::clause(
                       substitutePrimitive.resultClause,
                       substitutePrimitive.producerFunctionApplications),
+                    substitutePrimitive.producerProof,
                   };
                 request.trailingRecords = std::move(substituteMetadata);
                 expansionRequests.push_back(std::move(request));
@@ -14967,6 +15168,7 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
       MegalodonKernelSyntax::clause(
         primitive.resultClause,
         primitive.producerFunctionApplications),
+      primitive.producerProof,
     };
     expansionRequests.push_back(std::move(request));
     syntheticMetadata.insert(
@@ -15270,13 +15472,21 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
     }
     if (currentParentId != stepBase) {
       MegalodonProofExpander::ClauseStepRequest request;
-      request.step = MegalodonProofExpander::SubstituteClauseStep{
+      MegalodonProofExpander::SubstituteClauseStep substituteStep{
           stepBase,
           MegalodonKernelSyntax::unitRef(currentParentId),
           MegalodonKernelSyntax::substitution("(subst)"),
           MegalodonKernelSyntax::clause(
             clauseSexprFromLiterals(actual)),
-        };
+      };
+      std::string substitutionProofError;
+      if (!attachIvyInstantiationProof(
+            substituteStep,
+            _certificateProducerFreeVariableSorts,
+            substitutionProofError)) {
+        return failExact(substitutionProofError.c_str());
+      }
+      request.step = std::move(substituteStep);
       expansionRequests.push_back(std::move(request));
     }
   }

@@ -101,7 +101,8 @@ MegalodonKernelSyntax::PrimitiveStep substituteStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
   const MegalodonKernelSyntax::RenderedKernelSubstitution& substitution,
-  const MegalodonKernelSyntax::RenderedKernelClause& result);
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::string& producerProof = {});
 
 MegalodonKernelSyntax::PrimitiveStep equalityResolutionStep(
   const std::string& id,

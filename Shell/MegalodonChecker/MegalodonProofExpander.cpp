@@ -825,7 +825,8 @@ bool expandClauseProof(
         step->id,
         step->parent,
         step->substitution,
-        step->result);
+        step->result,
+        step->producerProof);
     } else if (const auto* step =
                  std::get_if<EqualitySymmetryClauseStep>(&request.step)) {
       primitive = MegalodonKernelBuilder::equalitySymmetryStep(
@@ -1924,6 +1925,16 @@ public:
     return !result.empty();
   }
 
+  bool instantiation(
+    const std::string& parentId,
+    const std::vector<std::string>& parentArgumentTerms,
+    std::string& result)
+  {
+    if (parentId.empty()) return false;
+    result = instantiateTerms(parent(parentId), parentArgumentTerms);
+    return !result.empty();
+  }
+
   bool equalityFactoring(
     const std::string& parentId,
     const std::vector<std::string>& parentArgumentTerms,
@@ -2729,6 +2740,20 @@ bool expandClauseEqualityResolutionProof(
            resultLiterals,
            result)) {
     error = "equality resolution is not a reflexive producer disequality step";
+    return false;
+  }
+  return true;
+}
+
+bool expandClauseInstantiationProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArgumentTerms,
+  std::string& result,
+  std::string& error)
+{
+  IvyClauseProofBuilder builder;
+  if (!builder.instantiation(parentId, parentArgumentTerms, result)) {
+    error = "cannot build explicit producer parent instantiation";
     return false;
   }
   return true;
