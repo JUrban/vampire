@@ -221,8 +221,8 @@ private:
     MegalodonKernelSyntax::PrimitiveStep* primitiveStep = nullptr,
     std::vector<std::string>* resultLiterals = nullptr);
   bool certificateRewriteTermAtMegalodonPosition(Kernel::TermList term, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::TermList& rewritten);
-  bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::Literal*& rewritten);
-  bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, std::string& rendered);
+  bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, Kernel::Literal*& rewritten, bool* equalitySymmetry = nullptr);
+  bool certificateRewriteLiteralAtMegalodonPosition(Kernel::Literal* literal, Kernel::TermList needle, Kernel::TermList replacement, std::vector<unsigned>& position, std::string& rendered, bool* equalitySymmetry = nullptr);
   bool safeHolApplication(Kernel::TermList sort, Kernel::TermList lhs, Kernel::TermList rhs, Kernel::TermList& result) const;
   bool safeHolApplication(Kernel::TermList s1, Kernel::TermList s2, Kernel::TermList lhs, Kernel::TermList rhs, Kernel::TermList& result) const;
   bool safeApplySubstitution(Kernel::TermList term, const Kernel::Substitution& substitution, Kernel::TermList& result) const;

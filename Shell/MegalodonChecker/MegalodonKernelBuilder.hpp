@@ -131,6 +131,22 @@ MegalodonKernelSyntax::PrimitiveStep paramodulateStep(
   const MegalodonKernelSyntax::RenderedKernelTerm& to,
   const MegalodonKernelSyntax::RenderedKernelClause& result);
 
+MegalodonKernelSyntax::PrimitiveStep paramodulateIvyStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& equalityParent,
+  std::size_t equalityLiteral,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& targetParent,
+  std::size_t targetLiteral,
+  const MegalodonKernelSyntax::RenderedKernelPosition& position,
+  const MegalodonKernelSyntax::RenderedKernelTerm& from,
+  const MegalodonKernelSyntax::RenderedKernelTerm& to,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::vector<std::string>& equalityLiterals,
+  const std::vector<std::string>& targetLiterals,
+  const std::string& rewrittenLiteral,
+  const std::vector<std::string>& resultLiterals,
+  bool rewriteSymmetry = false);
+
 MegalodonKernelSyntax::PrimitiveStep foolAtomLiftStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelFormula& source,

@@ -1156,6 +1156,114 @@ MegalodonKernelSyntax::PrimitiveStep paramodulateStep(
       + " (result " + result.sexpr + "))");
 }
 
+MegalodonKernelSyntax::PrimitiveStep paramodulateIvyStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& equalityParent,
+  std::size_t equalityLiteral,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& targetParent,
+  std::size_t targetLiteral,
+  const MegalodonKernelSyntax::RenderedKernelPosition& position,
+  const MegalodonKernelSyntax::RenderedKernelTerm& from,
+  const MegalodonKernelSyntax::RenderedKernelTerm& to,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::vector<std::string>& equalityLiterals,
+  const std::vector<std::string>& targetLiterals,
+  const std::string& rewrittenLiteral,
+  const std::vector<std::string>& resultLiterals,
+  bool rewriteSymmetry)
+{
+  if (equalityLiteral >= equalityLiterals.size()
+    || targetLiteral >= targetLiterals.size()
+    || rewrittenLiteral.empty()
+    || resultLiterals.size() + 1
+       != equalityLiterals.size() + targetLiterals.size()) {
+    return paramodulateStep(
+      id, equalityParent, equalityLiteral, targetParent, targetLiteral,
+      position, from, to, result);
+  }
+
+  std::vector<bool> usedResult(resultLiterals.size(), false);
+  std::size_t nodeIndex = 0;
+  auto clauseSexpr = [](const std::vector<std::string>& literals) {
+    std::string rendered = "(clause";
+    for (const std::string& literal : literals) {
+      rendered += " " + literal;
+    }
+    return rendered + ")";
+  };
+  auto takeTarget =
+    [&](const std::string& literal, std::size_t& target) {
+      target = resultLiterals.size();
+      for (std::size_t resultIndex = 0;
+           resultIndex < resultLiterals.size();
+           ++resultIndex) {
+        if (!usedResult[resultIndex]
+          && literal == resultLiterals[resultIndex]) {
+          target = resultIndex;
+          usedResult[resultIndex] = true;
+          return true;
+        }
+      }
+      return false;
+    };
+  auto sideProgram =
+    [&](const char* side,
+        const std::vector<std::string>& literals,
+        std::size_t selected,
+        const char* selectedAction,
+        const std::string* selectedResult,
+        std::string& rendered) {
+      rendered = "(" + std::string(side) + " (source "
+        + clauseSexpr(literals) + ") (nodes";
+      for (std::size_t literalIndex = 0;
+           literalIndex < literals.size();
+           ++literalIndex) {
+        rendered += " (node (index " + std::to_string(nodeIndex++)
+          + ") (literal " + std::to_string(literalIndex) + ")";
+        if (literalIndex == selected && selectedResult == nullptr) {
+          rendered += " (action \"" + std::string(selectedAction) + "\"))";
+          continue;
+        }
+        const std::string& produced =
+          literalIndex == selected ? *selectedResult : literals[literalIndex];
+        std::size_t target = resultLiterals.size();
+        if (!takeTarget(produced, target)) {
+          return false;
+        }
+        rendered += " (action \""
+          + std::string(literalIndex == selected ? selectedAction : "copy")
+          + "\") (target " + std::to_string(target) + "))";
+      }
+      rendered += "))";
+      return true;
+    };
+
+  std::string equalityProgram;
+  std::string targetProgram;
+  if (!sideProgram(
+        "equality", equalityLiterals, equalityLiteral, "equality", nullptr,
+        equalityProgram)
+    || !sideProgram(
+         "target", targetLiterals, targetLiteral,
+         rewriteSymmetry ? "rewrite_symmetry" : "rewrite",
+         &rewrittenLiteral, targetProgram)
+    || std::find(usedResult.begin(), usedResult.end(), false)
+       != usedResult.end()) {
+    return paramodulateStep(
+      id, equalityParent, equalityLiteral, targetParent, targetLiteral,
+      position, from, to, result);
+  }
+
+  MegalodonKernelSyntax::PrimitiveStep step = paramodulateStep(
+    id, equalityParent, equalityLiteral, targetParent, targetLiteral,
+    position, from, to, result);
+  step.rendered.pop_back();
+  step.rendered += " (program \"ivy_paramodulate_v1\" "
+    + equalityProgram + " " + targetProgram
+    + " (rewritten " + rewrittenLiteral + ")))";
+  return step;
+}
+
 MegalodonKernelSyntax::PrimitiveStep foolAtomLiftStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelFormula& source,

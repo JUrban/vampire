@@ -854,16 +854,32 @@ bool expandClauseProof(
             step->result);
     } else if (const auto* step =
                  std::get_if<ParamodulateClauseStep>(&request.step)) {
-      primitive = MegalodonKernelBuilder::paramodulateStep(
-        step->id,
-        step->equalityParent,
-        step->equalityLiteral,
-        step->targetParent,
-        step->targetLiteral,
-        step->position,
-        step->from,
-        step->to,
-        step->result);
+      primitive = step->hasIvyProgram
+        ? MegalodonKernelBuilder::paramodulateIvyStep(
+            step->id,
+            step->equalityParent,
+            step->equalityLiteral,
+            step->targetParent,
+            step->targetLiteral,
+            step->position,
+            step->from,
+            step->to,
+            step->result,
+            step->equalityLiterals,
+            step->targetLiterals,
+            step->rewrittenLiteral,
+            step->resultLiterals,
+            step->rewriteSymmetry)
+        : MegalodonKernelBuilder::paramodulateStep(
+            step->id,
+            step->equalityParent,
+            step->equalityLiteral,
+            step->targetParent,
+            step->targetLiteral,
+            step->position,
+            step->from,
+            step->to,
+            step->result);
     } else if (const auto* step =
                  std::get_if<FactorClauseStep>(&request.step)) {
       primitive = step->hasIvyProgram

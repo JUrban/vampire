@@ -100,6 +100,12 @@ struct ParamodulateClauseStep {
   MegalodonKernelSyntax::RenderedKernelTerm from;
   MegalodonKernelSyntax::RenderedKernelTerm to;
   MegalodonKernelSyntax::RenderedKernelClause result;
+  bool hasIvyProgram = false;
+  std::vector<std::string> equalityLiterals;
+  std::vector<std::string> targetLiterals;
+  std::string rewrittenLiteral;
+  std::vector<std::string> resultLiterals;
+  bool rewriteSymmetry = false;
 };
 
 struct FactorClauseStep {
