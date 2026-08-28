@@ -1419,7 +1419,8 @@ MegalodonKernelSyntax::PrimitiveStep foolFormulaStep(
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
   const MegalodonKernelSyntax::RenderedKernelFormula& source,
   const MegalodonKernelSyntax::RenderedKernelFoolProgram& program,
-  const MegalodonKernelSyntax::RenderedKernelFormula& result)
+  const MegalodonKernelSyntax::RenderedKernelFormula& result,
+  const std::string& producerProof)
 {
   MegalodonKernelSyntax::PrimitiveStep step;
   step.rule = "fool_formula";
@@ -1440,7 +1441,10 @@ MegalodonKernelSyntax::PrimitiveStep foolFormulaStep(
     + " (result (formula " + result.sexpr + "))"
     + " (program " + quote(program.version) + " "
     + renderFoolProgramNode(program.root) + ")"
-    + " (builder \"typed_v2\"))";
+    + " (producer_proof (program \"ivy_nd_v1\" (proof "
+    + producerProof + ")))"
+    + " (builder \"typed_v3\"))";
+  step.producerProof = producerProof;
   return step;
 }
 

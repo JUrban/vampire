@@ -2058,6 +2058,218 @@ public:
     return !result.empty();
   }
 
+  bool foolFormula(
+    const std::string& parentId,
+    const std::vector<std::string>& parentArguments,
+    const MegalodonKernelSyntax::RenderedKernelFoolProgram& program,
+    std::string& result)
+  {
+    static const std::string propExtHash =
+      "23ea4ad0d25e31cb704cd6f5752b77c544628e235c5c99d36647ab24d0d261c9";
+    PreservedSexprParser parser;
+    const auto parseFormula = [&](const auto& formula, PreservedSexpr& parsed) {
+      return parser.parse(formula.sexpr, parsed);
+    };
+    const auto directionIs = [](const auto& node, const char* direction) {
+      return node.direction == direction;
+    };
+    const auto isTrue = [](const PreservedSexpr& formula) {
+      return namedTermSexpr(formula, "vampire_true")
+        || namedTermSexpr(formula, "f__true");
+    };
+    const auto truthProof = [&]() {
+      const std::string propositionName = fresh("fool_true_prop");
+      const std::string proofName = fresh("fool_true_proof");
+      return termLambda(
+        propositionName,
+        "(PROP)",
+        proofLambda(
+          proofName,
+          formula("(TMH " + quote(propositionName) + ")"),
+          hypothesis(proofName)));
+    };
+    const auto propExt = [&](const PreservedSexpr& left,
+                             const PreservedSexpr& right,
+                             const std::string& leftToRight,
+                             const std::string& rightToLeft) {
+      return proofApply(
+        proofApply(
+          termApply(
+            termApply(
+              "(known " + quote(propExtHash) + ")",
+              formula(left.render())),
+            formula(right.render())),
+          leftToRight),
+        rightToLeft);
+    };
+
+    std::function<std::string(
+      const MegalodonKernelSyntax::RenderedKernelFoolProgramNode&,
+      const std::string&)> convert =
+      [&](const MegalodonKernelSyntax::RenderedKernelFoolProgramNode& node,
+          const std::string& proof) -> std::string {
+        PreservedSexpr source;
+        PreservedSexpr target;
+        if (!parseFormula(node.source, source)
+            || !parseFormula(node.target, target)
+            || (!directionIs(node, "forward")
+                && !directionIs(node, "backward"))) {
+          return std::string();
+        }
+        if (node.rule == "identity") {
+          return source == target && node.binders.empty()
+              && node.children.empty()
+            ? proof
+            : std::string();
+        }
+        if (node.rule == "forall") {
+          if (node.binders.empty() || node.children.size() != 1) {
+            return std::string();
+          }
+          PreservedSexpr sourceBody = source;
+          PreservedSexpr targetBody = target;
+          std::string instantiated = proof;
+          for (const auto& [name, renderedType] : node.binders) {
+            PreservedSexpr type;
+            if (!parser.parse(renderedType.sexpr, type)
+                || !sexprHead(sourceBody, "ALLV")
+                || !sexprHead(targetBody, "ALLV")
+                || sourceBody.items.size() != 4
+                || targetBody.items.size() != 4
+                || !sourceBody.items[1].atom
+                || !targetBody.items[1].atom
+                || sourceBody.items[1].token != quote(name)
+                || targetBody.items[1].token != quote(name)
+                || !(sourceBody.items[2] == type)
+                || !(targetBody.items[2] == type)) {
+              return std::string();
+            }
+            sourceBody = sourceBody.items[3];
+            targetBody = targetBody.items[3];
+            instantiated = termApply(
+              instantiated,
+              "(term (TMH " + quote(name) + "))");
+          }
+          PreservedSexpr childSource;
+          PreservedSexpr childTarget;
+          const auto& child = node.children[0];
+          if (!parseFormula(child.source, childSource)
+              || !parseFormula(child.target, childTarget)
+              || !(sourceBody == childSource)
+              || !(targetBody == childTarget)
+              || child.direction != node.direction) {
+            return std::string();
+          }
+          std::string body = convert(child, instantiated);
+          if (body.empty()) return body;
+          for (auto iterator = node.binders.rbegin();
+               iterator != node.binders.rend(); ++iterator) {
+            body = termLambda(
+              iterator->first, iterator->second.sexpr, body);
+          }
+          return body;
+        }
+        if (node.rule == "implies") {
+          if (!node.binders.empty() || node.children.size() != 2
+              || !sexprHead(source, "IMP") || source.items.size() != 3
+              || !sexprHead(target, "IMP") || target.items.size() != 3) {
+            return std::string();
+          }
+          const auto& leftChild = node.children[0];
+          const auto& rightChild = node.children[1];
+          PreservedSexpr leftSource;
+          PreservedSexpr leftTarget;
+          PreservedSexpr rightSource;
+          PreservedSexpr rightTarget;
+          const std::string opposite = directionIs(node, "forward")
+            ? "backward" : "forward";
+          if (!parseFormula(leftChild.source, leftSource)
+              || !parseFormula(leftChild.target, leftTarget)
+              || !parseFormula(rightChild.source, rightSource)
+              || !parseFormula(rightChild.target, rightTarget)
+              || !(leftSource == source.items[1])
+              || !(leftTarget == target.items[1])
+              || !(rightSource == source.items[2])
+              || !(rightTarget == target.items[2])
+              || leftChild.direction != opposite
+              || rightChild.direction != node.direction) {
+            return std::string();
+          }
+          const PreservedSexpr& premise = directionIs(node, "forward")
+            ? target.items[1] : source.items[1];
+          const std::string premiseName = fresh("fool_implication");
+          const std::string sourcePremise = convert(
+            leftChild, hypothesis(premiseName));
+          if (sourcePremise.empty()) return sourcePremise;
+          const std::string sourceConclusion = proofApply(proof, sourcePremise);
+          const std::string targetConclusion = convert(
+            rightChild, sourceConclusion);
+          return targetConclusion.empty()
+            ? targetConclusion
+            : proofLambda(
+                premiseName, formula(premise.render()), targetConclusion);
+        }
+
+        const bool propEqTrue = node.rule == "prop_eq_true"
+          || node.rule == "prop_eq_true_lambda_alpha";
+        const bool trueEqProp = node.rule == "true_eq_prop"
+          || node.rule == "true_eq_prop_lambda_alpha";
+        PreservedSexpr equalityType;
+        PreservedSexpr equalityLeft;
+        PreservedSexpr equalityRight;
+        if ((!propEqTrue && !trueEqProp)
+            || !node.binders.empty() || !node.children.empty()
+            || !typedEqualitySexpr(
+                 target, equalityType, equalityLeft, equalityRight)
+            || !sexprHead(equalityType, "PROP")
+            || equalityType.items.size() != 1
+            || (propEqTrue && !isTrue(equalityRight))
+            || (trueEqProp && !isTrue(equalityLeft))) {
+          return std::string();
+        }
+        const PreservedSexpr& atom = propEqTrue
+          ? equalityLeft : equalityRight;
+        const PreservedSexpr& trueTerm = propEqTrue
+          ? equalityRight : equalityLeft;
+        const std::string atomProofName = fresh("fool_atom");
+        const std::string trueProofName = fresh("fool_true");
+        const std::string atomToTrue = proofLambda(
+          atomProofName, formula(atom.render()), truthProof());
+        if (directionIs(node, "forward")) {
+          const std::string trueToAtom = proofLambda(
+            trueProofName, formula(trueTerm.render()), proof);
+          return propEqTrue
+            ? propExt(atom, trueTerm, atomToTrue, trueToAtom)
+            : propExt(trueTerm, atom, trueToAtom, atomToTrue);
+        }
+
+        const std::string leftName = fresh("fool_eq_left");
+        const std::string rightName = fresh("fool_eq_right");
+        const std::string motiveBody = propEqTrue
+          ? formulaImp(
+              "(TMH " + quote(leftName) + ")",
+              "(TMH " + quote(rightName) + ")")
+          : formulaImp(
+              "(TMH " + quote(rightName) + ")",
+              "(TMH " + quote(leftName) + ")");
+        const std::string motive =
+          "(term (LAMV " + quote(leftName) + " (PROP)"
+          + " (LAMV " + quote(rightName) + " (PROP) "
+          + motiveBody + ")))";
+        return proofApply(
+          proofApply(termApply(proof, motive), atomToTrue),
+          truthProof());
+      };
+
+    if (parentId.empty() || program.version != "ivy_fool_formula_v1") {
+      return false;
+    }
+    result = convert(
+      program.root,
+      instantiate(parent(parentId), parentArguments));
+    return !result.empty();
+  }
+
   bool resolution(
     const std::string& leftParent,
     const std::vector<std::string>& leftParentArguments,
@@ -3066,6 +3278,22 @@ bool expandCnfFormulaClauseProof(
         resultLiterals,
         result)) {
     error = "CNF projection does not match the producer source and result";
+    return false;
+  }
+  return true;
+}
+
+bool expandFoolFormulaProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const MegalodonKernelSyntax::RenderedKernelFoolProgram& program,
+  std::string& result,
+  std::string& error)
+{
+  IvyClauseProofBuilder builder;
+  if (!builder.foolFormula(
+        parentId, parentArguments, program, result)) {
+    error = "FOOL program does not lower to an explicit Ivy proof";
     return false;
   }
   return true;

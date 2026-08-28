@@ -5347,6 +5347,7 @@ bool MegalodonChecker::certificateFoolFormulaStepSexpr(
 
   std::ostringstream out;
   const std::string unitId = "u" + std::to_string(unit->number());
+  const std::string parentId = "u" + std::to_string(parent->number());
   for (std::size_t index = 0; index < primitives.size(); ++index) {
     const auto& [primitive, targetFormula] = primitives[index];
     std::string proposition;
@@ -5359,19 +5360,48 @@ bool MegalodonChecker::certificateFoolFormulaStepSexpr(
     }
     out << primitive.rendered << "\n  ";
   }
-  auto built = hasProgram
-    ? MegalodonKernelBuilder::foolFormulaStep(
-        unitId,
-        MegalodonKernelSyntax::unitRef(
-          "u" + std::to_string(parent->number())),
-        MegalodonKernelSyntax::formula(parentFormula),
-        program,
-        MegalodonKernelSyntax::formula(resultFormula))
-    : MegalodonKernelBuilder::foolFormulaStep(
-        unitId,
-        MegalodonKernelSyntax::unitRef(
-          "u" + std::to_string(parent->number())),
-        MegalodonKernelSyntax::formula(resultFormula));
+  std::vector<std::string> parentArguments;
+  std::string producerProof;
+  std::string producerProofError;
+  MegalodonKernelSyntax::PrimitiveStep built;
+  if (hasProgram) {
+    if (!producerParentArguments(
+          _certificateProducerFreeVariableSorts,
+          parentId,
+          parentArguments,
+          producerProofError)
+        || !MegalodonProofExpander::expandFoolFormulaProof(
+          parentId,
+          parentArguments,
+          program,
+          producerProof,
+          producerProofError)
+        || !closeProducerProofOverEliminatedVariables(
+          _certificateProducerFreeVariableSorts,
+          {parentId},
+          unitId,
+          producerProof,
+          producerProofError)) {
+      if (std::getenv("MEGALODON_CERT_DEBUG")
+          && !producerProofError.empty()) {
+        std::cerr << "megalodon FOOL proof " << unitId
+                  << ": " << producerProofError << std::endl;
+      }
+      return false;
+    }
+    built = MegalodonKernelBuilder::foolFormulaStep(
+      unitId,
+      MegalodonKernelSyntax::unitRef(parentId),
+      MegalodonKernelSyntax::formula(parentFormula),
+      program,
+      MegalodonKernelSyntax::formula(resultFormula),
+      producerProof);
+  } else {
+    built = MegalodonKernelBuilder::foolFormulaStep(
+      unitId,
+      MegalodonKernelSyntax::unitRef(parentId),
+      MegalodonKernelSyntax::formula(resultFormula));
+  }
   out << built.rendered;
   result = out.str();
   if (primitiveSteps != nullptr) {

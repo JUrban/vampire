@@ -176,7 +176,8 @@ MegalodonKernelSyntax::PrimitiveStep foolFormulaStep(
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
   const MegalodonKernelSyntax::RenderedKernelFormula& source,
   const MegalodonKernelSyntax::RenderedKernelFoolProgram& program,
-  const MegalodonKernelSyntax::RenderedKernelFormula& result);
+  const MegalodonKernelSyntax::RenderedKernelFormula& result,
+  const std::string& producerProof);
 
 MegalodonKernelSyntax::PrimitiveStep foolBoolStep(
   const std::string& id,

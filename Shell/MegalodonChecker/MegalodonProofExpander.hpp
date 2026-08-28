@@ -263,6 +263,13 @@ bool expandCnfFormulaClauseProof(
   std::string& result,
   std::string& error);
 
+bool expandFoolFormulaProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const MegalodonKernelSyntax::RenderedKernelFoolProgram& program,
+  std::string& result,
+  std::string& error);
+
 bool expandAvatarSatResolutionProof(
   const std::string& leftParentId,
   const std::vector<std::string>& leftLiterals,
