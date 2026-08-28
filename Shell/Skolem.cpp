@@ -84,6 +84,7 @@ FormulaUnit* Skolem::skolemiseImpl (FormulaUnit* unit, bool appify)
   _blockLookup.reset();
   _universalScope.reset();
   _recordingPath.clear();
+  _recordingContextProgram.clear();
   _recordingAmbient.clear();
 
   Formula* f = unit->formula();
@@ -339,7 +340,7 @@ Formula* Skolem::skolemise (Formula* f)
   case AND:
   case OR:
     {
-      FormulaList* fs = skolemise(f->args());
+      FormulaList* fs = skolemise(f->args(), f->connective());
       if (fs == f->args()) {
         return f;
       }
@@ -362,12 +363,14 @@ Formula* Skolem::skolemise (Formula* f)
           }
           _recordingAmbient.push_back({variable, sort});
           _recordingPath.push_back(0);
+          _recordingContextProgram.push_back("forall");
         }
       }
       Formula* g = skolemise(f->qarg());
       if (_recording) {
         for (unsigned index = 0; index < VSList::length(f->vars()); ++index) {
           _recordingPath.pop_back();
+          _recordingContextProgram.pop_back();
           _recordingAmbient.pop_back();
         }
       }
@@ -597,6 +600,7 @@ Formula* Skolem::skolemise (Formula* f)
             before,
             after,
             _recordingPath,
+            _recordingContextProgram,
             recordedAmbient,
             recordedContext,
             recordedWitnesses);
@@ -639,7 +643,7 @@ Formula* Skolem::skolemise (Formula* f)
  * @since 12/12/2004 Manchester, optimised by quantifying only over
  *    variables actually occurring in the formula.
  */
-FormulaList* Skolem::skolemise (FormulaList* fs)
+FormulaList* Skolem::skolemise (FormulaList* fs, Connective connective)
 {
   ASS(FormulaList::isNonEmpty(fs));
 
@@ -664,10 +668,14 @@ FormulaList* Skolem::skolemise (FormulaList* fs)
       // Kernel terms encode n-ary junctions as right-associated binary nodes.
       for (std::size_t index = 0; index < child; ++index) {
         _recordingPath.push_back(1);
+        _recordingContextProgram.push_back(
+          connective == AND ? "and_right" : "or_right");
         ++recordedPathLength;
       }
       if (child + 1 < arity) {
         _recordingPath.push_back(0);
+        _recordingContextProgram.push_back(
+          connective == AND ? "and_left" : "or_left");
         ++recordedPathLength;
       }
     }
@@ -675,6 +683,7 @@ FormulaList* Skolem::skolemise (FormulaList* fs)
     if (_recording) {
       while (recordedPathLength > 0) {
         _recordingPath.pop_back();
+        _recordingContextProgram.pop_back();
         --recordedPathLength;
       }
     }

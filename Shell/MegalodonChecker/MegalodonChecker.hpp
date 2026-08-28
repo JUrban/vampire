@@ -174,8 +174,10 @@ private:
   std::string sexprQuote(const std::string& value) const;
   bool certificateTypeSexpr(Kernel::TermList sort, std::string& result);
   bool certificateTermSexpr(Kernel::TermList term, std::string& result);
+  bool certificateTermSexpr(Kernel::TermList term, std::string& result, const std::vector<std::string>& deBruijnBinders);
   bool certificateEqualityAtomSexpr(Kernel::TermList sort, const std::string& lhs, const std::string& rhs, std::string& result);
   bool certificateAtomSexpr(Kernel::Literal* literal, std::string& result);
+  bool certificateAtomSexpr(Kernel::Literal* literal, std::string& result, const std::vector<std::string>& deBruijnBinders);
   bool certificateLiteralSexpr(Kernel::Literal* literal, std::string& result);
   bool certificateSplitLiteralSexpr(unsigned split, std::string& result);
   bool appendCertificateSplitLiteralsSexpr(Kernel::Clause* clause, std::vector<std::string>& literals);
@@ -219,6 +221,9 @@ private:
   std::string certificatePositionSexpr(const std::vector<unsigned>& position) const;
   bool certificateSource(Kernel::Unit* unit, std::string& result);
   bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result);
+  bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result, const std::vector<std::string>& deBruijnBinders);
+  bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result, const std::vector<std::string>& deBruijnBinders, bool leftAssociateNary);
+  bool certificateAvatarFormulaTermSexpr(Kernel::Formula* formula, std::string& result);
   bool certificatePredicateDefinitionSymbol(Kernel::Formula* formula, std::string& result);
   bool certificateFormulaNativeLiteralSexpr(Kernel::Formula* formula, bool& positive, std::string& atom);
   bool certificateFormulaNativeLiteralSexpr(Kernel::Formula* formula, std::string& result);
@@ -290,7 +295,10 @@ private:
   bool certificateAvatarSplitStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateAvatarContradictionStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, std::string& result);
-  bool certificateCondensationStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateCondensationStepSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   bool certificateDefinitionRewriteStepsSexpr(
     Kernel::Unit* unit,
     std::string& result,
@@ -377,6 +385,7 @@ private:
   InferenceReplayer _replayer;
   std::map<unsigned, std::string> _functions;
   std::map<unsigned, std::string> _predicates;
+  std::set<std::string> _namedPropositions;
   std::map<unsigned, Kernel::Clause*> _avatarComponentBySatVar;
   std::set<std::string> _usedSymbolNames;
   bool _usesEquality = false;
@@ -394,8 +403,11 @@ private:
   std::vector<std::string> _certificateNativeMetadata;
   std::vector<std::string> _certificateNativeSteps;
   std::set<unsigned> _certificateNativeStepIds;
+  std::set<unsigned> _certificateEmittedNativeStepIds;
   std::map<unsigned, std::vector<MegalodonKernelSyntax::PrimitiveStep>>
     _certificateNativePrimitiveStepsByUnit;
+  std::map<unsigned, std::vector<MegalodonKernelSyntax::PrimitiveStep>>
+    _certificateEmittedNativePrimitiveStepsByUnit;
   std::vector<MegalodonKernelSyntax::PrimitiveStep>
     _certificateNativeAuxiliaryPrimitiveSteps;
   std::map<unsigned, std::string> _certificateResolutionLoweringSourceByUnit;

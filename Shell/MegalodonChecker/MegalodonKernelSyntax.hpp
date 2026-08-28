@@ -319,8 +319,11 @@ struct RenderedKernelAvatarLiteralClass {
   std::size_t index = 0;
   std::size_t literalCount = 0;
   std::vector<std::string> literals;
+  std::vector<std::size_t> parentLiteralIndices;
   bool hasMatchedSplitLevel = false;
   unsigned matchedSplitLevel = 0;
+  bool hasMatchedSplitVar = false;
+  unsigned matchedSplitVar = 0;
 };
 
 struct RenderedKernelAvatarParentVarBinding {
@@ -330,6 +333,29 @@ struct RenderedKernelAvatarParentVarBinding {
   std::string componentVar;
   bool hasSplitVar = false;
   unsigned splitVar = 0;
+  bool hasCounterexampleProgram = false;
+  std::size_t counterexampleProgram = 0;
+  std::size_t counterexampleStage = 0;
+};
+
+struct RenderedKernelAvatarCounterexampleStage {
+  std::size_t index = 0;
+  std::string variable;
+  RenderedKernelType type;
+  RenderedKernelFormula source;
+  RenderedKernelFormula predicate;
+  RenderedKernelTerm witness;
+  RenderedKernelFormula target;
+};
+
+struct RenderedKernelAvatarCounterexampleProgram {
+  std::size_t index = 0;
+  unsigned splitVar = 0;
+  std::string version;
+  RenderedKernelFormula source;
+  RenderedKernelFormula body;
+  std::vector<RenderedKernelAvatarCounterexampleStage> stages;
+  RenderedKernelFormula finalBody;
 };
 
 struct RenderedKernelAvatarSplitStep {
@@ -351,6 +377,7 @@ struct RenderedKernelAvatarSplitStep {
   std::size_t componentParentCount = 0;
   std::vector<RenderedKernelAvatarLiteralClass> literalClasses;
   std::vector<RenderedKernelAvatarParentVarBinding> parentVarBindings;
+  std::vector<RenderedKernelAvatarCounterexampleProgram> counterexamplePrograms;
 };
 
 struct RenderedKernelSatInput {
@@ -483,12 +510,17 @@ struct RenderedKernelScopedSkolemWitness {
   RenderedKernelType replacedSort;
   RenderedKernelTerm witnessTerm;
   std::vector<RenderedKernelTypedVariable> dependencies;
+  RenderedKernelFormula stageSource;
+  RenderedKernelFormula rawChoiceTarget;
+  std::vector<std::vector<std::size_t>> equalitySymmetryPaths;
+  RenderedKernelFormula stageTarget;
 };
 
 struct RenderedKernelScopedSkolemBranch {
   std::size_t index = 0;
   RenderedKernelFormula source;
   std::vector<std::size_t> path;
+  std::vector<std::string> contextProgram;
   std::string normalization = "vampire_equality_rebuild_v1";
   std::vector<RenderedKernelTypedVariable> ambient;
   std::vector<RenderedKernelTypedVariable> context;
@@ -662,8 +694,15 @@ struct RenderedKernelCnfProjection {
 };
 
 struct RenderedKernelEnnfTrace {
+  std::size_t index = 0;
+  std::string primitive;
   std::string sourceConnective;
   bool polarity = true;
+  bool hasSourceFormula = false;
+  RenderedKernelFormula sourceFormula;
+  bool hasResultFormula = false;
+  RenderedKernelFormula resultFormula;
+  std::vector<RenderedKernelTypedVariable> context;
   std::vector<RenderedKernelEnnfTrace> children;
 };
 

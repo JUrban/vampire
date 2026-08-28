@@ -637,6 +637,11 @@ bool expandGroundProof(
       const Environment parentEnvironment =
         composeParentEnvironment(groundedEnvironment, step.parentSubstitution);
       for (const std::string& parentId : step.parentIds) {
+        if (stepById.find(parentId) == stepById.end()) {
+          error = "primitive proof step " + stepId
+            + " references unknown parent " + parentId;
+          return false;
+        }
         const bool parentParametric =
           instanceParametric
           || std::find(

@@ -96,6 +96,7 @@ public:
         Kernel::Formula* sourceFormula = nullptr;
         Kernel::Formula* targetFormula = nullptr;
         std::vector<std::size_t> path;
+        std::vector<std::string> contextProgram;
         std::vector<ScopedVariable> ambient;
         std::vector<ScopedVariable> context;
         std::vector<Witness> witnesses;
@@ -185,6 +186,7 @@ public:
     Kernel::Formula* sourceFormula,
     Kernel::Formula* targetFormula,
     const std::vector<std::size_t>& path,
+    const std::vector<std::string>& contextProgram,
     const std::vector<SkolemInferenceExtra::ScopedVariable>& ambient,
     const std::vector<SkolemInferenceExtra::ScopedVariable>& context,
     const std::vector<SkolemInferenceExtra::Witness>& witnesses);

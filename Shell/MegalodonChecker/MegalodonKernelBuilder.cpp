@@ -179,7 +179,7 @@ std::string skolemRefutationScopeBlock(
   }
   dischargeOrder += ")";
   return
-    "(skolem_scope_block \"smolka_refutation_v4\""
+    "(skolem_scope_block \"smolka_refutation_v5\""
     " (final " + quote(finalStep) + ") "
     + entries + " " + dischargeOrder + ")";
 }
@@ -1240,6 +1240,15 @@ MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
     renderedPath += ")";
     step.fields.push_back({prefix + "_path", renderedPath});
     step.fields.push_back({prefix + "_normalization", branch.normalization});
+    std::string renderedContextProgram = "(context_program";
+    for (const std::string& frame : branch.contextProgram) {
+      renderedContextProgram += " (" + frame + ")";
+    }
+    renderedContextProgram += ")";
+    step.fields.push_back({
+      prefix + "_context_program",
+      renderedContextProgram,
+    });
     step.fields.push_back({
       prefix + "_context_count",
       std::to_string(branch.context.size()),
@@ -1253,6 +1262,7 @@ MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
       " (branch (index " + std::to_string(branch.index) + ")"
       + " " + renderedPath
       + " (normalization " + quote(branch.normalization) + ")"
+      + " " + renderedContextProgram
       + " (source (formula " + branch.source.sexpr + "))"
       + " (ambient";
     for (const auto& variable : branch.ambient) {
@@ -1283,6 +1293,18 @@ MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
       step.fields.push_back({witnessPrefix + "_sort", witness.replacedSort.sexpr});
       step.fields.push_back({witnessPrefix + "_term", witness.witnessTerm.sexpr});
       step.fields.push_back({
+        witnessPrefix + "_stage_source",
+        witness.stageSource.sexpr,
+      });
+      step.fields.push_back({
+        witnessPrefix + "_raw_choice_target",
+        witness.rawChoiceTarget.sexpr,
+      });
+      step.fields.push_back({
+        witnessPrefix + "_stage_target",
+        witness.stageTarget.sexpr,
+      });
+      step.fields.push_back({
         witnessPrefix + "_dependency_count",
         std::to_string(witness.dependencies.size()),
       });
@@ -1300,7 +1322,20 @@ MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
           " (variable " + quote(dependency.variable) + " "
           + dependency.type.sexpr + ")";
       }
-      renderedBranches += "))";
+      renderedBranches += ") (program"
+        " (stage_source (formula " + witness.stageSource.sexpr + "))"
+        " (choice (raw_target (formula "
+        + witness.rawChoiceTarget.sexpr + ")))"
+        " (normalization";
+      for (const auto& path : witness.equalitySymmetryPaths) {
+        renderedBranches += " (equality_symmetry (path";
+        for (std::size_t child : path) {
+          renderedBranches += " " + std::to_string(child);
+        }
+        renderedBranches += "))";
+      }
+      renderedBranches += ") (stage_target (formula "
+        + witness.stageTarget.sexpr + "))))";
     }
     renderedBranches +=
       ") (target (formula " + branch.target.sexpr + ")))";
@@ -1312,7 +1347,7 @@ MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
     + " (source (formula " + source.sexpr + ")) "
     + renderedBranches
     + " (result (formula " + result.sexpr + "))"
-    + " (builder \"typed_v2\"))";
+    + " (builder \"typed_v3\"))";
   return step;
 }
 

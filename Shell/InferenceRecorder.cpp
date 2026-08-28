@@ -102,13 +102,22 @@ void InferenceRecorder::recordSkolemBranch(
   Formula* sourceFormula,
   Formula* targetFormula,
   const std::vector<std::size_t>& path,
+  const std::vector<std::string>& contextProgram,
   const std::vector<SkolemInferenceExtra::ScopedVariable>& ambient,
   const std::vector<SkolemInferenceExtra::ScopedVariable>& context,
   const std::vector<SkolemInferenceExtra::Witness>& witnesses)
 {
   auto* recording = static_cast<SkolemInferenceExtra*>(_currentRecording.get());
   ASS(recording);
-  recording->branches.push_back({sourceFormula, targetFormula, path, ambient, context, witnesses});
+  recording->branches.push_back({
+    sourceFormula,
+    targetFormula,
+    path,
+    contextProgram,
+    ambient,
+    context,
+    witnesses,
+  });
 }
 
 void InferenceRecorder::endSkolemRecording(

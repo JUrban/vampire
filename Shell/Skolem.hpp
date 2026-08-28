@@ -18,6 +18,7 @@
 #define __Skolem__
 
 #include "Kernel/InductionTemplate.hpp"
+#include "Kernel/Connective.hpp"
 #include "Lib/DHMap.hpp"
 #include "Lib/Stack.hpp"
 
@@ -58,7 +59,7 @@ private:
   void preskolemise(Formula*);
   // drop existential quantifiers and apply substitution
   Formula* skolemise(Formula*);
-  FormulaList* skolemise(FormulaList*);
+  FormulaList* skolemise(FormulaList*, Connective connective);
 
   void ensureHavingVarSorts();
 
@@ -121,6 +122,7 @@ private:
   bool _appify; // a higher-order solution
   bool _recording;
   std::vector<std::size_t> _recordingPath;
+  std::vector<std::string> _recordingContextProgram;
   std::vector<std::pair<unsigned, TermList>> _recordingAmbient;
 
 }; // class Skolem

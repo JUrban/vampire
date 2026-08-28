@@ -145,9 +145,23 @@ std::string renderCnfProjection(const RenderedKernelCnfProjection& projection)
 std::string renderEnnfTrace(const RenderedKernelEnnfTrace& trace)
 {
   std::string result =
-    "(node (source " + quoteCnfAtom(trace.sourceConnective) + ")"
-    + " (polarity " + std::string(trace.polarity ? "positive" : "negative") + ")"
-    + " (children";
+    "(node (index " + std::to_string(trace.index) + ")"
+    + " (primitive " + quoteCnfAtom(trace.primitive) + ")"
+    + " (source_connective " + quoteCnfAtom(trace.sourceConnective) + ")"
+    + " (polarity " + std::string(trace.polarity ? "positive" : "negative") + ")";
+  if (trace.hasSourceFormula) {
+    result += " (source_formula (formula " + trace.sourceFormula.sexpr + "))";
+  }
+  if (trace.hasResultFormula) {
+    result += " (result_formula (formula " + trace.resultFormula.sexpr + "))";
+  }
+  result += " (context";
+  for (const auto& variable : trace.context) {
+    result += " (variable " + quoteCnfAtom(variable.variable)
+      + " " + variable.type.sexpr + ")";
+  }
+  result += ")";
+  result += " (children";
   for (const auto& child : trace.children) {
     result += " " + renderEnnfTrace(child);
   }
@@ -1557,9 +1571,20 @@ void appendAvatarLiteralClassFields(
       prefix + "_literal_" + std::to_string(literalIndex) + "="
       + literalClass.literals[literalIndex]);
   }
+  for (std::size_t literalIndex = 0;
+       literalIndex < literalClass.parentLiteralIndices.size();
+       ++literalIndex) {
+    fields.push_back(
+      prefix + "_parent_literal_index_" + std::to_string(literalIndex) + "="
+      + std::to_string(literalClass.parentLiteralIndices[literalIndex]));
+  }
   if (literalClass.hasMatchedSplitLevel) {
     fields.push_back(
       prefix + "_matched_split_level=" + std::to_string(literalClass.matchedSplitLevel));
+  }
+  if (literalClass.hasMatchedSplitVar) {
+    fields.push_back(
+      prefix + "_matched_split_var=" + std::to_string(literalClass.matchedSplitVar));
   }
 }
 
@@ -1575,6 +1600,38 @@ void appendAvatarParentVarBindingFields(
   if (binding.hasSplitVar) {
     fields.push_back(prefix + "_split_var=" + std::to_string(binding.splitVar));
   }
+  if (binding.hasCounterexampleProgram) {
+    fields.push_back(
+      prefix + "_counterexample_program="
+      + std::to_string(binding.counterexampleProgram));
+    fields.push_back(
+      prefix + "_counterexample_stage="
+      + std::to_string(binding.counterexampleStage));
+  }
+}
+
+void appendAvatarCounterexampleProgramFields(
+  std::vector<std::string>& fields,
+  const RenderedKernelAvatarCounterexampleProgram& program)
+{
+  const std::string prefix =
+    "counterexample_program_" + std::to_string(program.index);
+  fields.push_back(prefix + "_version=" + program.version);
+  fields.push_back(prefix + "_split_var=" + std::to_string(program.splitVar));
+  fields.push_back(prefix + "_source=" + program.source.sexpr);
+  fields.push_back(prefix + "_body=" + program.body.sexpr);
+  fields.push_back(prefix + "_stage_count=" + std::to_string(program.stages.size()));
+  for (const RenderedKernelAvatarCounterexampleStage& stage : program.stages) {
+    const std::string stagePrefix =
+      prefix + "_stage_" + std::to_string(stage.index);
+    fields.push_back(stagePrefix + "_variable=" + stage.variable);
+    fields.push_back(stagePrefix + "_type=" + stage.type.sexpr);
+    fields.push_back(stagePrefix + "_source=" + stage.source.sexpr);
+    fields.push_back(stagePrefix + "_predicate=" + stage.predicate.sexpr);
+    fields.push_back(stagePrefix + "_witness=" + stage.witness.sexpr);
+    fields.push_back(stagePrefix + "_target=" + stage.target.sexpr);
+  }
+  fields.push_back(prefix + "_final_body=" + program.finalBody.sexpr);
 }
 
 void appendAvatarSplitFields(
@@ -1630,6 +1687,13 @@ void appendAvatarSplitFields(
     appendAvatarParentVarBindingFields(fields, binding);
   }
   fields.push_back("parent_var_binding_count=" + std::to_string(split.parentVarBindings.size()));
+
+  for (const RenderedKernelAvatarCounterexampleProgram& program : split.counterexamplePrograms) {
+    appendAvatarCounterexampleProgramFields(fields, program);
+  }
+  fields.push_back(
+    "counterexample_program_count="
+    + std::to_string(split.counterexamplePrograms.size()));
 }
 
 void appendSatInputFields(
