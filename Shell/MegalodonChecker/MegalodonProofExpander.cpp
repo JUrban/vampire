@@ -829,11 +829,17 @@ bool expandClauseProof(
         step->producerProof);
     } else if (const auto* step =
                  std::get_if<EqualitySymmetryClauseStep>(&request.step)) {
+      if (step->producerProof.empty()) {
+        error = step->id
+          + ": missing direct producer proof for equality symmetry";
+        return false;
+      }
       primitive = MegalodonKernelBuilder::equalitySymmetryStep(
         step->id,
         step->parent,
         step->literal,
-        step->result);
+        step->result,
+        step->producerProof);
     } else if (const auto* step =
                  std::get_if<ResolveClauseStep>(&request.step)) {
       primitive = step->hasIvyProgram
@@ -1925,6 +1931,56 @@ public:
     return !result.empty();
   }
 
+  bool equalitySymmetry(
+    const std::string& parentId,
+    const std::vector<std::string>& parentArguments,
+    const std::vector<std::string>& source,
+    std::size_t selected,
+    const std::vector<std::string>& target,
+    std::string& result)
+  {
+    if (selected >= source.size()) return false;
+
+    PreservedSexprParser parser;
+    PreservedSexpr literal;
+    PreservedSexpr type;
+    PreservedSexpr left;
+    PreservedSexpr right;
+    if (!parser.parse(source[selected], literal)
+        || (!sexprHead(literal, "pos") && !sexprHead(literal, "neg"))
+        || literal.items.size() != 2
+        || !typedEqualitySexpr(literal.items[1], type, left, right)) {
+      return false;
+    }
+    const PreservedSexpr swapped = literalSexpr(
+      sexprHead(literal, "pos"),
+      equalityAtomSexpr(type, right, left));
+    std::vector<std::string> expected = source;
+    expected[selected] = swapped.render();
+    std::vector<std::string> expectedSorted = expected;
+    std::vector<std::string> targetSorted = target;
+    std::sort(expectedSorted.begin(), expectedSorted.end());
+    std::sort(targetSorted.begin(), targetSorted.end());
+    if (expectedSorted != targetSorted) return false;
+
+    const std::string targetTerm = clauseTerm(target);
+    result = eliminate(
+      source,
+      0,
+      instantiate(parent(parentId), parentArguments),
+      targetTerm,
+      [&](std::size_t index, const std::string& proof) {
+        if (index != selected) {
+          return injectLiteral(target, source[index], proof);
+        }
+        const std::string symmetric = equalitySymmetry(literal, proof);
+        return symmetric.empty()
+          ? std::string()
+          : injectLiteral(target, swapped.render(), symmetric);
+      });
+    return !result.empty();
+  }
+
   bool instantiation(
     const std::string& parentId,
     const std::vector<std::string>& parentArgumentTerms,
@@ -2745,6 +2801,30 @@ bool expandClauseEqualityResolutionProof(
   return true;
 }
 
+bool expandClauseEqualitySymmetryProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const std::vector<std::string>& sourceLiterals,
+  std::size_t selectedLiteral,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error)
+{
+  IvyClauseProofBuilder builder;
+  if (parentId.empty()
+      || !builder.equalitySymmetry(
+           parentId,
+           parentArguments,
+           sourceLiterals,
+           selectedLiteral,
+           resultLiterals,
+           result)) {
+    error = "equality symmetry is not the declared producer equality swap";
+    return false;
+  }
+  return true;
+}
+
 bool expandClauseInstantiationProof(
   const std::string& parentId,
   const std::vector<std::string>& parentArgumentTerms,
@@ -2754,6 +2834,26 @@ bool expandClauseInstantiationProof(
   IvyClauseProofBuilder builder;
   if (!builder.instantiation(parentId, parentArgumentTerms, result)) {
     error = "cannot build explicit producer parent instantiation";
+    return false;
+  }
+  return true;
+}
+
+bool expandClauseSubstitutionProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArgumentTerms,
+  const std::vector<std::string>& sourceLiterals,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error)
+{
+  IvyClauseProofBuilder builder;
+  std::string instantiated;
+  if (!builder.instantiation(
+        parentId, parentArgumentTerms, instantiated)
+      || !builder.projectionFromProof(
+        instantiated, sourceLiterals, resultLiterals, result)) {
+    error = "cannot build explicit producer substitution and clause projection";
     return false;
   }
   return true;

@@ -89,6 +89,17 @@ bool producerParentArgumentTerms(
   return true;
 }
 
+bool inheritProducerVariableContract(
+  ProducerVariableSortMap& producerVariableSorts,
+  const std::string& parentId,
+  const std::string& childId)
+{
+  const auto found = producerVariableSorts.find(parentId);
+  if (found == producerVariableSorts.end()) return false;
+  producerVariableSorts[childId] = found->second;
+  return true;
+}
+
 bool attachIvyInstantiationProof(
   MegalodonProofExpander::SubstituteClauseStep& step,
   const ProducerVariableSortMap& producerVariableSorts,
@@ -103,6 +114,28 @@ bool attachIvyInstantiationProof(
     && MegalodonProofExpander::expandClauseInstantiationProof(
          step.parent.value,
          parentArguments,
+         step.producerProof,
+         error);
+}
+
+bool attachIvySubstitutionProjectionProof(
+  MegalodonProofExpander::SubstituteClauseStep& step,
+  const ProducerVariableSortMap& producerVariableSorts,
+  const std::vector<std::string>& sourceLiterals,
+  const std::vector<std::string>& resultLiterals,
+  std::string& error)
+{
+  std::vector<std::string> parentArguments;
+  return producerParentArgumentTerms(
+           producerVariableSorts,
+           step.parent.value,
+           parentArguments,
+           error)
+    && MegalodonProofExpander::expandClauseSubstitutionProof(
+         step.parent.value,
+         parentArguments,
+         sourceLiterals,
+         resultLiterals,
          step.producerProof,
          error);
 }
@@ -138,6 +171,41 @@ MegalodonProofExpander::FactorClauseStep ivyFactorClauseStep(
       resultLiterals,
       step.producerProof,
       proofError);
+  return step;
+}
+
+MegalodonProofExpander::EqualitySymmetryClauseStep
+ivyEqualitySymmetryClauseStep(
+  const std::string& id,
+  const std::string& parentId,
+  std::size_t literal,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::vector<std::string>& sourceLiterals,
+  const std::vector<std::string>& resultLiterals,
+  const ProducerVariableSortMap& producerVariableSorts)
+{
+  MegalodonProofExpander::EqualitySymmetryClauseStep step{
+    id,
+    MegalodonKernelSyntax::unitRef(parentId),
+    literal,
+    result,
+  };
+  std::string proofError;
+  std::vector<std::string> parentArguments;
+  if (producerParentArguments(
+        producerVariableSorts,
+        parentId,
+        parentArguments,
+        proofError)) {
+    MegalodonProofExpander::expandClauseEqualitySymmetryProof(
+      parentId,
+      parentArguments,
+      sourceLiterals,
+      literal,
+      resultLiterals,
+      step.producerProof,
+      proofError);
+  }
   return step;
 }
 
@@ -3150,20 +3218,38 @@ bool MegalodonChecker::certificateCondensationStepSexpr(
         std::vector<std::string> next = current;
         next[index] = swapped;
         const std::string symmetryId = stepBase + "_symmetry" + std::to_string(symmetryCount++);
+        std::vector<std::string> parentArguments;
+        std::string producerProof;
+        std::string producerProofError;
+        if (!producerParentArguments(
+              _certificateProducerFreeVariableSorts,
+              currentParentId,
+              parentArguments,
+              producerProofError)
+            || !MegalodonProofExpander::expandClauseEqualitySymmetryProof(
+              currentParentId,
+              parentArguments,
+              current,
+              index,
+              next,
+              producerProof,
+              producerProofError)) {
+          return false;
+        }
         MegalodonKernelSyntax::PrimitiveStep symmetry =
           MegalodonKernelBuilder::equalitySymmetryStep(
             symmetryId,
             MegalodonKernelSyntax::unitRef(currentParentId),
             index,
-            MegalodonKernelSyntax::clause(clauseSexprFromLiterals(next)));
+            MegalodonKernelSyntax::clause(clauseSexprFromLiterals(next)),
+            producerProof);
         steps.push_back(symmetry.rendered);
         primitives.push_back(std::move(symmetry));
-        const auto parentSorts =
-          _certificateProducerFreeVariableSorts.find(currentParentId);
-        if (parentSorts
-            != _certificateProducerFreeVariableSorts.end()) {
-          _certificateProducerFreeVariableSorts[symmetryId] =
-            parentSorts->second;
+        if (!inheritProducerVariableContract(
+              _certificateProducerFreeVariableSorts,
+              currentParentId,
+              symmetryId)) {
+          return false;
         }
         current = next;
         currentParentId = symmetryId;
@@ -3241,9 +3327,11 @@ bool MegalodonChecker::certificateCondensationStepSexpr(
           currentParentId,
           finalParentArguments,
           finalProducerProofError)
-        || !MegalodonProofExpander::expandClauseInstantiationProof(
+        || !MegalodonProofExpander::expandClauseSubstitutionProof(
           currentParentId,
           finalParentArguments,
+          current,
+          actualRaw,
           finalProducerProof,
           finalProducerProofError)) {
       return false;
@@ -8921,7 +9009,9 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         const std::string& parentId,
         const std::string& substitution,
         const std::string& resultClause,
-        const Kernel::Substitution* producerSubstitution = nullptr) {
+        const Kernel::Substitution* producerSubstitution = nullptr,
+        const std::vector<std::string>* projectionSource = nullptr,
+        const std::vector<std::string>* projectionResult = nullptr) {
       MegalodonProofExpander::ClauseStepRequest request;
       MegalodonProofExpander::SubstituteClauseStep substituteStep{
         stepId,
@@ -8931,10 +9021,26 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
       };
       std::string producerProofError;
       if (producerSubstitution == nullptr) {
-        if (!attachIvyInstantiationProof(
+        std::vector<std::string> parentArguments;
+        const bool attached =
+          projectionSource != nullptr && projectionResult != nullptr
+          ? producerParentArgumentTerms(
+              _certificateProducerFreeVariableSorts,
+              parentId,
+              parentArguments,
+              producerProofError)
+            && MegalodonProofExpander::expandClauseSubstitutionProof(
+              parentId,
+              parentArguments,
+              *projectionSource,
+              *projectionResult,
+              substituteStep.producerProof,
+              producerProofError)
+          : attachIvyInstantiationProof(
               substituteStep,
               _certificateProducerFreeVariableSorts,
-              producerProofError)) {
+              producerProofError);
+        if (!attached) {
           return false;
         }
       } else {
@@ -8955,11 +9061,21 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
           }
           parentArguments.push_back(std::move(argument));
         }
-        if (!MegalodonProofExpander::expandClauseInstantiationProof(
+        const bool attached =
+          projectionSource != nullptr && projectionResult != nullptr
+          ? MegalodonProofExpander::expandClauseSubstitutionProof(
+              parentId,
+              parentArguments,
+              *projectionSource,
+              *projectionResult,
+              substituteStep.producerProof,
+              producerProofError)
+          : MegalodonProofExpander::expandClauseInstantiationProof(
               parentId,
               parentArguments,
               substituteStep.producerProof,
-              producerProofError)) {
+              producerProofError);
+        if (!attached) {
           return false;
         }
       }
@@ -8988,14 +9104,18 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
     [&](const std::string& stepId,
         const std::string& parentId,
         std::size_t literal,
-        const std::string& resultClause) {
+        const std::vector<std::string>& sourceLiterals,
+        const std::vector<std::string>& resultLiterals) {
       MegalodonProofExpander::ClauseStepRequest request;
-      request.step = MegalodonProofExpander::EqualitySymmetryClauseStep{
+      request.step = ivyEqualitySymmetryClauseStep(
         stepId,
-        MegalodonKernelSyntax::unitRef(parentId),
+        parentId,
         literal,
-        MegalodonKernelSyntax::clause(resultClause),
-      };
+        MegalodonKernelSyntax::clause(
+          certificateClauseSexprFromRenderedLiterals(resultLiterals)),
+        sourceLiterals,
+        resultLiterals,
+        _certificateProducerFreeVariableSorts);
       expansionRequests.push_back(std::move(request));
     };
   auto addResolveStep =
@@ -9205,13 +9325,12 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
       std::vector<std::string> symmetryRendered = currentRendered;
       symmetryRendered[selectedIndex] = swappedRendered;
       const std::string symmetryId = unitId + "_current_symmetry" + std::to_string(traceIndex);
-      const std::string symmetryResultClause =
-        certificateClauseSexprFromRenderedLiterals(symmetryRendered);
       addEqualitySymmetryStep(
         symmetryId,
         currentParentId,
         selectedIndex,
-        symmetryResultClause);
+        currentRendered,
+        symmetryRendered);
       addSyntheticVariableSorts(symmetryId, symmetryClause);
       currentLiterals = symmetryClause;
       currentRendered = symmetryRendered;
@@ -9288,16 +9407,17 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         && certificateLiteralSexpr(swapped, swappedRendered)
         && complementLiteralSexpr(swappedRendered, swappedComplement)
         && swappedComplement == unitRendered[0]) {
+        const std::vector<std::string> symmetrySourceRendered =
+          currentRendered;
         currentLiterals[selectedIndex] = swapped;
         currentRendered[selectedIndex] = swappedRendered;
         const std::string symmetryId = unitId + "_current_pivot_symmetry" + std::to_string(traceIndex);
-        const std::string symmetryResultClause =
-          certificateClauseSexprFromRenderedLiterals(currentRendered);
         addEqualitySymmetryStep(
           symmetryId,
           currentParentId,
           selectedIndex,
-          symmetryResultClause);
+          symmetrySourceRendered,
+          currentRendered);
         addSyntheticVariableSorts(symmetryId, currentLiterals);
         currentParentId = symmetryId;
         selectedLiteral = currentLiterals[selectedIndex];
@@ -9315,15 +9435,15 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         return fail("unit pivot symmetry mismatch");
       }
       unitLiterals[0] = swapped;
+      const std::vector<std::string> symmetrySourceRendered = unitRendered;
       unitRendered[0] = swappedRendered;
       const std::string symmetryId = unitId + "_unit_symmetry" + std::to_string(traceIndex);
-      const std::string symmetryResultClause =
-        certificateClauseSexprFromRenderedLiterals(unitRendered);
       addEqualitySymmetryStep(
         symmetryId,
         unitParentId,
         0,
-        symmetryResultClause);
+        symmetrySourceRendered,
+        unitRendered);
       addSyntheticVariableSorts(symmetryId, unitLiterals);
       unitParentId = symmetryId;
     }
@@ -9467,13 +9587,12 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
       candidate[i] = swappedRendered;
       if (normalized(candidate) == normalized(actual)) {
         const std::string symmetryId = unitId + "_final_symmetry" + std::to_string(guard);
-        const std::string symmetryResultClause =
-          certificateClauseSexprFromRenderedLiterals(candidate);
         addEqualitySymmetryStep(
           symmetryId,
           currentParentId,
           i,
-          symmetryResultClause);
+          currentRendered,
+          candidate);
         addSyntheticVariableSorts(symmetryId, currentLiterals);
         current = candidate;
         currentRendered = candidate;
@@ -9506,7 +9625,10 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
       unitId,
       currentParentId,
       "(subst)",
-      clause)) {
+      clause,
+      nullptr,
+      &current,
+      &actual)) {
       return fail("final direct substitution proof failed");
     }
   }
@@ -9798,17 +9920,27 @@ bool MegalodonChecker::certificateResolveStepSexpr(
           || pivotIndex >= parentLiterals.size()) {
           return false;
         }
+        const std::vector<std::string> sourceLiterals = parentLiterals;
         parentLiterals[pivotIndex] = flippedLiteral;
         const std::string symmetryClause = clauseSexprFromLiterals(parentLiterals);
         MegalodonProofExpander::ClauseStepRequest request;
-        request.step =
-          MegalodonProofExpander::EqualitySymmetryClauseStep{
-            symmetryId,
-            MegalodonKernelSyntax::unitRef(parentId),
-            pivotIndex,
-            MegalodonKernelSyntax::clause(symmetryClause),
-          };
+        request.step = ivyEqualitySymmetryClauseStep(
+          symmetryId,
+          parentId,
+          pivotIndex,
+          MegalodonKernelSyntax::clause(symmetryClause),
+          sourceLiterals,
+          parentLiterals,
+          _certificateProducerFreeVariableSorts);
         expansionRequests.push_back(std::move(request));
+        const auto parentSorts =
+          _certificateProducerFreeVariableSorts.find(parentId);
+        if (parentSorts
+            == _certificateProducerFreeVariableSorts.end()) {
+          return false;
+        }
+        _certificateProducerFreeVariableSorts[symmetryId] =
+          parentSorts->second;
         parentId = symmetryId;
         return true;
       };
@@ -9881,6 +10013,12 @@ bool MegalodonChecker::certificateResolveStepSexpr(
               candidate,
               _certificateProducerFreeVariableSorts);
             expansionRequests.push_back(std::move(request));
+            if (!inheritProducerVariableContract(
+                  _certificateProducerFreeVariableSorts,
+                  currentParentId,
+                  factorId)) {
+              return false;
+            }
             current = candidate;
             currentParentId = factorId;
             factored = true;
@@ -9900,9 +10038,11 @@ bool MegalodonChecker::certificateResolveStepSexpr(
         MegalodonKernelSyntax::clause(finalClause),
       };
       std::string substitutionProofError;
-      if (!attachIvyInstantiationProof(
+      if (!attachIvySubstitutionProjectionProof(
             substituteStep,
             _certificateProducerFreeVariableSorts,
+            current,
+            actual,
             substitutionProofError)) {
         return false;
       }
@@ -10698,13 +10838,14 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
           const std::string sideSymmetryId = stepBase + "_side_symmetry0";
           const std::string sideSymmetryClause = clauseSexprFromLiterals(sideSymmetryLiterals);
           MegalodonProofExpander::ClauseStepRequest request;
-          request.step =
-            MegalodonProofExpander::EqualitySymmetryClauseStep{
-              sideSymmetryId,
-              MegalodonKernelSyntax::unitRef(sideParentId),
-              sideIndex,
-              MegalodonKernelSyntax::clause(sideSymmetryClause),
-          };
+          request.step = ivyEqualitySymmetryClauseStep(
+            sideSymmetryId,
+            sideParentId,
+            sideIndex,
+            MegalodonKernelSyntax::clause(sideSymmetryClause),
+            sideClauseLiterals,
+            sideSymmetryLiterals,
+            _certificateProducerFreeVariableSorts);
           expansionRequests.push_back(std::move(request));
           const auto sideParentSorts =
             _certificateProducerFreeVariableSorts.find(sideParentId);
@@ -10769,16 +10910,21 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
               const std::string symmetryId = stepBase + "_symmetry" + std::to_string(symmetryCount++);
               const std::string symmetryClause = clauseSexprFromLiterals(candidate);
               MegalodonProofExpander::ClauseStepRequest request;
-              request.step =
-                MegalodonProofExpander::EqualitySymmetryClauseStep{
-                  symmetryId,
-                  MegalodonKernelSyntax::unitRef(currentParentId),
-                  literalToFlip,
-                  MegalodonKernelSyntax::clause(symmetryClause),
-              };
+              request.step = ivyEqualitySymmetryClauseStep(
+                symmetryId,
+                currentParentId,
+                literalToFlip,
+                MegalodonKernelSyntax::clause(symmetryClause),
+                currentClause,
+                candidate,
+                _certificateProducerFreeVariableSorts);
               expansionRequests.push_back(std::move(request));
-              _certificateProducerFreeVariableSorts[symmetryId] =
-                primitiveScope;
+              if (!inheritProducerVariableContract(
+                    _certificateProducerFreeVariableSorts,
+                    currentParentId,
+                    symmetryId)) {
+                return false;
+              }
               currentClause = candidate;
               currentParentId = symmetryId;
               changed = true;
@@ -10840,9 +10986,11 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
               MegalodonKernelSyntax::clause(conclusion),
           };
           std::string substitutionProofError;
-          if (!attachIvyInstantiationProof(
+          if (!attachIvySubstitutionProjectionProof(
                 substituteStep,
                 _certificateProducerFreeVariableSorts,
+                currentClause,
+                actualRaw,
                 substitutionProofError)) {
             continue;
           }
@@ -11267,6 +11415,8 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
           if (sideClauseLiterals[literalIndex] == swappedSideSexpr) {
             return true;
           }
+          const std::vector<std::string> sideSymmetrySource =
+            sideClauseLiterals;
           sideClauseLiterals[literalIndex] = swappedSideSexpr;
           rememberVariableSorts(swappedSide);
           const std::string sideSymmetryId = stepBase + "_side_symmetry" + std::to_string(sideSymmetryCount++);
@@ -11274,12 +11424,14 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
           const std::string sideSymmetryClause = clauseFromLiterals(sideClauseLiterals);
           std::string metadata = syntheticVariableSortsMetadata(sideSymmetryId, sideClauseLiterals);
           MegalodonProofExpander::ClauseStepRequest request;
-          request.step = MegalodonProofExpander::EqualitySymmetryClauseStep{
+          request.step = ivyEqualitySymmetryClauseStep(
             sideSymmetryId,
-            MegalodonKernelSyntax::unitRef(sideSymmetryParentId),
+            sideSymmetryParentId,
             literalIndex,
             MegalodonKernelSyntax::clause(sideSymmetryClause),
-          };
+            sideSymmetrySource,
+            sideClauseLiterals,
+            _certificateProducerFreeVariableSorts);
           if (!metadata.empty()) {
             request.trailingRecords.push_back(std::move(metadata));
           }
@@ -11421,9 +11573,11 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
             MegalodonKernelSyntax::clause(resultClauseSexpr),
         };
         std::string substitutionProofError;
-        if (!attachIvyInstantiationProof(
+        if (!attachIvySubstitutionProjectionProof(
               substituteStep,
               _certificateProducerFreeVariableSorts,
+              currentLiterals,
+              actualLiterals,
               substitutionProofError)) {
           return debugFailure(substitutionProofError.c_str());
         }
@@ -12002,16 +12156,43 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
           const std::string symmetryId = finalSymmetry
             ? unitId
             : unitId + "_sym" + std::to_string(guard);
+          const std::vector<std::string>& target =
+            finalSymmetry ? actual : candidate;
+          std::vector<std::string> parentArguments;
+          std::string producerProof;
+          std::string producerProofError;
+          if (!producerParentArguments(
+                _certificateProducerFreeVariableSorts,
+                currentParentId,
+                parentArguments,
+                producerProofError)
+              || !MegalodonProofExpander::expandClauseEqualitySymmetryProof(
+                currentParentId,
+                parentArguments,
+                current,
+                i,
+                target,
+                producerProof,
+                producerProofError)) {
+            return false;
+          }
           auto symmetryPrimitive =
             MegalodonKernelBuilder::equalitySymmetryStep(
               symmetryId,
               MegalodonKernelSyntax::unitRef(currentParentId),
               i,
               MegalodonKernelSyntax::clause(
-                clauseSexprFromLiterals(finalSymmetry ? actual : candidate)));
+                clauseSexprFromLiterals(target)),
+              producerProof);
           steps.push_back(symmetryPrimitive.rendered);
           if (generatedPrimitives != nullptr) {
             generatedPrimitives->push_back(std::move(symmetryPrimitive));
+          }
+          if (!inheritProducerVariableContract(
+                _certificateProducerFreeVariableSorts,
+                currentParentId,
+                symmetryId)) {
+            return false;
           }
           current = finalSymmetry ? actual : candidate;
           currentParentId = symmetryId;
@@ -13047,6 +13228,12 @@ bool MegalodonChecker::certificateParamodulateStepSexpr(
                     factored,
                     _certificateProducerFreeVariableSorts);
                   expansionRequests.push_back(std::move(request));
+                  if (!inheritProducerVariableContract(
+                        _certificateProducerFreeVariableSorts,
+                        currentParentId,
+                        factorId)) {
+                    return false;
+                  }
                   currentClause = factored;
                   currentParentId = factorId;
                   changed = true;
@@ -13068,9 +13255,11 @@ bool MegalodonChecker::certificateParamodulateStepSexpr(
               MegalodonKernelSyntax::clause(clauseSexprFromLiterals(actual)),
             };
             std::string substitutionProofError;
-            if (!attachIvyInstantiationProof(
+            if (!attachIvySubstitutionProjectionProof(
                   substituteStep,
                   _certificateProducerFreeVariableSorts,
+                  currentClause,
+                  actual,
                   substitutionProofError)) {
               continue;
             }
@@ -13636,6 +13825,16 @@ bool MegalodonChecker::certificateForwardSubsumptionDemodulationStepsSexpr(
                 _certificateProducerFreeVariableSorts,
                 rewriteSymmetry);
             expansionRequests.push_back(std::move(paramodulateRequest));
+            if (paramodulationStepId != stepBase) {
+              const auto resultSorts =
+                _certificateProducerFreeVariableSorts.find(stepBase);
+              if (resultSorts
+                  == _certificateProducerFreeVariableSorts.end()) {
+                return false;
+              }
+              _certificateProducerFreeVariableSorts[paramodulationStepId] =
+                resultSorts->second;
+            }
 
             std::string conclusionParentId = paramodulationStepId;
             if (needsConclusionSymmetry) {
@@ -13645,16 +13844,21 @@ bool MegalodonChecker::certificateForwardSubsumptionDemodulationStepsSexpr(
               }
               const std::string symmetryStepId = conclusionFactors.empty() ? stepBase : stepBase + "_symmetry_result";
               MegalodonProofExpander::ClauseStepRequest symmetryRequest;
-              symmetryRequest.step =
-                MegalodonProofExpander::EqualitySymmetryClauseStep{
-                  symmetryStepId,
-                  MegalodonKernelSyntax::unitRef(paramodulationStepId),
-                  static_cast<std::size_t>(
-                    rewritten - paramClause.begin()),
-                  MegalodonKernelSyntax::clause(
-                    clauseSexprFromLiterals(paramodulationResult)),
-                };
+              symmetryRequest.step = ivyEqualitySymmetryClauseStep(
+                symmetryStepId,
+                paramodulationStepId,
+                static_cast<std::size_t>(
+                  rewritten - paramClause.begin()),
+                MegalodonKernelSyntax::clause(
+                  clauseSexprFromLiterals(paramodulationResult)),
+                primitiveResult,
+                paramodulationResult,
+                _certificateProducerFreeVariableSorts);
               expansionRequests.push_back(std::move(symmetryRequest));
+              if (symmetryStepId != stepBase) {
+                _certificateProducerFreeVariableSorts[symmetryStepId] =
+                  _certificateProducerFreeVariableSorts[paramodulationStepId];
+              }
               conclusionParentId = symmetryStepId;
             }
 
@@ -14476,17 +14680,22 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                   }
                   std::string symmetryStepId = stepBase + "_symmetry";
                   MegalodonProofExpander::ClauseStepRequest request;
-                  request.step =
-                    MegalodonProofExpander::EqualitySymmetryClauseStep{
-                      symmetryStepId,
-                      MegalodonKernelSyntax::unitRef(equalityParentId),
-                      equalityIndex,
-                      MegalodonKernelSyntax::clause(
-                        clauseSexprFromLiterals(symmetryClause)),
-                    };
+                  request.step = ivyEqualitySymmetryClauseStep(
+                    symmetryStepId,
+                    equalityParentId,
+                    equalityIndex,
+                    MegalodonKernelSyntax::clause(
+                      clauseSexprFromLiterals(symmetryClause)),
+                    equalitySource,
+                    symmetryClause,
+                    _certificateProducerFreeVariableSorts);
                   expansionRequests.push_back(std::move(request));
-                  _certificateProducerFreeVariableSorts[symmetryStepId] =
-                    primitiveScope;
+                  if (!inheritProducerVariableContract(
+                        _certificateProducerFreeVariableSorts,
+                        equalityParentId,
+                        symmetryStepId)) {
+                    return false;
+                  }
                   equalityParentId = symmetryStepId;
                   equalitySource = symmetryClause;
                 }
@@ -14640,9 +14849,11 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                               clauseSexprFromLiterals(actual)),
                         };
                         std::string substitutionProofError;
-                        if (!attachIvyInstantiationProof(
+                        if (!attachIvySubstitutionProjectionProof(
                               substituteStep,
                               _certificateProducerFreeVariableSorts,
+                              candidateClause,
+                              actual,
                               substitutionProofError)) {
                           return false;
                         }
@@ -14675,15 +14886,15 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                       std::vector<std::vector<std::string>> symmetryFactorResults;
                       if (sameMultiset(symmetryClause, actual)) {
                         MegalodonProofExpander::ClauseStepRequest request;
-                        request.step =
-                          MegalodonProofExpander::EqualitySymmetryClauseStep{
-                            stepBase,
-                            MegalodonKernelSyntax::unitRef(
-                              candidateParentId),
-                            literalIndex,
-                            MegalodonKernelSyntax::clause(
-                              clauseSexprFromLiterals(actual)),
-                          };
+                        request.step = ivyEqualitySymmetryClauseStep(
+                          stepBase,
+                          candidateParentId,
+                          literalIndex,
+                          MegalodonKernelSyntax::clause(
+                            clauseSexprFromLiterals(actual)),
+                          candidateClause,
+                          actual,
+                          _certificateProducerFreeVariableSorts);
                         candidateSteps.push_back(std::move(request));
                         return true;
                       }
@@ -14692,17 +14903,22 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                       }
                       const std::string symmetryStepId = stepBase + "_symmetry_result";
                       MegalodonProofExpander::ClauseStepRequest request;
-                      request.step =
-                        MegalodonProofExpander::EqualitySymmetryClauseStep{
-                          symmetryStepId,
-                          MegalodonKernelSyntax::unitRef(candidateParentId),
-                          literalIndex,
-                          MegalodonKernelSyntax::clause(
-                            clauseSexprFromLiterals(symmetryClause)),
-                        };
+                      request.step = ivyEqualitySymmetryClauseStep(
+                        symmetryStepId,
+                        candidateParentId,
+                        literalIndex,
+                        MegalodonKernelSyntax::clause(
+                          clauseSexprFromLiterals(symmetryClause)),
+                        candidateClause,
+                        symmetryClause,
+                        _certificateProducerFreeVariableSorts);
                       candidateSteps.push_back(std::move(request));
-                      _certificateProducerFreeVariableSorts[symmetryStepId] =
-                        primitiveScope;
+                      if (!inheritProducerVariableContract(
+                            _certificateProducerFreeVariableSorts,
+                            candidateParentId,
+                            symmetryStepId)) {
+                        return false;
+                      }
                       candidateParentId = symmetryStepId;
                       emitFactors(
                         candidateSteps,
@@ -14825,17 +15041,22 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
               }
               std::string symmetryStepId = stepBase + "_symmetry";
               MegalodonProofExpander::ClauseStepRequest request;
-              request.step =
-                MegalodonProofExpander::EqualitySymmetryClauseStep{
-                  symmetryStepId,
-                  MegalodonKernelSyntax::unitRef(equalityParentId),
-                  equalityIndex,
-                  MegalodonKernelSyntax::clause(
-                    clauseSexprFromLiterals(symmetryClause)),
-                };
+              request.step = ivyEqualitySymmetryClauseStep(
+                symmetryStepId,
+                equalityParentId,
+                equalityIndex,
+                MegalodonKernelSyntax::clause(
+                  clauseSexprFromLiterals(symmetryClause)),
+                equalitySource,
+                symmetryClause,
+                _certificateProducerFreeVariableSorts);
               expansionRequests.push_back(std::move(request));
-              _certificateProducerFreeVariableSorts[symmetryStepId] =
-                primitiveScope;
+              if (!inheritProducerVariableContract(
+                    _certificateProducerFreeVariableSorts,
+                    equalityParentId,
+                    symmetryStepId)) {
+                return false;
+              }
               equalityParentId = symmetryStepId;
               equalitySource = std::move(symmetryClause);
             }
@@ -14875,19 +15096,24 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
               }
               const std::string symmetryStepId = conclusionFactors.empty() ? stepBase : stepBase + "_symmetry_result";
               MegalodonProofExpander::ClauseStepRequest request;
-              request.step =
-                MegalodonProofExpander::EqualitySymmetryClauseStep{
-                  symmetryStepId,
-                  MegalodonKernelSyntax::unitRef(paramodulationStepId),
-                  static_cast<std::size_t>(
-                    rewritten - paramodulationResult.begin()),
-                  MegalodonKernelSyntax::clause(
-                    clauseSexprFromLiterals(conclusionSymmetryResult)),
-                };
+              request.step = ivyEqualitySymmetryClauseStep(
+                symmetryStepId,
+                paramodulationStepId,
+                static_cast<std::size_t>(
+                  rewritten - paramodulationResult.begin()),
+                MegalodonKernelSyntax::clause(
+                  clauseSexprFromLiterals(conclusionSymmetryResult)),
+                paramodulationResult,
+                conclusionSymmetryResult,
+                _certificateProducerFreeVariableSorts);
               expansionRequests.push_back(std::move(request));
               if (!conclusionFactors.empty()) {
-                _certificateProducerFreeVariableSorts[symmetryStepId] =
-                  primitiveScope;
+                if (!inheritProducerVariableContract(
+                      _certificateProducerFreeVariableSorts,
+                      paramodulationStepId,
+                      symmetryStepId)) {
+                  return false;
+                }
               }
             }
 
@@ -15195,25 +15421,26 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
              != substitutedParentClauses[parentIndex][literalIndex]) {
         return failExact("typed parent substitution canonical orientation");
       }
+      const std::vector<std::string> symmetrySource = current;
       current[literalIndex] = std::move(swapped);
       const std::string symmetryId =
         substituteId + "_symmetry" + std::to_string(symmetryIndex++);
       MegalodonProofExpander::ClauseStepRequest symmetryRequest;
-      symmetryRequest.step =
-        MegalodonProofExpander::EqualitySymmetryClauseStep{
-          symmetryId,
-          MegalodonKernelSyntax::unitRef(parentIds[parentIndex]),
-          literalIndex,
-          MegalodonKernelSyntax::clause(
-            clauseSexprFromLiterals(current)),
-        };
+      symmetryRequest.step = ivyEqualitySymmetryClauseStep(
+        symmetryId,
+        parentIds[parentIndex],
+        literalIndex,
+        MegalodonKernelSyntax::clause(
+          clauseSexprFromLiterals(current)),
+        symmetrySource,
+        current,
+        _certificateProducerFreeVariableSorts);
       expansionRequests.push_back(std::move(symmetryRequest));
-      auto substitutionSorts =
-        _certificateProducerFreeVariableSorts.find(substituteId);
-      if (substitutionSorts
-          != _certificateProducerFreeVariableSorts.end()) {
-        _certificateProducerFreeVariableSorts[symmetryId] =
-          substitutionSorts->second;
+      if (!inheritProducerVariableContract(
+            _certificateProducerFreeVariableSorts,
+            parentIds[parentIndex],
+            symmetryId)) {
+        return failExact("typed equality-symmetry variable contract");
       }
       addSyntheticVariableSorts(symmetryId, current);
       parentIds[parentIndex] = symmetryId;
@@ -15480,9 +15707,11 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
             clauseSexprFromLiterals(actual)),
       };
       std::string substitutionProofError;
-      if (!attachIvyInstantiationProof(
+      if (!attachIvySubstitutionProjectionProof(
             substituteStep,
             _certificateProducerFreeVariableSorts,
+            currentClause,
+            actual,
             substitutionProofError)) {
         return failExact(substitutionProofError.c_str());
       }

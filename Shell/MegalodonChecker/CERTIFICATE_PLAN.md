@@ -118,11 +118,25 @@ Fresh `substitute` records carry `ivy_substitute_v2`. Vampire applies the exact
 recorded substitution to every quantified parent variable, in authoritative
 producer-contract order, and emits the resulting parent theorem application as
 an `ivy_nd_v1` proof. Identity substitutions still apply every live parent
-variable explicitly. Megalodon checks the declared parent boundary and replays
-this term generically; it does not infer a substitution or reconstruct theorem
-applications on the v2 path. Every synthetic primitive also receives explicit
-`step_variable_sorts` and `step_free_variable_sorts` records, because literal
-occurrence order is not a valid substitute for the producer's binder order.
+variable explicitly. When a synthetic normalization chain also changes clause
+order, Vampire eliminates that instantiated clause and injects each branch into
+the exact declared result order. This projection is emitted for resolution,
+SAT subsumption, paramodulation, demodulation, and superposition conclusions;
+it is not reconstructed by Megalodon. Megalodon checks the declared parent
+boundary and replays the term generically. Every synthetic primitive also
+receives explicit `step_variable_sorts` and `step_free_variable_sorts` records,
+because literal occurrence order is not a valid substitute for the producer's
+binder order.
+
+Fresh `equality_symmetry` records carry `ivy_equality_symmetry_v2`. Vampire
+checks the selected positive or negative typed equality and the exact result
+multiset, explicitly instantiates the parent, eliminates its clause, derives
+the swapped literal with Leibniz equality, and injects every branch into the
+declared result clause. This proof is mandatory at every fresh producer site,
+including synthetic symmetry steps inside resolution, unit-resulting
+resolution, subsumption resolution, demodulation, and superposition lowering.
+Megalodon structurally checks the swap and generically replays the attached
+proof; the old equality-symmetry constructor is archive compatibility only.
 
 Direct `resolve` and duplicate-deleting `factor` records carry an
 `ivy_nd_v1` proof block (`ivy_resolve_v2` and `ivy_factor_v2`). Vampire applies
@@ -297,9 +311,9 @@ Implemented and retained:
 - exact substitutions, selected literals, equality positions, and free-variable
   records for migrated clausal families;
 - direct `ivy_substitute_v2`, `ivy_resolve_v2`, `ivy_factor_v2`,
-  `ivy_paramodulate_v2`, `ivy_equality_resolution_v2`, and
-  `ivy_equality_factoring_v2` proof trees emitted by Vampire and replayed by the
-  generic Megalodon Ivy elaborator;
+  `ivy_paramodulate_v2`, `ivy_equality_resolution_v2`,
+  `ivy_equality_factoring_v2`, and `ivy_equality_symmetry_v2` proof trees
+  emitted by Vampire and replayed by the generic Megalodon Ivy elaborator;
 - exact recursive ENNF producer trace;
 - exact CNF projection records;
 - typed scoped Skolem branch traces;
@@ -400,13 +414,33 @@ undeclared parent, a wrong choice theorem, and a corrupted choice definition.
 Shared AVATAR split and contradiction tests also pass with these direct Skolem
 objects present.
 
+The direct clausal stress pair is:
+
+```text
+/project/tmp/equality-symmetry-regression-export-v4
+2 fixed-strategy THF certificates exported in parallel
+41 equality_symmetry records, all with direct producer proofs
+88 substitute records, including producer-expanded final permutations
+
+/project/tmp/equality-symmetry-regression-check-v4
+2/2 strict source-map, source-emission, and standalone Megalodon checks passed
+```
+
+The pair includes positive and negative typed equality symmetry and the
+resolution/factoring clause-order case that previously emitted a bare parent
+as the proof of a different permutation. The symmetry, substitution, factor,
+equality-factoring, paramodulation/equality-resolution, and resolution mutation
+tests also pass concurrently. This is focused clausal evidence, not a new
+100-theorem completion claim.
+
 ## Immediate Producer Work
 
 1. Extend the producer proof-expansion pass analogous to Prover9's
    `expand_proof_ivy` beyond the now-direct AVATAR, local Skolem, substitution,
    resolution, factor, single-site paramodulation, reflexive equality
-   resolution, and equality factoring objects. Equality-resolution constraints
-   and compound trivial-inequality cleanup are the next clausal macros; their
+   resolution, equality factoring, and equality symmetry objects.
+   Equality-resolution constraints and compound trivial-inequality cleanup are
+   the next clausal macros; their
    parents must become explicit `instantiate` nodes before small primitive
    proofs, with no consumer unification or case synthesis.
 2. Run Skolem-use collection over those expanded nodes and emit a finite,

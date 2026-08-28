@@ -76,6 +76,7 @@ struct EqualitySymmetryClauseStep {
   MegalodonKernelSyntax::RenderedKernelUnitRef parent;
   std::size_t literal = 0;
   MegalodonKernelSyntax::RenderedKernelClause result;
+  std::string producerProof;
 };
 
 struct ResolveClauseStep {
@@ -286,9 +287,26 @@ bool expandClauseEqualityResolutionProof(
   std::string& result,
   std::string& error);
 
+bool expandClauseEqualitySymmetryProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const std::vector<std::string>& sourceLiterals,
+  std::size_t selectedLiteral,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error);
+
 bool expandClauseInstantiationProof(
   const std::string& parentId,
   const std::vector<std::string>& parentArgumentTerms,
+  std::string& result,
+  std::string& error);
+
+bool expandClauseSubstitutionProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArgumentTerms,
+  const std::vector<std::string>& sourceLiterals,
+  const std::vector<std::string>& resultLiterals,
   std::string& result,
   std::string& error);
 

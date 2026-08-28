@@ -95,7 +95,8 @@ MegalodonKernelSyntax::PrimitiveStep equalitySymmetryStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
   std::size_t literal,
-  const MegalodonKernelSyntax::RenderedKernelClause& result);
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::string& producerProof = {});
 
 MegalodonKernelSyntax::PrimitiveStep substituteStep(
   const std::string& id,
