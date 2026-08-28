@@ -889,5 +889,513 @@ bool expandClauseProof(
   return true;
 }
 
+namespace {
+
+Kernel::Formula* normalizeTransportShape(Kernel::Formula* formula)
+{
+  switch (formula->connective()) {
+    case Kernel::FORALL:
+    case Kernel::EXISTS: {
+      std::vector<std::pair<unsigned, Kernel::TermList>> variables;
+      Kernel::VSList::Iterator iterator(formula->vars());
+      while (iterator.hasNext()) {
+        variables.push_back(iterator.next());
+      }
+      Kernel::Formula* body = normalizeTransportShape(formula->qarg());
+      for (std::size_t index = variables.size(); index-- > 0;) {
+        body = new Kernel::QuantifiedFormula(
+          formula->connective(),
+          Kernel::VSList::singleton(variables[index]),
+          body);
+      }
+      return body;
+    }
+    case Kernel::AND:
+    case Kernel::OR: {
+      std::vector<Kernel::Formula*> arguments;
+      auto iterator = formula->args()->iter();
+      while (iterator.hasNext()) {
+        arguments.push_back(normalizeTransportShape(iterator.next()));
+      }
+      if (arguments.size() < 2) {
+        return formula;
+      }
+      Kernel::Formula* result = arguments.back();
+      for (std::size_t index = arguments.size() - 1; index-- > 0;) {
+        result = new Kernel::JunctionFormula(
+          formula->connective(),
+          new Kernel::FormulaList(
+            arguments[index],
+            new Kernel::FormulaList(result)));
+      }
+      return result;
+    }
+    case Kernel::IMP:
+    case Kernel::IFF:
+    case Kernel::XOR:
+      return new Kernel::BinaryFormula(
+        formula->connective(),
+        normalizeTransportShape(formula->left()),
+        normalizeTransportShape(formula->right()));
+    case Kernel::NOT:
+      return new Kernel::BinaryFormula(
+        Kernel::IMP,
+        normalizeTransportShape(formula->uarg()),
+        Kernel::Formula::falseFormula());
+    default:
+      return formula;
+  }
+}
+
+Kernel::TermList substitutedVariable(
+  Kernel::TermList term,
+  const Environment& substitutions)
+{
+  for (std::size_t remaining = substitutions.size();
+       term.isVar() && remaining-- > 0;) {
+    auto found = std::find_if(
+      substitutions.begin(),
+      substitutions.end(),
+      [&](const auto& binding) { return binding.first == term.var(); });
+    if (found == substitutions.end()
+        || (found->second.isVar() && found->second.var() == term.var())) {
+      break;
+    }
+    term = found->second;
+  }
+  return term;
+}
+
+bool sameFormulaModuloAliases(
+  Kernel::Formula* left,
+  const Environment& leftAliases,
+  Kernel::Formula* right,
+  const Environment& rightAliases);
+
+bool sameTermModuloAliases(
+  Kernel::TermList left,
+  const Environment& leftAliases,
+  Kernel::TermList right,
+  const Environment& rightAliases)
+{
+  left = substitutedVariable(left, leftAliases);
+  right = substitutedVariable(right, rightAliases);
+  if (left.isVar() || right.isVar()) {
+    return left.isVar()
+      && right.isVar()
+      && left.var() == right.var();
+  }
+  if (left.isApplication() || right.isApplication()) {
+    return left.isApplication()
+      && right.isApplication()
+      && sameTermModuloAliases(
+           left.lhs(), leftAliases, right.lhs(), rightAliases)
+      && sameTermModuloAliases(
+           left.rhs(), leftAliases, right.rhs(), rightAliases);
+  }
+  if (!left.isTerm() || !right.isTerm()) {
+    return left == right;
+  }
+  Kernel::Term* leftTerm = left.term();
+  Kernel::Term* rightTerm = right.term();
+  if (leftTerm->isSpecial() || rightTerm->isSpecial()) {
+    if (!leftTerm->isSpecial() || !rightTerm->isSpecial()
+        || leftTerm->specialFunctor() != rightTerm->specialFunctor()) {
+      return false;
+    }
+    if (leftTerm->isFormula() && rightTerm->isFormula()) {
+      return sameFormulaModuloAliases(
+        leftTerm->getSpecialData()->getFormula(), leftAliases,
+        rightTerm->getSpecialData()->getFormula(), rightAliases);
+    }
+    if (leftTerm->isLambda() && rightTerm->isLambda()) {
+      const auto* leftData = leftTerm->getSpecialData();
+      const auto* rightData = rightTerm->getSpecialData();
+      std::vector<std::pair<unsigned, Kernel::TermList>> leftVariables;
+      std::vector<std::pair<unsigned, Kernel::TermList>> rightVariables;
+      Kernel::VSList::Iterator leftIterator(leftData->getLambdaVars());
+      Kernel::VSList::Iterator rightIterator(rightData->getLambdaVars());
+      while (leftIterator.hasNext()) {
+        leftVariables.push_back(leftIterator.next());
+      }
+      while (rightIterator.hasNext()) {
+        rightVariables.push_back(rightIterator.next());
+      }
+      if (leftVariables.size() != rightVariables.size()) {
+        return false;
+      }
+      Environment bodyLeftAliases = leftAliases;
+      Environment bodyRightAliases = rightAliases;
+      for (std::size_t index = 0; index < leftVariables.size(); ++index) {
+        const auto& leftVariable = leftVariables[index];
+        const auto& rightVariable = rightVariables[index];
+        if (!sameTermModuloAliases(
+              leftVariable.second, bodyLeftAliases,
+              rightVariable.second, bodyRightAliases)) {
+          return false;
+        }
+        setBinding(
+          bodyLeftAliases,
+          leftVariable.first,
+          Kernel::TermList::var(rightVariable.first));
+        setBinding(
+          bodyRightAliases,
+          rightVariable.first,
+          Kernel::TermList::var(rightVariable.first));
+      }
+      return sameTermModuloAliases(
+               leftData->getLambdaExpSort(), bodyLeftAliases,
+               rightData->getLambdaExpSort(), bodyRightAliases)
+        && sameTermModuloAliases(
+             leftData->getLambdaExp(), bodyLeftAliases,
+             rightData->getLambdaExp(), bodyRightAliases);
+    }
+    return left == right;
+  }
+  if (leftTerm->functor() != rightTerm->functor()
+      || leftTerm->arity() != rightTerm->arity()) {
+    return false;
+  }
+  for (unsigned index = 0; index < leftTerm->arity(); ++index) {
+    if (!sameTermModuloAliases(
+          *leftTerm->nthArgument(index), leftAliases,
+          *rightTerm->nthArgument(index), rightAliases)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool sameLiteralModuloAliases(
+  const Kernel::Literal* left,
+  const Environment& leftAliases,
+  const Kernel::Literal* right,
+  const Environment& rightAliases)
+{
+  if (left->functor() != right->functor()
+      || left->arity() != right->arity()
+      || left->polarity() != right->polarity()) {
+    return false;
+  }
+  if (left->isEquality()
+      && Kernel::SortHelper::getEqualityArgumentSort(left)
+         != Kernel::SortHelper::getEqualityArgumentSort(right)) {
+    return false;
+  }
+  for (unsigned index = 0; index < left->arity(); ++index) {
+    if (!sameTermModuloAliases(
+          *left->nthArgument(index), leftAliases,
+          *right->nthArgument(index), rightAliases)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool sameFormulaModuloAliases(
+  Kernel::Formula* left,
+  const Environment& leftAliases,
+  Kernel::Formula* right,
+  const Environment& rightAliases)
+{
+  if (left->connective() != right->connective()) {
+    return false;
+  }
+  switch (left->connective()) {
+    case Kernel::LITERAL:
+      return sameLiteralModuloAliases(
+        left->literal(), leftAliases, right->literal(), rightAliases);
+    case Kernel::BOOL_TERM:
+      return sameTermModuloAliases(
+        left->getBooleanTerm(), leftAliases,
+        right->getBooleanTerm(), rightAliases);
+    case Kernel::TRUE:
+    case Kernel::FALSE:
+      return true;
+    case Kernel::NAME:
+      return static_cast<Kernel::NamedFormula*>(left)->name()
+        == static_cast<Kernel::NamedFormula*>(right)->name();
+    case Kernel::NOT:
+      return sameFormulaModuloAliases(
+        left->uarg(), leftAliases, right->uarg(), rightAliases);
+    case Kernel::IMP:
+    case Kernel::IFF:
+    case Kernel::XOR:
+      return sameFormulaModuloAliases(
+               left->left(), leftAliases, right->left(), rightAliases)
+        && sameFormulaModuloAliases(
+             left->right(), leftAliases, right->right(), rightAliases);
+    case Kernel::FORALL:
+    case Kernel::EXISTS: {
+      Kernel::VSList::Iterator leftVariables(left->vars());
+      Kernel::VSList::Iterator rightVariables(right->vars());
+      while (leftVariables.hasNext() && rightVariables.hasNext()) {
+        if (leftVariables.next() != rightVariables.next()) {
+          return false;
+        }
+      }
+      return !leftVariables.hasNext()
+        && !rightVariables.hasNext()
+        && sameFormulaModuloAliases(
+             left->qarg(), leftAliases, right->qarg(), rightAliases);
+    }
+    case Kernel::AND:
+    case Kernel::OR: {
+      auto leftArguments = left->args()->iter();
+      auto rightArguments = right->args()->iter();
+      while (leftArguments.hasNext() && rightArguments.hasNext()) {
+        if (!sameFormulaModuloAliases(
+              leftArguments.next(), leftAliases,
+              rightArguments.next(), rightAliases)) {
+          return false;
+        }
+      }
+      return !leftArguments.hasNext() && !rightArguments.hasNext();
+    }
+    default:
+      return false;
+  }
+}
+
+bool swappedEqualityLiteral(
+  const Kernel::Literal* source,
+  const Environment& sourceAliases,
+  const Kernel::Literal* target,
+  const Environment& targetAliases)
+{
+  return source->isEquality()
+    && target->isEquality()
+    && source->polarity() == target->polarity()
+    && Kernel::SortHelper::getEqualityArgumentSort(source)
+       == Kernel::SortHelper::getEqualityArgumentSort(target)
+    && sameTermModuloAliases(
+         *source->nthArgument(0), sourceAliases,
+         *target->nthArgument(1), targetAliases)
+    && sameTermModuloAliases(
+         *source->nthArgument(1), sourceAliases,
+         *target->nthArgument(0), targetAliases);
+}
+
+bool binaryJunctionChildren(
+  Kernel::Formula* formula,
+  Kernel::Formula*& left,
+  Kernel::Formula*& right)
+{
+  if (formula->connective() != Kernel::AND
+      && formula->connective() != Kernel::OR) {
+    return false;
+  }
+  auto iterator = formula->args()->iter();
+  if (!iterator.hasNext()) {
+    return false;
+  }
+  left = iterator.next();
+  if (!iterator.hasNext()) {
+    return false;
+  }
+  right = iterator.next();
+  return !iterator.hasNext();
+}
+
+}
+
+bool expandFormulaTransport(
+  const FormulaTransportRequest& request,
+  FormulaTransportNode& result,
+  std::string& error)
+{
+  if (request.source == nullptr || request.target == nullptr) {
+    error = "formula transport request has a missing endpoint";
+    return false;
+  }
+  unsigned nextFreshVariable = 0;
+  auto reserveFormulaVariables = [&](Kernel::Formula* formula) {
+    Lib::DHMap<unsigned, Kernel::TermList> variables;
+    Kernel::SortHelper::collectVariableSorts(formula, variables, false);
+    Lib::DHMap<unsigned, Kernel::TermList>::Iterator iterator(variables);
+    while (iterator.hasNext()) {
+      unsigned variable;
+      Kernel::TermList sort;
+      iterator.next(variable, sort);
+      nextFreshVariable = std::max(nextFreshVariable, variable + 1);
+    }
+  };
+  reserveFormulaVariables(request.source);
+  reserveFormulaVariables(request.target);
+  for (const auto& [sourceVariable, targetTerm] : request.freeVariableMap) {
+    nextFreshVariable = std::max(nextFreshVariable, sourceVariable + 1);
+    if (targetTerm.isVar()) {
+      nextFreshVariable = std::max(nextFreshVariable, targetTerm.var() + 1);
+    }
+  }
+  std::size_t nextIndex = 0;
+  std::function<bool(
+    Kernel::Formula*,
+    Kernel::Formula*,
+    const Environment&,
+    const Environment&,
+    bool,
+    bool,
+    const VariableSorts&,
+    FormulaTransportNode&)> build;
+  build = [&](Kernel::Formula* rawSource,
+              Kernel::Formula* rawTarget,
+              const Environment& sourceAliases,
+              const Environment& targetAliases,
+              bool preserveSourceNegativeEqualityOrientation,
+              bool preserveTargetNegativeEqualityOrientation,
+              const VariableSorts& context,
+              FormulaTransportNode& node) {
+    Kernel::Formula* source = normalizeTransportShape(rawSource);
+    Kernel::Formula* target = normalizeTransportShape(rawTarget);
+    node = FormulaTransportNode{};
+    node.index = nextIndex++;
+    node.source = source;
+    node.target = target;
+    node.sourceVariableMap = sourceAliases;
+    node.targetVariableMap = targetAliases;
+    node.preserveSourceNegativeEqualityOrientation =
+      preserveSourceNegativeEqualityOrientation;
+    node.preserveTargetNegativeEqualityOrientation =
+      preserveTargetNegativeEqualityOrientation;
+    node.context = context;
+
+    if (sameFormulaModuloAliases(
+          source, sourceAliases, target, targetAliases)) {
+      node.primitive = "transport_identity";
+      return true;
+    }
+    if (source->connective() == Kernel::LITERAL
+        && target->connective() == Kernel::LITERAL
+        && swappedEqualityLiteral(
+             source->literal(), sourceAliases,
+             target->literal(), targetAliases)) {
+      node.primitive = source->literal()->isPositive()
+        ? "transport_equality_symmetry_positive"
+        : "transport_equality_symmetry_negative";
+      return true;
+    }
+    if ((source->connective() == Kernel::FORALL
+         || source->connective() == Kernel::EXISTS)
+        && source->connective() == target->connective()) {
+      Kernel::VSList::Iterator sourceVariables(source->vars());
+      Kernel::VSList::Iterator targetVariables(target->vars());
+      if (!sourceVariables.hasNext() || !targetVariables.hasNext()) {
+        error = "formula transport quantifier has no variable";
+        return false;
+      }
+      const auto sourceVariable = sourceVariables.next();
+      const auto targetVariable = targetVariables.next();
+      if (sourceVariables.hasNext()
+          || targetVariables.hasNext()
+          || sourceVariable.second != targetVariable.second) {
+        error = "formula transport quantifier binders do not match";
+        return false;
+      }
+      Environment childSourceAliases = sourceAliases;
+      const unsigned contextVariable = nextFreshVariable++;
+      setBinding(
+        childSourceAliases,
+        sourceVariable.first,
+        Kernel::TermList::var(contextVariable));
+      Environment childTargetAliases = targetAliases;
+      setBinding(
+        childTargetAliases,
+        targetVariable.first,
+        Kernel::TermList::var(contextVariable));
+      VariableSorts childContext = context;
+      childContext.push_back({contextVariable, targetVariable.second});
+      FormulaTransportNode child;
+      if (!build(
+            source->qarg(),
+            target->qarg(),
+            childSourceAliases,
+            childTargetAliases,
+            preserveSourceNegativeEqualityOrientation,
+            preserveTargetNegativeEqualityOrientation,
+            childContext,
+            child)) {
+        return false;
+      }
+      node.primitive = source->connective() == Kernel::FORALL
+        ? "transport_forall_map"
+        : "transport_exists_map";
+      node.children.push_back(std::move(child));
+      return true;
+    }
+    if (source->connective() == Kernel::IMP
+        && target->connective() == Kernel::IMP) {
+      FormulaTransportNode left;
+      FormulaTransportNode right;
+      if (!build(
+            target->left(), source->left(),
+            targetAliases, sourceAliases,
+            preserveTargetNegativeEqualityOrientation,
+            preserveSourceNegativeEqualityOrientation,
+            context, left)
+          || !build(
+            source->right(), target->right(),
+            sourceAliases, targetAliases,
+            preserveSourceNegativeEqualityOrientation,
+            preserveTargetNegativeEqualityOrientation,
+            context, right)) {
+        return false;
+      }
+      node.primitive = "transport_imp_map";
+      node.children.push_back(std::move(left));
+      node.children.push_back(std::move(right));
+      return true;
+    }
+    if ((source->connective() == Kernel::AND
+         || source->connective() == Kernel::OR)
+        && source->connective() == target->connective()) {
+      Kernel::Formula* sourceLeft = nullptr;
+      Kernel::Formula* sourceRight = nullptr;
+      Kernel::Formula* targetLeft = nullptr;
+      Kernel::Formula* targetRight = nullptr;
+      if (!binaryJunctionChildren(source, sourceLeft, sourceRight)
+          || !binaryJunctionChildren(target, targetLeft, targetRight)) {
+        error = "formula transport junction is not binary after normalization";
+        return false;
+      }
+      FormulaTransportNode left;
+      FormulaTransportNode right;
+      if (!build(
+            sourceLeft, targetLeft,
+            sourceAliases, targetAliases,
+            preserveSourceNegativeEqualityOrientation,
+            preserveTargetNegativeEqualityOrientation,
+            context, left)
+          || !build(
+            sourceRight, targetRight,
+            sourceAliases, targetAliases,
+            preserveSourceNegativeEqualityOrientation,
+            preserveTargetNegativeEqualityOrientation,
+            context, right)) {
+        return false;
+      }
+      node.primitive = source->connective() == Kernel::AND
+        ? "transport_and_map"
+        : "transport_or_map";
+      node.children.push_back(std::move(left));
+      node.children.push_back(std::move(right));
+      return true;
+    }
+    error = "formula transport endpoints do not match a producer primitive: "
+      + source->toString() + " ==> " + target->toString();
+    return false;
+  };
+
+  return build(
+    request.source,
+    request.target,
+    request.freeVariableMap,
+    {},
+    request.preserveSourceNegativeEqualityOrientation,
+    false,
+    {},
+    result);
+}
+
 }
 }

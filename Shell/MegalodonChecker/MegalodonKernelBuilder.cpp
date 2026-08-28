@@ -1110,13 +1110,25 @@ MegalodonKernelSyntax::PrimitiveStep rectifyFormulaStep(
   }
   const std::string renderedVariableMap =
     renamings.hasVariableMap ? renamings.variableMap.sexpr : "(subst)";
+  const std::string renderedProgram =
+    renamings.hasProgram
+      ? " (program " + MegalodonKernelSyntax::renderEnnfTrace(renamings.program) + ")"
+      : "";
+  if (renamings.hasProgram) {
+    step.fields.push_back({
+      "transport_program",
+      MegalodonKernelSyntax::renderEnnfTrace(renamings.program),
+    });
+  }
   step.rendered =
     "(rectify_formula " + quote(id)
     + " (parent " + quote(parent.value) + ")"
     + " (source (formula " + source.sexpr + "))"
     + " (free_variable_map " + renderedVariableMap + ")"
     + renderedRenamings
-    + " (result (formula " + result.sexpr + ")))";
+    + renderedProgram
+    + " (result (formula " + result.sexpr + "))"
+    + " (builder \"typed_v2\"))";
   return step;
 }
 
@@ -1257,6 +1269,10 @@ MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
       prefix + "_witness_count",
       std::to_string(branch.witnesses.size()),
     });
+    step.fields.push_back({
+      prefix + "_context_stage_count",
+      std::to_string(branch.contextStages.size()),
+    });
 
     renderedBranches +=
       " (branch (index " + std::to_string(branch.index) + ")"
@@ -1327,15 +1343,43 @@ MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
         " (choice (raw_target (formula "
         + witness.rawChoiceTarget.sexpr + ")))"
         " (normalization";
-      for (const auto& path : witness.equalitySymmetryPaths) {
-        renderedBranches += " (equality_symmetry (path";
-        for (std::size_t child : path) {
-          renderedBranches += " " + std::to_string(child);
+      if (!witness.hasTransportProgram) {
+        for (const auto& path : witness.equalitySymmetryPaths) {
+          renderedBranches += " (equality_symmetry (path";
+          for (std::size_t child : path) {
+            renderedBranches += " " + std::to_string(child);
+          }
+          renderedBranches += "))";
         }
-        renderedBranches += "))";
       }
-      renderedBranches += ") (stage_target (formula "
+      renderedBranches += ")";
+      if (witness.hasTransportProgram) {
+        renderedBranches += " (transport "
+          + MegalodonKernelSyntax::renderEnnfTrace(witness.transportProgram)
+          + ")";
+      }
+      renderedBranches += " (stage_target (formula "
         + witness.stageTarget.sexpr + "))))";
+    }
+    renderedBranches += ") (context_stages";
+    for (const auto& stage : branch.contextStages) {
+      const std::string stagePrefix =
+        prefix + "_context_stage_" + std::to_string(stage.index);
+      step.fields.push_back({stagePrefix + "_primitive", stage.primitive});
+      step.fields.push_back({stagePrefix + "_source", stage.source.sexpr});
+      step.fields.push_back({stagePrefix + "_target", stage.target.sexpr});
+      renderedBranches +=
+        " (stage (index " + std::to_string(stage.index) + ")"
+        + " (primitive " + quote(stage.primitive) + ")"
+        + " (source (formula " + stage.source.sexpr + "))"
+        + " (target (formula " + stage.target.sexpr + "))"
+        + " (context";
+      for (const auto& variable : stage.context) {
+        renderedBranches +=
+          " (variable " + quote(variable.variable) + " "
+          + variable.type.sexpr + ")";
+      }
+      renderedBranches += "))";
     }
     renderedBranches +=
       ") (target (formula " + branch.target.sexpr + ")))";
@@ -1347,7 +1391,7 @@ MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
     + " (source (formula " + source.sexpr + ")) "
     + renderedBranches
     + " (result (formula " + result.sexpr + "))"
-    + " (builder \"typed_v3\"))";
+    + " (builder \"typed_v5\"))";
   return step;
 }
 

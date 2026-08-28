@@ -373,6 +373,32 @@ bool MegalodonChecker::certificateTermSexpr(
   std::string& result,
   const std::vector<std::string>& deBruijnBinders)
 {
+  static const std::map<unsigned, unsigned> noVariableAliases;
+  return certificateTermSexpr(
+    term, result, deBruijnBinders, noVariableAliases);
+}
+
+bool MegalodonChecker::certificateTermSexpr(
+  Kernel::TermList term,
+  std::string& result,
+  const std::vector<std::string>& deBruijnBinders,
+  const std::map<unsigned, unsigned>& variableAliases)
+{
+  std::map<unsigned, Kernel::TermList> substitutions;
+  for (const auto& [source, target] : variableAliases) {
+    substitutions.emplace(source, Kernel::TermList::var(target));
+  }
+  return certificateTermSexpr(
+    term, result, deBruijnBinders, substitutions, false);
+}
+
+bool MegalodonChecker::certificateTermSexpr(
+  Kernel::TermList term,
+  std::string& result,
+  const std::vector<std::string>& deBruijnBinders,
+  const std::map<unsigned, Kernel::TermList>& variableSubstitutions,
+  bool preserveNegativeEqualityOrientation)
+{
   if (HOL::isTrue(term)) {
     result = "(TMH \"vampire_true\")";
     return true;
@@ -397,13 +423,23 @@ bool MegalodonChecker::certificateTermSexpr(
     std::vector<std::string> bodyBinders = deBruijnBinders;
     bodyBinders.insert(bodyBinders.begin(), binder);
     std::string body;
-    if (!certificateTermSexpr(term.lambdaBody(), body, bodyBinders)) {
+    if (!certificateTermSexpr(
+          term.lambdaBody(), body, bodyBinders, variableSubstitutions,
+          preserveNegativeEqualityOrientation)) {
       return false;
     }
     result = "(VLAMV " + sexprQuote(binder) + " " + type + " " + body + ")";
     return true;
   }
   if (term.isVar()) {
+    auto substitution = variableSubstitutions.find(term.var());
+    if (substitution != variableSubstitutions.end()
+        && (!substitution->second.isVar()
+            || substitution->second.var() != term.var())) {
+      return certificateTermSexpr(
+        substitution->second, result, deBruijnBinders,
+        variableSubstitutions, preserveNegativeEqualityOrientation);
+    }
     result = "(TMH " + sexprQuote(variableName(term.var())) + ")";
     return true;
   }
@@ -412,18 +448,24 @@ bool MegalodonChecker::certificateTermSexpr(
     switch (special->specialFunctor()) {
     case Kernel::SpecialFunctor::FORMULA:
       return certificateFormulaTermSexpr(
-        special->getSpecialData()->getFormula(), result, deBruijnBinders);
+        special->getSpecialData()->getFormula(), result,
+        deBruijnBinders, false, variableSubstitutions,
+        preserveNegativeEqualityOrientation);
     case Kernel::SpecialFunctor::LAMBDA: {
       const Kernel::Term::SpecialTermData* data = special->getSpecialData();
       Kernel::TermList lambdaBody = data->getLambdaExp();
       std::string body;
       if (lambdaBody.isTerm() && lambdaBody.term()->isFormula()) {
         if (!certificateFormulaTermSexpr(
-              lambdaBody.term()->getSpecialData()->getFormula(), body, deBruijnBinders)) {
+              lambdaBody.term()->getSpecialData()->getFormula(), body,
+              deBruijnBinders, false, variableSubstitutions,
+              preserveNegativeEqualityOrientation)) {
           result = "lambda formula body";
           return false;
         }
-      } else if (!certificateTermSexpr(lambdaBody, body, deBruijnBinders)) {
+      } else if (!certificateTermSexpr(
+                   lambdaBody, body, deBruijnBinders, variableSubstitutions,
+                   preserveNegativeEqualityOrientation)) {
         result = "lambda term body";
         return false;
       }
@@ -453,8 +495,12 @@ bool MegalodonChecker::certificateTermSexpr(
   if (term.isApplication()) {
     std::string lhs;
     std::string rhs;
-    if (!certificateTermSexpr(term.lhs(), lhs, deBruijnBinders)
-        || !certificateTermSexpr(term.rhs(), rhs, deBruijnBinders)) {
+    if (!certificateTermSexpr(
+          term.lhs(), lhs, deBruijnBinders, variableSubstitutions,
+          preserveNegativeEqualityOrientation)
+        || !certificateTermSexpr(
+             term.rhs(), rhs, deBruijnBinders, variableSubstitutions,
+             preserveNegativeEqualityOrientation)) {
       return false;
     }
     result = "(AP " + lhs + " " + rhs + ")";
@@ -468,7 +514,9 @@ bool MegalodonChecker::certificateTermSexpr(
   std::string rendered = "(TMH " + sexprQuote(functionName(t->functor())) + ")";
   for (unsigned i = 0; i < t->numTermArguments(); ++i) {
     std::string arg;
-    if (!certificateTermSexpr(t->termArg(i), arg, deBruijnBinders)) {
+    if (!certificateTermSexpr(
+          t->termArg(i), arg, deBruijnBinders, variableSubstitutions,
+          preserveNegativeEqualityOrientation)) {
       return false;
     }
     rendered = "(AP " + rendered + " " + arg + ")";
@@ -505,22 +553,61 @@ bool MegalodonChecker::certificateAtomSexpr(
   std::string& result,
   const std::vector<std::string>& deBruijnBinders)
 {
+  static const std::map<unsigned, unsigned> noVariableAliases;
+  return certificateAtomSexpr(
+    literal, result, deBruijnBinders, noVariableAliases);
+}
+
+bool MegalodonChecker::certificateAtomSexpr(
+  Kernel::Literal* literal,
+  std::string& result,
+  const std::vector<std::string>& deBruijnBinders,
+  const std::map<unsigned, unsigned>& variableAliases)
+{
+  std::map<unsigned, Kernel::TermList> substitutions;
+  for (const auto& [source, target] : variableAliases) {
+    substitutions.emplace(source, Kernel::TermList::var(target));
+  }
+  return certificateAtomSexpr(
+    literal, result, deBruijnBinders, substitutions, false);
+}
+
+bool MegalodonChecker::certificateAtomSexpr(
+  Kernel::Literal* literal,
+  std::string& result,
+  const std::vector<std::string>& deBruijnBinders,
+  const std::map<unsigned, Kernel::TermList>& variableSubstitutions,
+  bool preserveNegativeEqualityOrientation)
+{
   Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
-  if (positive->isEquality()) {
+  Kernel::Literal* oriented =
+    preserveNegativeEqualityOrientation && literal->isEquality()
+    ? literal
+    : positive;
+  if (oriented->isEquality()) {
     std::string lhs;
     std::string rhs;
-    if (!certificateTermSexpr(*positive->nthArgument(0), lhs, deBruijnBinders)
-      || !certificateTermSexpr(*positive->nthArgument(1), rhs, deBruijnBinders)) {
+    if (!certificateTermSexpr(
+          *oriented->nthArgument(0), lhs,
+          deBruijnBinders, variableSubstitutions,
+          preserveNegativeEqualityOrientation)
+      || !certificateTermSexpr(
+           *oriented->nthArgument(1), rhs,
+           deBruijnBinders, variableSubstitutions,
+           preserveNegativeEqualityOrientation)) {
       return false;
     }
     return certificateEqualityAtomSexpr(
-      Kernel::SortHelper::getEqualityArgumentSort(positive), lhs, rhs, result);
+      Kernel::SortHelper::getEqualityArgumentSort(oriented), lhs, rhs, result);
   }
 
   std::string rendered = "(TMH " + sexprQuote(predicateName(positive->functor())) + ")";
   for (unsigned i = 0; i < positive->arity(); ++i) {
     std::string arg;
-    if (!certificateTermSexpr(*positive->nthArgument(i), arg, deBruijnBinders)) {
+    if (!certificateTermSexpr(
+          *positive->nthArgument(i), arg,
+          deBruijnBinders, variableSubstitutions,
+          preserveNegativeEqualityOrientation)) {
       return false;
     }
     rendered = "(AP " + rendered + " " + arg + ")";
@@ -2384,10 +2471,43 @@ bool MegalodonChecker::certificateFormulaTermSexpr(
   const std::vector<std::string>& deBruijnBinders,
   bool leftAssociateNary)
 {
+  static const std::map<unsigned, unsigned> noVariableAliases;
+  return certificateFormulaTermSexpr(
+    formula, result, deBruijnBinders,
+    leftAssociateNary, noVariableAliases);
+}
+
+bool MegalodonChecker::certificateFormulaTermSexpr(
+  Kernel::Formula* formula,
+  std::string& result,
+  const std::vector<std::string>& deBruijnBinders,
+  bool leftAssociateNary,
+  const std::map<unsigned, unsigned>& variableAliases)
+{
+  std::map<unsigned, Kernel::TermList> substitutions;
+  for (const auto& [source, target] : variableAliases) {
+    substitutions.emplace(source, Kernel::TermList::var(target));
+  }
+  return certificateFormulaTermSexpr(
+    formula, result, deBruijnBinders, leftAssociateNary,
+    substitutions, false);
+}
+
+bool MegalodonChecker::certificateFormulaTermSexpr(
+  Kernel::Formula* formula,
+  std::string& result,
+  const std::vector<std::string>& deBruijnBinders,
+  bool leftAssociateNary,
+  const std::map<unsigned, Kernel::TermList>& variableSubstitutions,
+  bool preserveNegativeEqualityOrientation)
+{
   switch (formula->connective()) {
   case Kernel::LITERAL: {
     std::string atom;
-    if (!certificateAtomSexpr(formula->literal(), atom, deBruijnBinders)) {
+    if (!certificateAtomSexpr(
+          formula->literal(), atom,
+          deBruijnBinders, variableSubstitutions,
+          preserveNegativeEqualityOrientation)) {
       return false;
     }
     if (formula->literal()->isNegative()) {
@@ -2398,7 +2518,10 @@ bool MegalodonChecker::certificateFormulaTermSexpr(
     return true;
   }
   case Kernel::BOOL_TERM:
-    return certificateTermSexpr(formula->getBooleanTerm(), result, deBruijnBinders);
+    return certificateTermSexpr(
+      formula->getBooleanTerm(), result,
+      deBruijnBinders, variableSubstitutions,
+      preserveNegativeEqualityOrientation);
   case Kernel::TRUE:
     result = "(TMH \"vampire_true\")";
     return true;
@@ -2426,7 +2549,9 @@ bool MegalodonChecker::certificateFormulaTermSexpr(
   case Kernel::NOT: {
     std::string body;
     if (!certificateFormulaTermSexpr(
-          formula->uarg(), body, deBruijnBinders, leftAssociateNary)) {
+          formula->uarg(), body, deBruijnBinders,
+          leftAssociateNary, variableSubstitutions,
+          preserveNegativeEqualityOrientation)) {
       return false;
     }
     result = "(IMP " + body + " (TMH \"vampire_false\"))";
@@ -2436,9 +2561,13 @@ bool MegalodonChecker::certificateFormulaTermSexpr(
     std::string left;
     std::string right;
     if (!certificateFormulaTermSexpr(
-          formula->left(), left, deBruijnBinders, leftAssociateNary)
+          formula->left(), left, deBruijnBinders,
+          leftAssociateNary, variableSubstitutions,
+          preserveNegativeEqualityOrientation)
       || !certificateFormulaTermSexpr(
-          formula->right(), right, deBruijnBinders, leftAssociateNary)) {
+           formula->right(), right, deBruijnBinders,
+           leftAssociateNary, variableSubstitutions,
+           preserveNegativeEqualityOrientation)) {
       return false;
     }
     result = "(IMP " + left + " " + right + ")";
@@ -2451,7 +2580,9 @@ bool MegalodonChecker::certificateFormulaTermSexpr(
     while (iterator.hasNext()) {
       std::string arg;
       if (!certificateFormulaTermSexpr(
-            iterator.next(), arg, deBruijnBinders, leftAssociateNary)) {
+            iterator.next(), arg, deBruijnBinders,
+            leftAssociateNary, variableSubstitutions,
+            preserveNegativeEqualityOrientation)) {
         return false;
       }
       args.push_back(arg);
@@ -2476,7 +2607,9 @@ bool MegalodonChecker::certificateFormulaTermSexpr(
   case Kernel::FORALL: {
     std::string body;
     if (!certificateFormulaTermSexpr(
-          formula->qarg(), body, deBruijnBinders, leftAssociateNary)) {
+          formula->qarg(), body, deBruijnBinders,
+          leftAssociateNary, variableSubstitutions,
+          preserveNegativeEqualityOrientation)) {
       return false;
     }
     std::vector<std::pair<unsigned, Kernel::TermList>> vars;
@@ -2497,7 +2630,9 @@ bool MegalodonChecker::certificateFormulaTermSexpr(
   case Kernel::EXISTS: {
     std::string body;
     if (!certificateFormulaTermSexpr(
-          formula->qarg(), body, deBruijnBinders, leftAssociateNary)) {
+          formula->qarg(), body, deBruijnBinders,
+          leftAssociateNary, variableSubstitutions,
+          preserveNegativeEqualityOrientation)) {
       return false;
     }
     std::vector<std::pair<unsigned, Kernel::TermList>> vars;
@@ -2765,6 +2900,88 @@ bool MegalodonChecker::certificateRectifyRenamings(
   return true;
 }
 
+bool MegalodonChecker::certificateFormulaTransport(
+  Kernel::Formula* source,
+  Kernel::Formula* target,
+  const std::vector<std::pair<unsigned, Kernel::TermList>>& freeVariableMap,
+  MegalodonKernelSyntax::RenderedKernelEnnfTrace& result,
+  std::string& error,
+  bool preserveSourceNegativeEqualityOrientation)
+{
+  MegalodonProofExpander::FormulaTransportRequest request;
+  request.source = source;
+  request.target = target;
+  request.freeVariableMap = freeVariableMap;
+  request.preserveSourceNegativeEqualityOrientation =
+    preserveSourceNegativeEqualityOrientation;
+  MegalodonProofExpander::FormulaTransportNode program;
+  if (!MegalodonProofExpander::expandFormulaTransport(
+        request,
+        program,
+        error)) {
+    return false;
+  }
+
+  auto variableSubstitutions = [](const auto& environment) {
+    std::map<unsigned, Kernel::TermList> substitutions;
+    for (const auto& [sourceVariable, targetTerm] : environment) {
+      substitutions[sourceVariable] = targetTerm;
+    }
+    return substitutions;
+  };
+  std::function<bool(
+    const MegalodonProofExpander::FormulaTransportNode&,
+    MegalodonKernelSyntax::RenderedKernelEnnfTrace&)> render;
+  render = [&](const auto& node, auto& rendered) {
+    rendered.index = node.index;
+    rendered.primitive = node.primitive;
+    rendered.sourceConnective =
+      Kernel::Formula::toString(node.source->connective());
+    rendered.polarity = true;
+    const auto sourceSubstitutions =
+      variableSubstitutions(node.sourceVariableMap);
+    const auto targetSubstitutions =
+      variableSubstitutions(node.targetVariableMap);
+    std::string formula;
+    if (!certificateFormulaTermSexpr(
+          node.source, formula, {}, false, sourceSubstitutions,
+          node.preserveSourceNegativeEqualityOrientation)) {
+      error = "cannot render a transport source formula";
+      return false;
+    }
+    rendered.hasSourceFormula = true;
+    rendered.sourceFormula = MegalodonKernelSyntax::formula(std::move(formula));
+    if (!certificateFormulaTermSexpr(
+          node.target, formula, {}, false, targetSubstitutions,
+          node.preserveTargetNegativeEqualityOrientation)) {
+      error = "cannot render a transport target formula";
+      return false;
+    }
+    rendered.hasResultFormula = true;
+    rendered.resultFormula = MegalodonKernelSyntax::formula(std::move(formula));
+    for (const auto& [variable, sort] : node.context) {
+      std::string type;
+      if (!certificateTypeSexpr(sort, type)) {
+        error = "cannot render a transport context sort";
+        return false;
+      }
+      rendered.context.push_back({
+        variableName(variable),
+        MegalodonKernelSyntax::type(std::move(type)),
+      });
+    }
+    for (const auto& child : node.children) {
+      MegalodonKernelSyntax::RenderedKernelEnnfTrace renderedChild;
+      if (!render(child, renderedChild)) {
+        return false;
+      }
+      rendered.children.push_back(std::move(renderedChild));
+    }
+    return true;
+  };
+  return render(program, result);
+}
+
 bool MegalodonChecker::certificateRectifyFormulaStepSexpr(
   Kernel::Unit* unit,
   std::string& result,
@@ -2781,12 +2998,16 @@ bool MegalodonChecker::certificateRectifyFormulaStepSexpr(
   if (parent->isClause()) {
     return false;
   }
+  Kernel::Formula* sourceFormulaObject =
+    static_cast<Kernel::FormulaUnit*>(parent)->formula();
+  Kernel::Formula* resultFormulaObject =
+    static_cast<Kernel::FormulaUnit*>(unit)->formula();
   std::string sourceFormula;
   std::string resultFormula;
   if (!certificateFormulaTermSexpr(
-        static_cast<Kernel::FormulaUnit*>(parent)->formula(), sourceFormula)
+        sourceFormulaObject, sourceFormula)
     || !certificateFormulaTermSexpr(
-        static_cast<Kernel::FormulaUnit*>(unit)->formula(), resultFormula)) {
+        resultFormulaObject, resultFormula)) {
     return false;
   }
   const auto* genericInfo = InferenceRecorder::instance()->getGenericInferenceInformation(unit->number());
@@ -2806,6 +3027,26 @@ bool MegalodonChecker::certificateRectifyFormulaStepSexpr(
   if (!certificateRectifyRenamings(rectifyInfo, renamings)) {
     return false;
   }
+  MegalodonProofExpander::Environment freeVariableMap;
+  for (const auto& [sourceVariable, targetVariable] :
+       rectifyInfo->freeVariableRenaming) {
+    freeVariableMap.push_back({
+      sourceVariable,
+      Kernel::TermList::var(targetVariable),
+    });
+  }
+  std::string transportError;
+  if (!certificateFormulaTransport(
+        sourceFormulaObject,
+        resultFormulaObject,
+        freeVariableMap,
+        renamings.program,
+        transportError)) {
+    std::cerr << "megalodon formula transport expansion failed for u"
+              << unit->number() << ": " << transportError << std::endl;
+    return false;
+  }
+  renamings.hasProgram = true;
   auto built = MegalodonKernelBuilder::rectifyFormulaStep(
     "u" + std::to_string(unit->number()),
     MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number())),
@@ -3951,6 +4192,31 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
           + " " + type + " " + rawChoiceTarget + "))";
       }
 
+      Kernel::Formula* rawChoiceFormula = recorded.stageSourceFormula->qarg();
+      for (std::size_t index = remainingVariables.size(); index-- > 0;) {
+        rawChoiceFormula = new Kernel::QuantifiedFormula(
+          Kernel::EXISTS,
+          Kernel::VSList::singleton(remainingVariables[index]),
+          rawChoiceFormula);
+      }
+      MegalodonProofExpander::Environment choiceSubstitution = {{
+        recorded.replacedVariable,
+        recorded.witnessTerm,
+      }};
+      std::string transportError;
+      if (!certificateFormulaTransport(
+            rawChoiceFormula,
+            recorded.stageTargetFormula,
+            choiceSubstitution,
+            rendered.transportProgram,
+            transportError,
+            true)) {
+        std::cerr << "megalodon Skolem choice transport expansion failed for u"
+                  << unit->number() << ": " << transportError << std::endl;
+        return false;
+      }
+      rendered.hasTransportProgram = true;
+
       std::string stageSource;
       std::string stageTarget;
       if (!certificateFormulaTermSexpr(
@@ -3968,7 +4234,140 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
       return true;
     };
 
+  std::function<Kernel::Formula*(Kernel::Formula*)> normalizeContextShape;
+  normalizeContextShape = [&](Kernel::Formula* formula) -> Kernel::Formula* {
+    switch (formula->connective()) {
+      case Kernel::FORALL:
+      case Kernel::EXISTS: {
+        std::vector<std::pair<unsigned, Kernel::TermList>> variables;
+        Kernel::VSList::Iterator iterator(formula->vars());
+        while (iterator.hasNext()) {
+          variables.push_back(iterator.next());
+        }
+        Kernel::Formula* body = normalizeContextShape(formula->qarg());
+        for (std::size_t index = variables.size(); index-- > 0;) {
+          body = new Kernel::QuantifiedFormula(
+            formula->connective(),
+            Kernel::VSList::singleton(variables[index]),
+            body);
+        }
+        return body;
+      }
+      case Kernel::AND:
+      case Kernel::OR: {
+        std::vector<Kernel::Formula*> arguments;
+        auto iterator = formula->args()->iter();
+        while (iterator.hasNext()) {
+          arguments.push_back(normalizeContextShape(iterator.next()));
+        }
+        if (arguments.size() < 2) {
+          return formula;
+        }
+        Kernel::Formula* result = arguments.back();
+        for (std::size_t index = arguments.size() - 1; index-- > 0;) {
+          result = new Kernel::JunctionFormula(
+            formula->connective(),
+            new Kernel::FormulaList(
+              arguments[index],
+              new Kernel::FormulaList(result)));
+        }
+        return result;
+      }
+      default:
+        return formula;
+    }
+  };
+
+  struct SkolemContextFrame {
+    std::string primitive;
+    Kernel::Connective connective = Kernel::FORALL;
+    Kernel::Formula* sibling = nullptr;
+    unsigned variable = 0;
+    Kernel::TermList variableSort;
+    bool quantified = false;
+    bool selectedLeft = false;
+  };
+
+  auto decomposeContext =
+    [&](Kernel::Formula* root,
+        const std::vector<std::size_t>& path,
+        const std::vector<std::string>& contextProgram,
+        std::vector<SkolemContextFrame>& frames,
+        Kernel::Formula*& leaf) {
+      Kernel::Formula* current = root;
+      frames.clear();
+      for (std::size_t index = 0; index < path.size(); ++index) {
+        const std::size_t child = path[index];
+        const std::string& recordedPrimitive = contextProgram[index];
+        if (current->connective() == Kernel::FORALL && child == 0) {
+          Kernel::VSList::Iterator variables(current->vars());
+          if (!variables.hasNext()) {
+            return false;
+          }
+          const auto variable = variables.next();
+          if (variables.hasNext() || recordedPrimitive != "forall") {
+            return false;
+          }
+          SkolemContextFrame frame;
+          frame.primitive = "skolem_forall_map";
+          frame.connective = Kernel::FORALL;
+          frame.variable = variable.first;
+          frame.variableSort = variable.second;
+          frame.quantified = true;
+          frames.push_back(std::move(frame));
+          current = current->qarg();
+          continue;
+        }
+        if ((current->connective() == Kernel::AND
+             || current->connective() == Kernel::OR)
+            && (child == 0 || child == 1)) {
+          std::vector<Kernel::Formula*> arguments;
+          auto iterator = current->args()->iter();
+          while (iterator.hasNext()) {
+            arguments.push_back(iterator.next());
+          }
+          if (arguments.size() != 2) {
+            return false;
+          }
+          const std::string connective =
+            current->connective() == Kernel::AND ? "and" : "or";
+          const std::string expected =
+            connective + (child == 0 ? "_left" : "_right");
+          if (recordedPrimitive != expected) {
+            return false;
+          }
+          SkolemContextFrame frame;
+          frame.primitive = "skolem_" + expected + "_map";
+          frame.connective = current->connective();
+          frame.sibling = arguments[child == 0 ? 1 : 0];
+          frame.selectedLeft = child == 0;
+          frames.push_back(std::move(frame));
+          current = arguments[child];
+          continue;
+        }
+        return false;
+      }
+      leaf = current;
+      return true;
+    };
+
+  auto wrapContext = [](const SkolemContextFrame& frame, Kernel::Formula* body) {
+    if (frame.quantified) {
+      return static_cast<Kernel::Formula*>(new Kernel::QuantifiedFormula(
+        frame.connective,
+        Kernel::VSList::singleton({frame.variable, frame.variableSort}),
+        body));
+    }
+    Kernel::Formula* left = frame.selectedLeft ? body : frame.sibling;
+    Kernel::Formula* right = frame.selectedLeft ? frame.sibling : body;
+    return static_cast<Kernel::Formula*>(new Kernel::JunctionFormula(
+      frame.connective,
+      new Kernel::FormulaList(left, new Kernel::FormulaList(right))));
+  };
+
   std::vector<MegalodonKernelSyntax::RenderedKernelScopedSkolemBranch> branches;
+  Kernel::Formula* currentContextFormula =
+    normalizeContextShape(recording->sourceFormula);
   for (std::size_t branchIndex = 0;
        branchIndex < recording->branches.size();
        ++branchIndex) {
@@ -4035,7 +4434,64 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
       }
       branch.witnesses.push_back(std::move(witness));
     }
+
+    std::vector<SkolemContextFrame> contextFrames;
+    Kernel::Formula* contextLeaf = nullptr;
+    if (!decomposeContext(
+          currentContextFormula,
+          recordedBranch.path,
+          recordedBranch.contextProgram,
+          contextFrames,
+          contextLeaf)) {
+      return false;
+    }
+    std::string contextLeafFormula;
+    if (!certificateFormulaTermSexpr(contextLeaf, contextLeafFormula)
+        || contextLeafFormula != branch.source.sexpr) {
+      return false;
+    }
+    Kernel::Formula* contextSource = contextLeaf;
+    Kernel::Formula* contextTarget =
+      normalizeContextShape(recordedBranch.targetFormula);
+    for (std::size_t offset = contextFrames.size(); offset-- > 0;) {
+      contextSource = wrapContext(contextFrames[offset], contextSource);
+      contextTarget = wrapContext(contextFrames[offset], contextTarget);
+      std::string stageSource;
+      std::string stageTarget;
+      if (!certificateFormulaTermSexpr(contextSource, stageSource)
+          || !certificateFormulaTermSexpr(contextTarget, stageTarget)) {
+        return false;
+      }
+      MegalodonKernelSyntax::RenderedKernelScopedSkolemContextStage stage;
+      stage.index = branch.contextStages.size();
+      stage.primitive = contextFrames[offset].primitive;
+      stage.source = MegalodonKernelSyntax::formula(std::move(stageSource));
+      stage.target = MegalodonKernelSyntax::formula(std::move(stageTarget));
+      for (std::size_t outer = 0; outer < offset; ++outer) {
+        if (!contextFrames[outer].quantified) {
+          continue;
+        }
+        std::string type;
+        if (!certificateTypeSexpr(
+              contextFrames[outer].variableSort, type)) {
+          return false;
+        }
+        stage.context.push_back({
+          variableName(contextFrames[outer].variable),
+          MegalodonKernelSyntax::type(std::move(type)),
+        });
+      }
+      branch.contextStages.push_back(std::move(stage));
+    }
+    currentContextFormula = contextTarget;
     branches.push_back(std::move(branch));
+  }
+
+  std::string reconstructedResultFormula;
+  if (!certificateFormulaTermSexpr(
+        currentContextFormula, reconstructedResultFormula)
+      || reconstructedResultFormula != resultFormula) {
+    return false;
   }
 
   auto built = MegalodonKernelBuilder::skolemFormulaStep(

@@ -503,6 +503,19 @@ struct RenderedKernelTypedVariable {
   RenderedKernelType type;
 };
 
+struct RenderedKernelEnnfTrace {
+  std::size_t index = 0;
+  std::string primitive;
+  std::string sourceConnective;
+  bool polarity = true;
+  bool hasSourceFormula = false;
+  RenderedKernelFormula sourceFormula;
+  bool hasResultFormula = false;
+  RenderedKernelFormula resultFormula;
+  std::vector<RenderedKernelTypedVariable> context;
+  std::vector<RenderedKernelEnnfTrace> children;
+};
+
 struct RenderedKernelScopedSkolemWitness {
   bool typeVariable = false;
   std::string symbol;
@@ -513,7 +526,17 @@ struct RenderedKernelScopedSkolemWitness {
   RenderedKernelFormula stageSource;
   RenderedKernelFormula rawChoiceTarget;
   std::vector<std::vector<std::size_t>> equalitySymmetryPaths;
+  bool hasTransportProgram = false;
+  RenderedKernelEnnfTrace transportProgram;
   RenderedKernelFormula stageTarget;
+};
+
+struct RenderedKernelScopedSkolemContextStage {
+  std::size_t index = 0;
+  std::string primitive;
+  RenderedKernelFormula source;
+  RenderedKernelFormula target;
+  std::vector<RenderedKernelTypedVariable> context;
 };
 
 struct RenderedKernelScopedSkolemBranch {
@@ -525,6 +548,7 @@ struct RenderedKernelScopedSkolemBranch {
   std::vector<RenderedKernelTypedVariable> ambient;
   std::vector<RenderedKernelTypedVariable> context;
   std::vector<RenderedKernelScopedSkolemWitness> witnesses;
+  std::vector<RenderedKernelScopedSkolemContextStage> contextStages;
   RenderedKernelFormula target;
 };
 
@@ -677,6 +701,8 @@ struct RenderedKernelRectifyRenamings {
   bool truncated = false;
   bool hasVariableMap = false;
   RenderedKernelSubstitution variableMap;
+  bool hasProgram = false;
+  RenderedKernelEnnfTrace program;
 };
 
 struct RenderedKernelCnfProjection {
@@ -691,19 +717,6 @@ struct RenderedKernelCnfProjection {
   RenderedKernelLiteral sourceLiteral;
   std::size_t resultLiteralIndex = 0;
   std::vector<RenderedKernelCnfProjection> children;
-};
-
-struct RenderedKernelEnnfTrace {
-  std::size_t index = 0;
-  std::string primitive;
-  std::string sourceConnective;
-  bool polarity = true;
-  bool hasSourceFormula = false;
-  RenderedKernelFormula sourceFormula;
-  bool hasResultFormula = false;
-  RenderedKernelFormula resultFormula;
-  std::vector<RenderedKernelTypedVariable> context;
-  std::vector<RenderedKernelEnnfTrace> children;
 };
 
 struct RenderedKernelCnfClause {

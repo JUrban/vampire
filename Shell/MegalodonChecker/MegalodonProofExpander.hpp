@@ -1,6 +1,7 @@
 #ifndef __MEGALODON_PROOF_EXPANDER__
 #define __MEGALODON_PROOF_EXPANDER__
 
+#include "Kernel/Formula.hpp"
 #include "Kernel/Term.hpp"
 #include "Shell/MegalodonChecker/MegalodonKernelSyntax.hpp"
 
@@ -123,6 +124,26 @@ struct ClauseExpansion {
   std::string rendered;
 };
 
+struct FormulaTransportNode {
+  std::size_t index = 0;
+  std::string primitive;
+  Kernel::Formula* source = nullptr;
+  Kernel::Formula* target = nullptr;
+  Environment sourceVariableMap;
+  Environment targetVariableMap;
+  bool preserveSourceNegativeEqualityOrientation = false;
+  bool preserveTargetNegativeEqualityOrientation = false;
+  VariableSorts context;
+  std::vector<FormulaTransportNode> children;
+};
+
+struct FormulaTransportRequest {
+  Kernel::Formula* source = nullptr;
+  Kernel::Formula* target = nullptr;
+  Environment freeVariableMap;
+  bool preserveSourceNegativeEqualityOrientation = false;
+};
+
 bool expandGroundProof(
   const std::vector<Step>& steps,
   const std::string& finalStep,
@@ -135,6 +156,11 @@ bool expandClauseProof(
   const std::vector<ClauseStepRequest>& requests,
   const std::string& finalStep,
   ClauseExpansion& result,
+  std::string& error);
+
+bool expandFormulaTransport(
+  const FormulaTransportRequest& request,
+  FormulaTransportNode& result,
   std::string& error);
 
 }

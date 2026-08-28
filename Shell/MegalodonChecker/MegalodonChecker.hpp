@@ -22,6 +22,7 @@ namespace Shell {
 namespace MegalodonKernelSyntax {
 struct PrimitiveStep;
 struct RenderedKernelCnfProjection;
+struct RenderedKernelEnnfTrace;
 struct RenderedKernelRectifyRenamings;
 struct RenderedKernelSkolemUse;
 }
@@ -175,9 +176,13 @@ private:
   bool certificateTypeSexpr(Kernel::TermList sort, std::string& result);
   bool certificateTermSexpr(Kernel::TermList term, std::string& result);
   bool certificateTermSexpr(Kernel::TermList term, std::string& result, const std::vector<std::string>& deBruijnBinders);
+  bool certificateTermSexpr(Kernel::TermList term, std::string& result, const std::vector<std::string>& deBruijnBinders, const std::map<unsigned, unsigned>& variableAliases);
+  bool certificateTermSexpr(Kernel::TermList term, std::string& result, const std::vector<std::string>& deBruijnBinders, const std::map<unsigned, Kernel::TermList>& variableSubstitutions, bool preserveNegativeEqualityOrientation);
   bool certificateEqualityAtomSexpr(Kernel::TermList sort, const std::string& lhs, const std::string& rhs, std::string& result);
   bool certificateAtomSexpr(Kernel::Literal* literal, std::string& result);
   bool certificateAtomSexpr(Kernel::Literal* literal, std::string& result, const std::vector<std::string>& deBruijnBinders);
+  bool certificateAtomSexpr(Kernel::Literal* literal, std::string& result, const std::vector<std::string>& deBruijnBinders, const std::map<unsigned, unsigned>& variableAliases);
+  bool certificateAtomSexpr(Kernel::Literal* literal, std::string& result, const std::vector<std::string>& deBruijnBinders, const std::map<unsigned, Kernel::TermList>& variableSubstitutions, bool preserveNegativeEqualityOrientation);
   bool certificateLiteralSexpr(Kernel::Literal* literal, std::string& result);
   bool certificateSplitLiteralSexpr(unsigned split, std::string& result);
   bool appendCertificateSplitLiteralsSexpr(Kernel::Clause* clause, std::vector<std::string>& literals);
@@ -227,6 +232,8 @@ private:
   bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result);
   bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result, const std::vector<std::string>& deBruijnBinders);
   bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result, const std::vector<std::string>& deBruijnBinders, bool leftAssociateNary);
+  bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result, const std::vector<std::string>& deBruijnBinders, bool leftAssociateNary, const std::map<unsigned, unsigned>& variableAliases);
+  bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result, const std::vector<std::string>& deBruijnBinders, bool leftAssociateNary, const std::map<unsigned, Kernel::TermList>& variableSubstitutions, bool preserveNegativeEqualityOrientation);
   bool certificateAvatarFormulaTermSexpr(Kernel::Formula* formula, std::string& result);
   bool certificatePredicateDefinitionSymbol(Kernel::Formula* formula, std::string& result);
   bool certificateFormulaNativeLiteralSexpr(Kernel::Formula* formula, bool& positive, std::string& atom);
@@ -245,6 +252,13 @@ private:
   bool certificateRectifyRenamings(
     const InferenceRecorder::RectifyInferenceExtra* rectifyInfo,
     MegalodonKernelSyntax::RenderedKernelRectifyRenamings& result);
+  bool certificateFormulaTransport(
+    Kernel::Formula* source,
+    Kernel::Formula* target,
+    const std::vector<std::pair<unsigned, Kernel::TermList>>& freeVariableMap,
+    MegalodonKernelSyntax::RenderedKernelEnnfTrace& result,
+    std::string& error,
+    bool preserveSourceNegativeEqualityOrientation = false);
   bool certificateRectifyFormulaStepSexpr(
     Kernel::Unit* unit,
     std::string& result,
