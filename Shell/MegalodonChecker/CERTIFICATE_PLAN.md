@@ -315,9 +315,9 @@ Implemented and retained:
   `ivy_equality_factoring_v2`, `ivy_equality_symmetry_v2`, and
   `ivy_truth_conflict_v2` proof trees
   emitted by Vampire and replayed by the generic Megalodon Ivy elaborator;
-- direct `typed_v3` FOOL formula proofs for every step with an
-  `ivy_fool_formula_v1` recorder program; the structural program is lowered by
-  Vampire, not elaborated into local claims by Megalodon;
+- direct `typed_v3` FOOL formula proofs for every observed transformation;
+  Vampire constructs and lowers the `ivy_fool_formula_v1` program, while
+  Megalodon only validates the explicit program and checks its proof term;
 - exact recursive ENNF producer trace;
 - exact CNF projection records, with fresh `typed_v3` records carrying a
   mandatory direct `ivy_nd_v1` proof emitted by Vampire;
@@ -465,28 +465,44 @@ wall cap. Three other Vampire runs found proofs but failed
 the pre-existing final grounding-summary pass, so they did not emit complete
 certificates. None of these six cases was a rejected direct CNF proof.
 
-Recorder-backed FOOL formula transformation is now direct. Vampire lowers its
-preorder `ivy_fool_formula_v1` tree to one ordinary `ivy_nd_v1` term. The term
+FOOL formula transformation is now direct. Vampire lowers its preorder
+`ivy_fool_formula_v1` tree to one ordinary `ivy_nd_v1` term. The term
 explicitly introduces and applies universal binders, handles implication
 variance, invokes only the approved library proposition-extensionality basis
 for proposition-to-`True` equalities, and eliminates those equalities through
 Megalodon's native equality definition. Lambda-alpha leaves use Vampire's
 recorded nameless conversion and remain ordinary typed terms in the proof.
-Fresh recorder-backed steps use `typed_v3`; failure to lower a recorded node
-fails export. The older v2 node elaborator is archive compatibility only.
+Equality reversal is an explicit `equality_symmetry` leaf lowered through the
+same native Leibniz-equality term used by the clausal kernel.
 
-The fixed `hammer.10304.46` gate has six FOOL transformations. Five have
-recorder programs and direct proofs, including backward implication variance
-and `true_eq_prop_lambda_alpha`; the remaining no-program step is retained
-explicitly as legacy coverage debt. Mutations reject a wrong program context,
+The old pointer-based recorder did not build programs for 82 transformations
+in the cached corpus. A producer-side prooftrans-style normalizer now consumes
+Vampire's exact canonical source and target terms, standardizes quantifier
+binders, and emits the same small tree only when every node is one of
+`identity`, `forall`, `implies`, truth equality, lambda alpha-equivalence, or
+equality symmetry. It performs no symbol- or library-specific matching.
+Failure to obtain and lower a complete tree fails fresh direct export; no
+corresponding search was added to Megalodon. The older v2 node elaborator is
+archive compatibility only.
+
+The fixed `hammer.10304.46` gate now has direct proofs for all six FOOL
+transformations, including backward implication variance and
+`true_eq_prop_lambda_alpha`. A separate seven-line THF gate exercises forward
+and backward equality symmetry combined with lambda alpha-equivalence.
+Mutations reject a wrong program context, an invalid equality-symmetry leaf,
 an undeclared proof parent, an unapproved logical basis, and a structurally
-unchanged but ill-typed proof term. In the 90-problem known-solvable parallel
-batch, all 222 complete recorder-backed programs were direct. Eighty-five
-standalone checks passed, two large sources reached the 30-second checker cap,
-and the same three Vampire runs failed the pre-existing grounding-summary
-phase before completing certificate output. The complete certificates also
-contain 82 no-program FOOL steps; those are the next producer recording and
-lowering target.
+unchanged but ill-typed proof term.
+
+The one 20-worker regeneration of the 90 known-solvable THF problems emitted
+301 FOOL transformations in complete certificates. Initially 300 were direct;
+the sole residual equality-symmetry case was then regenerated in isolation and
+passed strict source emission and standalone Megalodon checking with a direct
+term, closing the emitted set at 301/301. Eighty-four complete standalone
+checks passed, two large generated sources reached the 30-second checker cap,
+and four Vampire runs failed the pre-existing post-proof grounding-summary
+phase before completing certificates. Earlier cached certificates contained
+304 transformations; classification places their former 82 no-program steps
+within the now-supported producer rules.
 
 The fixed `hammer.1081.36` gate covers two paramodulation steps whose result
 drops a parent variable. Vampire closes each direct proof explicitly by
@@ -509,15 +525,13 @@ Megalodon.
 ## Immediate Producer Work
 
 1. Extend the producer proof-expansion pass analogous to Prover9's
-   `expand_proof_ivy` beyond the now-direct AVATAR, local Skolem, substitution,
-   resolution, factor, single-site paramodulation, reflexive equality
-   resolution, equality factoring, equality symmetry, truth-conflict, and CNF
-   objects. Recorder-backed FOOL transformations are now direct too. Extend
-   Vampire's FOOL recorder and the same producer lowering over the 82 observed
-   no-program transformations, grouped by their producer connective cases.
-   Do not reconstruct these transformations from formulas in Megalodon. Implement
-   equality-resolution constraints when a live producer trace exercises them,
-   rather than designing against an absent corpus class.
+   `expand_proof_ivy` beyond the now-direct AVATAR, local Skolem, clausal
+   kernel, CNF, and FOOL objects. The next frequent preprocessing macros are
+   rectification and ENNF: Vampire must emit their complete small proof terms
+   from recorder data, after which the corresponding fresh Megalodon
+   constructors must be removed. Implement equality-resolution constraints
+   when a live producer trace exercises them, rather than designing against an
+   absent corpus class.
 2. Run Skolem-use collection over those expanded nodes and emit a finite,
    dependency-ordered unherbrandization plan linked to each typed Skolem
    branch and source formula.

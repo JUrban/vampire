@@ -1863,6 +1863,222 @@ bool canonicalInhabitantSexpr(
   return parser.parse(rendered, result);
 }
 
+bool preservedName(
+  const PreservedSexpr& value,
+  std::string& result)
+{
+  if (!value.atom || value.token.size() < 2
+      || value.token.front() != '"' || value.token.back() != '"') {
+    return false;
+  }
+  result.clear();
+  for (std::size_t index = 1; index + 1 < value.token.size(); ++index) {
+    if (value.token[index] == '\\' && index + 2 < value.token.size()) {
+      ++index;
+    }
+    result += value.token[index];
+  }
+  return true;
+}
+
+bool alphaEquivalentSexpr(
+  const PreservedSexpr& left,
+  const PreservedSexpr& right,
+  std::vector<std::string>& leftBinders,
+  std::vector<std::string>& rightBinders)
+{
+  if (left.atom || right.atom) {
+    return left.atom && right.atom && left.token == right.token;
+  }
+  const bool leftBinder = sexprHead(left, "ALLV")
+    || sexprHead(left, "LAMV") || sexprHead(left, "VLAMV");
+  const bool rightBinder = sexprHead(right, "ALLV")
+    || sexprHead(right, "LAMV") || sexprHead(right, "VLAMV");
+  if (leftBinder || rightBinder) {
+    if (!leftBinder || !rightBinder || left.items.size() != 4
+        || right.items.size() != 4
+        || left.items[0].token != right.items[0].token
+        || !alphaEquivalentSexpr(
+             left.items[2], right.items[2], leftBinders, rightBinders)) {
+      return false;
+    }
+    std::string leftName;
+    std::string rightName;
+    if (!preservedName(left.items[1], leftName)
+        || !preservedName(right.items[1], rightName)) {
+      return false;
+    }
+    leftBinders.push_back(leftName);
+    rightBinders.push_back(rightName);
+    const bool result = alphaEquivalentSexpr(
+      left.items[3], right.items[3], leftBinders, rightBinders);
+    leftBinders.pop_back();
+    rightBinders.pop_back();
+    return result;
+  }
+  if (sexprHead(left, "TMH") && left.items.size() == 2
+      && sexprHead(right, "TMH") && right.items.size() == 2) {
+    std::string leftName;
+    std::string rightName;
+    if (!preservedName(left.items[1], leftName)
+        || !preservedName(right.items[1], rightName)) {
+      return false;
+    }
+    auto boundIndex = [](const std::vector<std::string>& binders,
+                         const std::string& name) {
+      for (std::size_t offset = 0; offset < binders.size(); ++offset) {
+        const std::size_t index = binders.size() - offset - 1;
+        if (binders[index] == name) return static_cast<long>(offset);
+      }
+      return -1L;
+    };
+    const long leftIndex = boundIndex(leftBinders, leftName);
+    const long rightIndex = boundIndex(rightBinders, rightName);
+    return leftIndex >= 0 || rightIndex >= 0
+      ? leftIndex == rightIndex
+      : leftName == rightName;
+  }
+  if (left.items.size() != right.items.size()) return false;
+  for (std::size_t index = 0; index < left.items.size(); ++index) {
+    if (!alphaEquivalentSexpr(
+          left.items[index], right.items[index],
+          leftBinders, rightBinders)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool alphaEquivalentSexpr(
+  const PreservedSexpr& left,
+  const PreservedSexpr& right)
+{
+  std::vector<std::string> leftBinders;
+  std::vector<std::string> rightBinders;
+  return alphaEquivalentSexpr(
+    left, right, leftBinders, rightBinders);
+}
+
+bool containsNamedTermSexpr(
+  const PreservedSexpr& value,
+  const std::string& name)
+{
+  if (namedTermSexpr(value, name)) return true;
+  if (value.atom) return false;
+  for (const auto& item : value.items) {
+    if (containsNamedTermSexpr(item, name)) return true;
+  }
+  return false;
+}
+
+bool buildFoolProgramNode(
+  const PreservedSexpr& source,
+  const PreservedSexpr& target,
+  bool forward,
+  const std::vector<std::pair<
+    std::string, MegalodonKernelSyntax::RenderedKernelType>>& context,
+  std::size_t& nextIndex,
+  MegalodonKernelSyntax::RenderedKernelFoolProgramNode& node)
+{
+  node.index = nextIndex++;
+  node.direction = forward ? "forward" : "backward";
+  node.source = MegalodonKernelSyntax::formula(source.render());
+  node.target = MegalodonKernelSyntax::formula(target.render());
+  node.context = context;
+  if (alphaEquivalentSexpr(source, target)) {
+    node.rule = "identity";
+    return true;
+  }
+  if (sexprHead(source, "ALLV") && source.items.size() == 4
+      && sexprHead(target, "ALLV") && target.items.size() == 4
+      && source.items[2] == target.items[2]) {
+    std::string sourceName;
+    std::string targetName;
+    if (!preservedName(source.items[1], sourceName)
+        || !preservedName(target.items[1], targetName)) {
+      return false;
+    }
+    std::string binderName =
+      "ivy_fool_bound" + std::to_string(node.index);
+    const auto unavailable = [&](const std::string& name) {
+      return containsNamedTermSexpr(source, name)
+        || containsNamedTermSexpr(target, name)
+        || std::any_of(
+             context.begin(), context.end(),
+             [&](const auto& binding) { return binding.first == name; });
+    };
+    while (unavailable(binderName)) binderName += '_';
+    const auto binder = std::make_pair(
+      binderName,
+      MegalodonKernelSyntax::type(target.items[2].render()));
+    node.rule = "forall";
+    node.binders.push_back(binder);
+    node.children.resize(1);
+    auto bodyContext = context;
+    bodyContext.push_back(binder);
+    PreservedSexpr replacement;
+    PreservedSexprParser parser;
+    if (!parser.parse(
+          "(TMH " + quotePreservedName(binderName) + ")", replacement)) {
+      return false;
+    }
+    const PreservedSexpr sourceBody = substituteNamedVariableSexpr(
+      source.items[3], sourceName, replacement);
+    const PreservedSexpr targetBody = substituteNamedVariableSexpr(
+      target.items[3], targetName, replacement);
+    return buildFoolProgramNode(
+      sourceBody, targetBody, forward,
+      bodyContext, nextIndex, node.children[0]);
+  }
+  if (sexprHead(source, "IMP") && source.items.size() == 3
+      && sexprHead(target, "IMP") && target.items.size() == 3) {
+    node.rule = "implies";
+    node.children.resize(2);
+    return buildFoolProgramNode(
+             source.items[1], target.items[1], !forward,
+             context, nextIndex, node.children[0])
+      && buildFoolProgramNode(
+             source.items[2], target.items[2], forward,
+             context, nextIndex, node.children[1]);
+  }
+  PreservedSexpr sourceType;
+  PreservedSexpr sourceLeft;
+  PreservedSexpr sourceRight;
+  PreservedSexpr targetType;
+  PreservedSexpr targetLeft;
+  PreservedSexpr targetRight;
+  if (typedEqualitySexpr(source, sourceType, sourceLeft, sourceRight)
+      && typedEqualitySexpr(target, targetType, targetLeft, targetRight)
+      && sourceType == targetType
+      && alphaEquivalentSexpr(sourceLeft, targetRight)
+      && alphaEquivalentSexpr(sourceRight, targetLeft)) {
+    node.rule = "equality_symmetry";
+    return true;
+  }
+  PreservedSexpr type;
+  PreservedSexpr left;
+  PreservedSexpr right;
+  if (!typedEqualitySexpr(target, type, left, right)
+      || !sexprHead(type, "PROP") || type.items.size() != 1) {
+    return false;
+  }
+  if ((namedTermSexpr(right, "vampire_true")
+       || namedTermSexpr(right, "f__true"))
+      && alphaEquivalentSexpr(source, left)) {
+    node.rule = source == left
+      ? "prop_eq_true" : "prop_eq_true_lambda_alpha";
+    return true;
+  }
+  if ((namedTermSexpr(left, "vampire_true")
+       || namedTermSexpr(left, "f__true"))
+      && alphaEquivalentSexpr(source, right)) {
+    node.rule = source == right
+      ? "true_eq_prop" : "true_eq_prop_lambda_alpha";
+    return true;
+  }
+  return false;
+}
+
 class IvyClauseProofBuilder {
 public:
   std::string parent(const std::string& name) const
@@ -2117,7 +2333,7 @@ public:
           return std::string();
         }
         if (node.rule == "identity") {
-          return source == target && node.binders.empty()
+          return alphaEquivalentSexpr(source, target) && node.binders.empty()
               && node.children.empty()
             ? proof
             : std::string();
@@ -2131,21 +2347,28 @@ public:
           std::string instantiated = proof;
           for (const auto& [name, renderedType] : node.binders) {
             PreservedSexpr type;
+            std::string sourceName;
+            std::string targetName;
             if (!parser.parse(renderedType.sexpr, type)
                 || !sexprHead(sourceBody, "ALLV")
                 || !sexprHead(targetBody, "ALLV")
                 || sourceBody.items.size() != 4
                 || targetBody.items.size() != 4
-                || !sourceBody.items[1].atom
-                || !targetBody.items[1].atom
-                || sourceBody.items[1].token != quote(name)
-                || targetBody.items[1].token != quote(name)
+                || !preservedName(sourceBody.items[1], sourceName)
+                || !preservedName(targetBody.items[1], targetName)
                 || !(sourceBody.items[2] == type)
                 || !(targetBody.items[2] == type)) {
               return std::string();
             }
-            sourceBody = sourceBody.items[3];
-            targetBody = targetBody.items[3];
+            PreservedSexpr replacement;
+            if (!parser.parse(
+                  "(TMH " + quotePreservedName(name) + ")", replacement)) {
+              return std::string();
+            }
+            sourceBody = substituteNamedVariableSexpr(
+              sourceBody.items[3], sourceName, replacement);
+            targetBody = substituteNamedVariableSexpr(
+              targetBody.items[3], targetName, replacement);
             instantiated = termApply(
               instantiated,
               "(term (TMH " + quote(name) + "))");
@@ -2208,6 +2431,30 @@ public:
             ? targetConclusion
             : proofLambda(
                 premiseName, formula(premise.render()), targetConclusion);
+        }
+
+        if (node.rule == "equality_symmetry") {
+          PreservedSexpr sourceType;
+          PreservedSexpr sourceLeft;
+          PreservedSexpr sourceRight;
+          PreservedSexpr targetType;
+          PreservedSexpr targetLeft;
+          PreservedSexpr targetRight;
+          if (!node.binders.empty() || !node.children.empty()
+              || !typedEqualitySexpr(
+                   source, sourceType, sourceLeft, sourceRight)
+              || !typedEqualitySexpr(
+                   target, targetType, targetLeft, targetRight)
+              || !(sourceType == targetType)
+              || !alphaEquivalentSexpr(sourceLeft, targetRight)
+              || !alphaEquivalentSexpr(sourceRight, targetLeft)) {
+            return std::string();
+          }
+          return directionIs(node, "forward")
+            ? positiveEqualitySymmetry(
+                sourceType, sourceLeft, sourceRight, proof)
+            : positiveEqualitySymmetry(
+                targetType, targetLeft, targetRight, proof);
         }
 
         const bool propEqTrue = node.rule == "prop_eq_true"
@@ -3294,6 +3541,26 @@ bool expandFoolFormulaProof(
   if (!builder.foolFormula(
         parentId, parentArguments, program, result)) {
     error = "FOOL program does not lower to an explicit Ivy proof";
+    return false;
+  }
+  return true;
+}
+
+bool buildFoolFormulaProgram(
+  const std::string& sourceFormula,
+  const std::string& targetFormula,
+  MegalodonKernelSyntax::RenderedKernelFoolProgram& program,
+  std::string& error)
+{
+  PreservedSexprParser parser;
+  PreservedSexpr source;
+  PreservedSexpr target;
+  std::size_t nextIndex = 0;
+  if (!parser.parse(sourceFormula, source)
+      || !parser.parse(targetFormula, target)
+      || !buildFoolProgramNode(
+           source, target, true, {}, nextIndex, program.root)) {
+    error = "FOOL formulas do not produce a typed recorder program";
     return false;
   }
   return true;

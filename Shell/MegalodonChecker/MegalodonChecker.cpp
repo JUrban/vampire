@@ -5231,7 +5231,13 @@ bool MegalodonChecker::certificateFoolFormulaStepSexpr(
       }
       return false;
     };
-  const bool hasProgram = buildProgram(source, target, true, {}, program.root);
+  bool hasProgram = buildProgram(source, target, true, {}, program.root);
+  std::string programError;
+  if (!hasProgram) {
+    program = MegalodonKernelSyntax::RenderedKernelFoolProgram();
+    hasProgram = MegalodonProofExpander::buildFoolFormulaProgram(
+      parentFormula, resultFormula, program, programError);
+  }
   std::function<void(
     Kernel::Formula*,
     Kernel::Formula*,
