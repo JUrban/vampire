@@ -173,6 +173,22 @@ struct AvatarContradictionProofRequest {
   std::vector<std::string> resultLiterals;
 };
 
+struct AvatarComponentDefinition {
+  std::string id;
+  unsigned splitVariable = 0;
+  bool splitPositive = false;
+  std::vector<std::string> componentLiterals;
+  std::vector<std::pair<std::string, MegalodonKernelSyntax::RenderedKernelType>>
+    componentVariables;
+};
+
+struct AvatarComponentProofRequest {
+  std::vector<std::string> resultLiterals;
+  std::vector<std::pair<std::string, MegalodonKernelSyntax::RenderedKernelType>>
+    resultVariables;
+  std::vector<AvatarComponentDefinition> definitions;
+};
+
 bool expandGroundProof(
   const std::vector<Step>& steps,
   const std::string& finalStep,
@@ -205,6 +221,11 @@ bool expandAvatarContradictionProof(
 
 bool expandAvatarDefinitionProof(
   const MegalodonKernelSyntax::RenderedKernelAvatarDefinition& request,
+  std::string& result,
+  std::string& error);
+
+bool expandAvatarComponentProof(
+  const AvatarComponentProofRequest& request,
   std::string& result,
   std::string& error);
 

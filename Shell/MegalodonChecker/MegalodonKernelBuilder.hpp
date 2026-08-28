@@ -229,7 +229,8 @@ MegalodonKernelSyntax::PrimitiveStep predicateDefinitionStep(
 MegalodonKernelSyntax::PrimitiveStep avatarComponentStep(
   const std::string& id,
   const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& definitions,
-  const MegalodonKernelSyntax::RenderedKernelClause& result);
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::string& producerProof);
 
 MegalodonKernelSyntax::PrimitiveStep avatarDefinitionStep(
   const std::string& id,

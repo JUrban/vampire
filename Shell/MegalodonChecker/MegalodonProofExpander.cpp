@@ -1740,6 +1740,274 @@ bool expandAvatarContradictionProof(
   return true;
 }
 
+bool expandAvatarComponentProof(
+  const AvatarComponentProofRequest& request,
+  std::string& result,
+  std::string& error)
+{
+  auto quote = [](const std::string& value) {
+    std::string rendered = "\"";
+    for (char ch : value) {
+      if (ch == '\\' || ch == '"') rendered += '\\';
+      rendered += ch;
+    }
+    return rendered + '"';
+  };
+  auto literalFormula = [](const std::string& literal, std::string& formula) {
+    if (literal.size() < 7 || literal.back() != ')') return false;
+    const bool positive = literal.compare(0, 5, "(pos ") == 0;
+    const bool negative = literal.compare(0, 5, "(neg ") == 0;
+    if (!positive && !negative) return false;
+    const std::string atom = literal.substr(5, literal.size() - 6);
+    formula = positive ? atom : "(IMP " + atom + " (TMH \"vampire_false\"))";
+    return true;
+  };
+  auto complement = [](const std::string& literal) {
+    if (literal.compare(0, 5, "(pos ") == 0) return "(neg " + literal.substr(5);
+    if (literal.compare(0, 5, "(neg ") == 0) return "(pos " + literal.substr(5);
+    return std::string();
+  };
+  auto sameMultiset = [](std::vector<std::string> left,
+                         std::vector<std::string> right) {
+    std::sort(left.begin(), left.end());
+    std::sort(right.begin(), right.end());
+    return left == right;
+  };
+  auto formulaOr = [](const std::string& left, const std::string& right) {
+    return "(AP (AP (TMH \"vampire_or\") " + left + ") " + right + ")";
+  };
+  auto formulaImp = [](const std::string& left, const std::string& right) {
+    return "(IMP " + left + " " + right + ")";
+  };
+  auto formula = [](const std::string& value) { return "(formula " + value + ")"; };
+  auto clauseTerm = [](const std::vector<std::string>& literals) {
+    std::string value = "(clause (clause";
+    for (const std::string& literal : literals) value += " " + literal;
+    return value + "))";
+  };
+  auto hypothesis = [&](const std::string& name) { return "(hyp " + quote(name) + ")"; };
+  auto definition = [&](const std::string& name) { return "(definition " + quote(name) + ")"; };
+  auto known = [&](const std::string& name) { return "(known " + quote(name) + ")"; };
+  auto termApply = [](const std::string& proof, const std::string& term) {
+    return "(term_apply " + proof + " " + term + ")";
+  };
+  auto proofApply = [](const std::string& left, const std::string& right) {
+    return "(proof_apply " + left + " " + right + ")";
+  };
+  auto proofLambda = [&](const std::string& name, const std::string& prop,
+                         const std::string& body) {
+    return "(proof_lambda " + quote(name) + " " + prop + " " + body + ")";
+  };
+  auto termLambda = [&](const std::string& name, const std::string& type,
+                        const std::string& body) {
+    return "(term_lambda " + quote(name) + " " + type + " " + body + ")";
+  };
+  auto clauseFormula = [&](const std::vector<std::string>& literals,
+                           std::string& value) {
+    if (literals.empty()) return false;
+    std::vector<std::string> formulas;
+    for (const std::string& literal : literals) {
+      std::string item;
+      if (!literalFormula(literal, item)) return false;
+      formulas.push_back(std::move(item));
+    }
+    value = formulas.back();
+    for (std::size_t offset = formulas.size() - 1; offset > 0; --offset) {
+      value = formulaOr(formulas[offset - 1], value);
+    }
+    return true;
+  };
+
+  std::size_t fresh = 0;
+  auto freshName = [&](const char* prefix) {
+    return std::string("ivy_component_") + prefix + std::to_string(fresh++);
+  };
+  std::function<std::string(
+    const std::vector<std::string>&, std::size_t, const std::string&)> inject;
+  inject = [&](const std::vector<std::string>& target, std::size_t index,
+               const std::string& proof) -> std::string {
+    if (target.size() == 1) return index == 0 ? proof : std::string();
+    const std::string qName = freshName("q");
+    const std::string leftName = freshName("left");
+    const std::string rightName = freshName("right");
+    std::vector<std::string> rest(target.begin() + 1, target.end());
+    std::string leftFormula;
+    std::string rightFormula;
+    if (!literalFormula(target.front(), leftFormula)
+        || !clauseFormula(rest, rightFormula)) return std::string();
+    const std::string q = "(TMH " + quote(qName) + ")";
+    const std::string selected = index == 0
+      ? proofApply(hypothesis(leftName), proof)
+      : proofApply(hypothesis(rightName), inject(rest, index - 1, proof));
+    return termLambda(
+      qName, "(PROP)",
+      proofLambda(
+        leftName, formula(formulaImp(leftFormula, q)),
+        proofLambda(rightName, formula(formulaImp(rightFormula, q)), selected)));
+  };
+  auto injectLiteral = [&](const std::string& literal, const std::string& proof) {
+    auto position = std::find(
+      request.resultLiterals.begin(), request.resultLiterals.end(), literal);
+    return position == request.resultLiterals.end()
+      ? std::string()
+      : inject(
+          request.resultLiterals,
+          static_cast<std::size_t>(position - request.resultLiterals.begin()),
+          proof);
+  };
+  std::function<std::string(
+    const std::vector<std::string>&, std::size_t, const std::string&)> project;
+  project = [&](const std::vector<std::string>& source, std::size_t index,
+                const std::string& proof) -> std::string {
+    const std::string injected = injectLiteral(source[index], hypothesis("ivy_component_source" + std::to_string(index)));
+    if (injected.empty()) return std::string();
+    if (index + 1 == source.size()) return injectLiteral(source[index], proof);
+    const std::string headName = "ivy_component_source" + std::to_string(index);
+    const std::string restName = "ivy_component_rest" + std::to_string(index);
+    std::vector<std::string> rest(source.begin() + index + 1, source.end());
+    std::string headFormula;
+    if (!literalFormula(source[index], headFormula)) return std::string();
+    return proofApply(
+      proofApply(
+        termApply(proof, clauseTerm(request.resultLiterals)),
+        proofLambda(headName, formula(headFormula), injected)),
+      proofLambda(restName, clauseTerm(rest), project(source, index + 1, hypothesis(restName))));
+  };
+  auto excludedMiddle = [&](const std::string& prop, const std::string& target,
+                            const std::string& trueName, const std::string& trueProof,
+                            const std::string& falseName, const std::string& falseProof) {
+    const std::string qName = freshName("xm_q");
+    const std::string leftName = freshName("xm_left");
+    const std::string rightName = freshName("xm_right");
+    const std::string notQName = freshName("xm_not_q");
+    const std::string propName = freshName("xm_prop");
+    const std::string q = "(TMH " + quote(qName) + ")";
+    const std::string falseFormula = "(TMH \"vampire_false\")";
+    const std::string leftResult =
+      proofApply(hypothesis(leftName), hypothesis(propName));
+    const std::string notProp = proofLambda(
+      propName, formula(prop),
+      proofApply(hypothesis(notQName), leftResult));
+    const std::string rightResult = proofApply(hypothesis(rightName), notProp);
+    const std::string contradiction =
+      proofApply(hypothesis(notQName), rightResult);
+    const std::string dneg = proofApply(
+      termApply(
+        known("e4b03c310442ae760be9945e176494db51515dfb952ee60fbd42e05527752af0"),
+        formula(q)),
+      proofLambda(notQName, formula(formulaImp(q, falseFormula)), contradiction));
+    const std::string xm = termLambda(
+      qName, "(PROP)",
+      proofLambda(
+        leftName, formula(formulaImp(prop, q)),
+        proofLambda(
+          rightName, formula(formulaImp(formulaImp(prop, falseFormula), q)),
+          dneg)));
+    return proofApply(
+      proofApply(
+        termApply(xm, formula(target)),
+        proofLambda(trueName, formula(prop), trueProof)),
+      proofLambda(falseName, formula(formulaImp(prop, falseFormula)), falseProof));
+  };
+
+  std::string targetFormula;
+  if (!clauseFormula(request.resultLiterals, targetFormula)) {
+    error = "AVATAR component direct proof has an empty or malformed result";
+    return false;
+  }
+  for (const AvatarComponentDefinition& item : request.definitions) {
+    const std::string splitName = "split_" + std::to_string(item.splitVariable);
+    const std::string splitAtom = "(TMH " + quote(splitName) + ")";
+    const std::string negativeSplit = "(neg " + splitAtom + ")";
+    const std::string positiveSplit = "(pos " + splitAtom + ")";
+    std::vector<std::string> negativeExpected = item.componentLiterals;
+    negativeExpected.push_back(negativeSplit);
+    const bool negativeDirection = sameMultiset(request.resultLiterals, negativeExpected);
+    const bool positiveDirection =
+      item.componentLiterals.size() == 1
+      && sameMultiset(
+           request.resultLiterals,
+           {complement(item.componentLiterals.front()), positiveSplit});
+    if (!negativeDirection && !positiveDirection) continue;
+
+    std::string componentFormula;
+    if (!clauseFormula(item.componentLiterals, componentFormula)) continue;
+    for (auto variable = item.componentVariables.rbegin();
+         variable != item.componentVariables.rend(); ++variable) {
+      componentFormula = "(ALLV " + quote(variable->first) + " "
+        + variable->second.sexpr + " " + componentFormula + ")";
+    }
+    const std::string left = formulaImp(splitAtom, componentFormula);
+    const std::string right = formulaImp(componentFormula, splitAtom);
+    auto selectDefinition = [&](bool selectLeft) {
+      const std::string leftName = freshName("definition_left");
+      const std::string rightName = freshName("definition_right");
+      const std::string selectedProp = selectLeft ? left : right;
+      return proofApply(
+        termApply(definition(item.id), formula(selectedProp)),
+        proofLambda(
+          leftName, formula(left),
+          proofLambda(
+            rightName, formula(right),
+            hypothesis(selectLeft ? leftName : rightName))));
+    };
+
+    if (negativeDirection) {
+      const std::string splitProofName = freshName("split");
+      const std::string notSplitName = freshName("not_split");
+      std::string componentProof = proofApply(
+        selectDefinition(true), hypothesis(splitProofName));
+      for (const auto& variable : item.componentVariables) {
+        auto resultVariable = std::find_if(
+          request.resultVariables.begin(), request.resultVariables.end(),
+          [&](const auto& candidate) { return candidate.first == variable.first; });
+        if (resultVariable == request.resultVariables.end()) {
+          error = "AVATAR component direct proof cannot map a component variable";
+          return false;
+        }
+        componentProof = termApply(
+          componentProof, "(term (TMH " + quote(resultVariable->first) + "))");
+      }
+      const std::string trueProof = project(item.componentLiterals, 0, componentProof);
+      const std::string falseProof = injectLiteral(negativeSplit, hypothesis(notSplitName));
+      if (trueProof.empty() || falseProof.empty()) continue;
+      result = excludedMiddle(
+        splitAtom, targetFormula,
+        splitProofName, trueProof,
+        notSplitName, falseProof);
+    } else {
+      if (!item.componentVariables.empty()) {
+        error = "positive AVATAR component direct proof does not support component variables";
+        return false;
+      }
+      const std::string componentLiteral = item.componentLiterals.front();
+      const std::string atom = componentLiteral.substr(5, componentLiteral.size() - 6);
+      const bool componentPositive = componentLiteral.compare(0, 5, "(pos ") == 0;
+      const std::string atomName = freshName("atom");
+      const std::string notAtomName = freshName("not_atom");
+      const std::string splitFromComponent = selectDefinition(false);
+      const std::string trueProof = componentPositive
+        ? injectLiteral(
+            positiveSplit,
+            proofApply(splitFromComponent, hypothesis(atomName)))
+        : injectLiteral("(pos " + atom + ")", hypothesis(atomName));
+      const std::string falseProof = componentPositive
+        ? injectLiteral("(neg " + atom + ")", hypothesis(notAtomName))
+        : injectLiteral(
+            positiveSplit,
+            proofApply(splitFromComponent, hypothesis(notAtomName)));
+      if (trueProof.empty() || falseProof.empty()) continue;
+      result = excludedMiddle(
+        atom, targetFormula,
+        atomName, trueProof,
+        notAtomName, falseProof);
+    }
+    return true;
+  }
+  error = "AVATAR component direct proof has no matching producer definition";
+  return false;
+}
+
 bool expandAvatarDefinitionProof(
   const MegalodonKernelSyntax::RenderedKernelAvatarDefinition& request,
   std::string& result,

@@ -1832,7 +1832,8 @@ MegalodonKernelSyntax::PrimitiveStep predicateDefinitionStep(
 MegalodonKernelSyntax::PrimitiveStep avatarComponentStep(
   const std::string& id,
   const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& definitions,
-  const MegalodonKernelSyntax::RenderedKernelClause& result)
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::string& producerProof)
 {
   std::vector<std::string> parentIds;
   std::string renderedParents = "(parents";
@@ -1852,7 +1853,9 @@ MegalodonKernelSyntax::PrimitiveStep avatarComponentStep(
       {"primitive_lowering_source", "avatar_v1"},
     },
     "(avatar_component " + quote(id) + " " + renderedParents
-      + " (result " + result.sexpr + "))");
+      + " (result " + result.sexpr + ")"
+      + " (producer_proof (program \"ivy_nd_v1\" (proof "
+      + producerProof + "))))");
 }
 
 MegalodonKernelSyntax::PrimitiveStep avatarDefinitionStep(

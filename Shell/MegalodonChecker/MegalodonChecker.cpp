@@ -1462,6 +1462,32 @@ bool MegalodonChecker::certificateAvatarComponentStepSexpr(Kernel::Unit* unit, s
   if (!certificateClauseSexpr(clause, renderedClause)) {
     return false;
   }
+  MegalodonProofExpander::AvatarComponentProofRequest proofRequest;
+  if (!appendCertificateClauseLiteralsSexpr(clause, proofRequest.resultLiterals)) {
+    return false;
+  }
+  {
+    Lib::DHMap<unsigned, Kernel::TermList> variableSorts;
+    Kernel::SortHelper::collectVariableSorts(clause, variableSorts);
+    std::vector<std::pair<unsigned, Kernel::TermList>> variables;
+    Lib::DHMap<unsigned, Kernel::TermList>::Iterator iterator(variableSorts);
+    while (iterator.hasNext()) {
+      unsigned variable;
+      Kernel::TermList sort;
+      iterator.next(variable, sort);
+      variables.push_back({variable, sort});
+    }
+    std::sort(variables.begin(), variables.end());
+    for (const auto& [variable, sort] : variables) {
+      std::string renderedType;
+      if (!certificateTypeSexpr(sort, renderedType)) {
+        return false;
+      }
+      proofRequest.resultVariables.push_back({
+        variableName(variable), MegalodonKernelSyntax::type(renderedType),
+      });
+    }
+  }
   std::set<unsigned> definitionNumbers;
   for (unsigned split : iterTraits(clause->splits()->iter())) {
     const SATLiteral splitLiteral = Splitter::getLiteralFromName(split);
@@ -1501,17 +1527,65 @@ bool MegalodonChecker::certificateAvatarComponentStepSexpr(Kernel::Unit* unit, s
         "AVATAR component lacks a definition for SAT variable "
         + std::to_string(splitLiteral.var()));
     }
-    definitionNumbers.insert(matchingDefinition->number());
+    if (definitionNumbers.insert(matchingDefinition->number()).second) {
+      const auto* matchingExtra = static_cast<const SplitDefinitionExtra*>(
+        env.proofExtra.find(matchingDefinition));
+      const unsigned matchingLevel = matchingExtra->component->splits()->sval();
+      const SATLiteral matchingLiteral = Splitter::getLiteralFromName(matchingLevel);
+      MegalodonProofExpander::AvatarComponentDefinition definition;
+      definition.id = "u" + std::to_string(matchingDefinition->number());
+      definition.splitVariable = matchingLiteral.var();
+      definition.splitPositive = matchingLiteral.positive();
+      for (Kernel::Literal* literal : matchingExtra->component->iterLits()) {
+        std::string renderedLiteral;
+        if (!certificateLiteralSexpr(literal, renderedLiteral)) {
+          return false;
+        }
+        definition.componentLiterals.push_back(std::move(renderedLiteral));
+      }
+      Lib::DHMap<unsigned, Kernel::TermList> componentSorts;
+      Kernel::SortHelper::collectVariableSorts(
+        matchingExtra->component, componentSorts);
+      std::vector<std::pair<unsigned, Kernel::TermList>> componentVariables;
+      Lib::DHMap<unsigned, Kernel::TermList>::Iterator componentIterator(
+        componentSorts);
+      while (componentIterator.hasNext()) {
+        unsigned variable;
+        Kernel::TermList sort;
+        componentIterator.next(variable, sort);
+        componentVariables.push_back({variable, sort});
+      }
+      std::sort(componentVariables.begin(), componentVariables.end());
+      for (const auto& [variable, sort] : componentVariables) {
+        std::string renderedType;
+        if (!certificateTypeSexpr(sort, renderedType)) {
+          return false;
+        }
+        definition.componentVariables.push_back({
+          variableName(variable), MegalodonKernelSyntax::type(renderedType),
+        });
+      }
+      proofRequest.definitions.push_back(std::move(definition));
+    }
   }
   std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef> definitions;
   for (unsigned definitionNumber : definitionNumbers) {
     definitions.push_back(MegalodonKernelSyntax::unitRef(
       "u" + std::to_string(definitionNumber)));
   }
+  std::string producerProof;
+  std::string producerProofError;
+  if (!MegalodonProofExpander::expandAvatarComponentProof(
+        proofRequest, producerProof, producerProofError)) {
+    INVALID_OPERATION(
+      "cannot lower AVATAR component to a direct Ivy proof: "
+      + producerProofError);
+  }
   const auto step = MegalodonKernelBuilder::avatarComponentStep(
     "u" + std::to_string(unit->number()),
     definitions,
-    MegalodonKernelSyntax::clause(renderedClause));
+    MegalodonKernelSyntax::clause(renderedClause),
+    producerProof);
   _certificateNativePrimitiveStepsByUnit[unit->number()] = {step};
   result = MegalodonKernelBuilder::avatarPrimitiveWithMetadata(step);
   return true;
