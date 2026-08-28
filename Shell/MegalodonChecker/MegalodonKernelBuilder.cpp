@@ -82,6 +82,35 @@ MegalodonKernelSyntax::PrimitiveStep primitiveClauseStep(
   return step;
 }
 
+std::string renderFoolProgramNode(
+  const MegalodonKernelSyntax::RenderedKernelFoolProgramNode& node)
+{
+  std::string context = "(context";
+  for (const auto& [name, type] : node.context) {
+    context += " (variable " + quote(name) + " " + type.sexpr + ")";
+  }
+  context += ")";
+  std::string binders = "(binders";
+  for (const auto& [name, type] : node.binders) {
+    binders += " (variable " + quote(name) + " " + type.sexpr + ")";
+  }
+  binders += ")";
+  std::string children = "(children";
+  for (const auto& child : node.children) {
+    children += " " + renderFoolProgramNode(child);
+  }
+  children += ")";
+  return
+    "(node (index " + std::to_string(node.index) + ")"
+    + " (rule " + quote(node.rule) + ")"
+    + " (direction " + quote(node.direction) + ")"
+    + " (source (formula " + node.source.sexpr + "))"
+    + " (target (formula " + node.target.sexpr + "))"
+    + " " + context
+    + " " + binders
+    + " " + children + ")";
+}
+
 }
 
 std::string PrimitiveChain::render(
@@ -1037,6 +1066,36 @@ MegalodonKernelSyntax::PrimitiveStep foolFormulaStep(
     "(fool_formula " + quote(id)
     + " (parent " + quote(parent.value) + ")"
     + " (result (formula " + result.sexpr + ")))";
+  return step;
+}
+
+MegalodonKernelSyntax::PrimitiveStep foolFormulaStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelFormula& source,
+  const MegalodonKernelSyntax::RenderedKernelFoolProgram& program,
+  const MegalodonKernelSyntax::RenderedKernelFormula& result)
+{
+  MegalodonKernelSyntax::PrimitiveStep step;
+  step.rule = "fool_formula";
+  step.id = id;
+  step.builderOwned = true;
+  step.parentIds = {parent.value};
+  step.hasResultFormula = true;
+  step.resultFormula = result.sexpr;
+  step.fields = {
+    {"source_formula", source.sexpr},
+    {"result_formula", result.sexpr},
+    {"program", program.version},
+  };
+  step.rendered =
+    "(fool_formula " + quote(id)
+    + " (parent " + quote(parent.value) + ")"
+    + " (source (formula " + source.sexpr + "))"
+    + " (result (formula " + result.sexpr + "))"
+    + " (program " + quote(program.version) + " "
+    + renderFoolProgramNode(program.root) + ")"
+    + " (builder \"typed_v2\"))";
   return step;
 }
 

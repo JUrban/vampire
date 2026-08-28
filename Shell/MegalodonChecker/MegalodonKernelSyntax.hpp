@@ -683,6 +683,22 @@ struct RenderedKernelSourceFormulaTransform {
   std::vector<RenderedKernelTransformationPair> transformationPairs;
 };
 
+struct RenderedKernelFoolProgramNode {
+  std::size_t index = 0;
+  std::string rule;
+  std::string direction;
+  RenderedKernelFormula source;
+  RenderedKernelFormula target;
+  std::vector<std::pair<std::string, RenderedKernelType>> context;
+  std::vector<std::pair<std::string, RenderedKernelType>> binders;
+  std::vector<RenderedKernelFoolProgramNode> children;
+};
+
+struct RenderedKernelFoolProgram {
+  std::string version = "ivy_fool_formula_v1";
+  RenderedKernelFoolProgramNode root;
+};
+
 struct RenderedKernelRectifyRenaming {
   std::size_t index = 0;
   bool hasSource = false;

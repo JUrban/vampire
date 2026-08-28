@@ -3134,6 +3134,132 @@ bool MegalodonChecker::certificateFoolFormulaStepSexpr(
     std::string,
     MegalodonKernelSyntax::RenderedKernelType>>;
   std::vector<FoolPrimitive> primitives;
+  MegalodonKernelSyntax::RenderedKernelFoolProgram program;
+  std::size_t programIndex = 0;
+  std::function<bool(
+    Kernel::Formula*,
+    Kernel::Formula*,
+    bool,
+    const FoolContext&,
+    MegalodonKernelSyntax::RenderedKernelFoolProgramNode&)> buildProgram =
+    [&](Kernel::Formula* left,
+        Kernel::Formula* right,
+        bool forward,
+        const FoolContext& context,
+        MegalodonKernelSyntax::RenderedKernelFoolProgramNode& node) {
+      std::string leftText;
+      std::string rightText;
+      if (left == nullptr || right == nullptr
+          || !certificateFormulaTermSexpr(left, leftText)
+          || !certificateFormulaTermSexpr(right, rightText)) {
+        return false;
+      }
+      node.index = programIndex++;
+      node.direction = forward ? "forward" : "backward";
+      node.source = MegalodonKernelSyntax::formula(leftText);
+      node.target = MegalodonKernelSyntax::formula(rightText);
+      node.context = context;
+      if (leftText == rightText) {
+        node.rule = "identity";
+        return true;
+      }
+      if (left->connective() == Kernel::FORALL
+          && right->connective() == Kernel::FORALL) {
+        std::vector<std::pair<unsigned, Kernel::TermList>> leftVariables;
+        std::vector<std::pair<unsigned, Kernel::TermList>> rightVariables;
+        Kernel::VSList::Iterator leftVariableIterator(left->vars());
+        while (leftVariableIterator.hasNext()) {
+          leftVariables.push_back(leftVariableIterator.next());
+        }
+        Kernel::VSList::Iterator rightVariableIterator(right->vars());
+        while (rightVariableIterator.hasNext()) {
+          rightVariables.push_back(rightVariableIterator.next());
+        }
+        if (rightVariables.empty()
+            || rightVariables.size() != leftVariables.size()) {
+          return false;
+        }
+        FoolContext bodyContext = context;
+        for (std::size_t index = 0; index < rightVariables.size(); ++index) {
+          const auto& leftVar = leftVariables[index];
+          const auto& rightVar = rightVariables[index];
+          std::string leftType;
+          std::string rightType;
+          if (variableName(leftVar.first) != variableName(rightVar.first)
+              || !certificateTypeSexpr(leftVar.second, leftType)
+              || !certificateTypeSexpr(rightVar.second, rightType)
+              || leftType != rightType) {
+            return false;
+          }
+        }
+        for (std::size_t offset = 0; offset < rightVariables.size(); ++offset) {
+          const std::size_t index = rightVariables.size() - offset - 1;
+          const auto& rightVar = rightVariables[index];
+          std::string rightType;
+          if (!certificateTypeSexpr(rightVar.second, rightType)) {
+            return false;
+          }
+          auto binder = std::make_pair(
+            variableName(rightVar.first),
+            MegalodonKernelSyntax::type(rightType));
+          node.binders.push_back(binder);
+          bodyContext.push_back(binder);
+        }
+        node.rule = "forall";
+        node.children.resize(1);
+        return buildProgram(
+          left->qarg(), right->qarg(), forward,
+          bodyContext, node.children[0]);
+      }
+      if (left->connective() == Kernel::IMP
+          && right->connective() == Kernel::IMP) {
+        node.rule = "implies";
+        node.children.resize(2);
+        return buildProgram(
+                 left->left(), right->left(), !forward,
+                 context, node.children[0])
+          && buildProgram(
+                 left->right(), right->right(), forward,
+                 context, node.children[1]);
+      }
+      if (right->connective() != Kernel::LITERAL
+          || !right->literal()->isPositive()
+          || !right->literal()->isEquality()) {
+        return false;
+      }
+      std::string targetLeft;
+      std::string targetRight;
+      Kernel::TermList targetLeftTerm = *right->literal()->nthArgument(0);
+      Kernel::TermList targetRightTerm = *right->literal()->nthArgument(1);
+      if (!certificateTermSexpr(targetLeftTerm, targetLeft)
+          || !certificateTermSexpr(targetRightTerm, targetRight)) {
+        return false;
+      }
+      if (targetLeft == leftText && HOL::isTrue(targetRightTerm)) {
+        node.rule = "prop_eq_true";
+        return true;
+      }
+      if (HOL::isTrue(targetLeftTerm) && targetRight == leftText) {
+        node.rule = "true_eq_prop";
+        return true;
+      }
+      std::string namelessSource;
+      Kernel::TermList sourceAsNamelessTerm = HOL::convert::toNameless(
+        Kernel::TermList(Kernel::Term::createFormula(left)));
+      if (!certificateTermSexpr(sourceAsNamelessTerm, namelessSource)) {
+        return false;
+      }
+      if (targetLeft == namelessSource && HOL::isTrue(targetRightTerm)) {
+        node.rule = "prop_eq_true_lambda_alpha";
+        return true;
+      }
+      if (HOL::isTrue(targetLeftTerm) && targetRight == namelessSource) {
+        node.rule = "true_eq_prop_lambda_alpha";
+        return true;
+      }
+      return false;
+    };
+  const bool hasProgram = buildProgram(source, target, true, {}, program.root);
   std::function<void(
     Kernel::Formula*,
     Kernel::Formula*,
@@ -3220,6 +3346,17 @@ bool MegalodonChecker::certificateFoolFormulaStepSexpr(
       if (certificateFormulaTermSexpr(left, leftText)
         && certificateFormulaTermSexpr(right, rightText)
         && leftText != rightText) {
+        std::string namelessLeft;
+        std::string namelessRight;
+        Kernel::TermList leftAsNamelessTerm = HOL::convert::toNameless(
+          Kernel::TermList(Kernel::Term::createFormula(left)));
+        Kernel::TermList rightAsNamelessTerm = HOL::convert::toNameless(
+          Kernel::TermList(Kernel::Term::createFormula(right)));
+        if (certificateTermSexpr(leftAsNamelessTerm, namelessLeft)
+            && certificateTermSexpr(rightAsNamelessTerm, namelessRight)
+            && namelessLeft == namelessRight) {
+          return;
+        }
         const std::string primitiveId =
           "u" + std::to_string(unit->number())
           + "_fool_atom_" + std::to_string(primitives.size());
@@ -3250,11 +3387,19 @@ bool MegalodonChecker::certificateFoolFormulaStepSexpr(
     }
     out << primitive.rendered << "\n  ";
   }
-  auto built = MegalodonKernelBuilder::foolFormulaStep(
-    unitId,
-    MegalodonKernelSyntax::unitRef(
-      "u" + std::to_string(parent->number())),
-    MegalodonKernelSyntax::formula(resultFormula));
+  auto built = hasProgram
+    ? MegalodonKernelBuilder::foolFormulaStep(
+        unitId,
+        MegalodonKernelSyntax::unitRef(
+          "u" + std::to_string(parent->number())),
+        MegalodonKernelSyntax::formula(parentFormula),
+        program,
+        MegalodonKernelSyntax::formula(resultFormula))
+    : MegalodonKernelBuilder::foolFormulaStep(
+        unitId,
+        MegalodonKernelSyntax::unitRef(
+          "u" + std::to_string(parent->number())),
+        MegalodonKernelSyntax::formula(resultFormula));
   out << built.rendered;
   result = out.str();
   if (primitiveSteps != nullptr) {
