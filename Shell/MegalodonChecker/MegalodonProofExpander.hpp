@@ -108,6 +108,9 @@ struct FactorClauseStep {
   std::size_t leftLiteral = 0;
   std::size_t rightLiteral = 0;
   MegalodonKernelSyntax::RenderedKernelClause result;
+  bool hasIvyProgram = false;
+  std::vector<std::string> sourceLiterals;
+  std::vector<std::string> resultLiterals;
 };
 
 using ClauseStep = std::variant<

@@ -866,12 +866,21 @@ bool expandClauseProof(
         step->result);
     } else if (const auto* step =
                  std::get_if<FactorClauseStep>(&request.step)) {
-      primitive = MegalodonKernelBuilder::factorStep(
-        step->id,
-        step->parent,
-        step->leftLiteral,
-        step->rightLiteral,
-        step->result);
+      primitive = step->hasIvyProgram
+        ? MegalodonKernelBuilder::factorIvyStep(
+            step->id,
+            step->parent,
+            step->leftLiteral,
+            step->rightLiteral,
+            step->result,
+            step->sourceLiterals,
+            step->resultLiterals)
+        : MegalodonKernelBuilder::factorStep(
+            step->id,
+            step->parent,
+            step->leftLiteral,
+            step->rightLiteral,
+            step->result);
     }
 
     std::string rendered = primitive.rendered;

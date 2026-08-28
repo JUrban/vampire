@@ -951,6 +951,78 @@ MegalodonKernelSyntax::PrimitiveStep factorStep(
       + " (result " + result.sexpr + "))");
 }
 
+MegalodonKernelSyntax::PrimitiveStep factorIvyStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  std::size_t leftLiteral,
+  std::size_t rightLiteral,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::vector<std::string>& sourceLiterals,
+  const std::vector<std::string>& resultLiterals)
+{
+  const std::size_t removed = std::max(leftLiteral, rightLiteral);
+  const std::size_t retained = std::min(leftLiteral, rightLiteral);
+  if (leftLiteral >= sourceLiterals.size()
+    || rightLiteral >= sourceLiterals.size()
+    || leftLiteral == rightLiteral
+    || sourceLiterals[leftLiteral] != sourceLiterals[rightLiteral]
+    || resultLiterals.size() + 1 != sourceLiterals.size()) {
+    return factorStep(id, parent, leftLiteral, rightLiteral, result);
+  }
+
+  std::vector<std::size_t> targets(sourceLiterals.size(), resultLiterals.size());
+  std::vector<bool> usedResult(resultLiterals.size(), false);
+  for (std::size_t sourceIndex = 0;
+       sourceIndex < sourceLiterals.size();
+       ++sourceIndex) {
+    if (sourceIndex == removed) {
+      continue;
+    }
+    for (std::size_t resultIndex = 0;
+         resultIndex < resultLiterals.size();
+         ++resultIndex) {
+      if (!usedResult[resultIndex]
+        && sourceLiterals[sourceIndex] == resultLiterals[resultIndex]) {
+        targets[sourceIndex] = resultIndex;
+        usedResult[resultIndex] = true;
+        break;
+      }
+    }
+    if (targets[sourceIndex] == resultLiterals.size()) {
+      return factorStep(id, parent, leftLiteral, rightLiteral, result);
+    }
+  }
+  if (targets[retained] == resultLiterals.size()
+    || std::find(usedResult.begin(), usedResult.end(), false)
+       != usedResult.end()) {
+    return factorStep(id, parent, leftLiteral, rightLiteral, result);
+  }
+  targets[removed] = targets[retained];
+
+  std::string sourceClause = "(clause";
+  for (const std::string& literal : sourceLiterals) {
+    sourceClause += " " + literal;
+  }
+  sourceClause += ")";
+  std::string program =
+    "(program \"ivy_factor_v1\" (source " + sourceClause + ") (nodes";
+  for (std::size_t sourceIndex = 0;
+       sourceIndex < sourceLiterals.size();
+       ++sourceIndex) {
+    program += " (node (index " + std::to_string(sourceIndex)
+      + ") (literal " + std::to_string(sourceIndex) + ") (action \""
+      + (sourceIndex == removed ? "merge" : "copy") + "\") (target "
+      + std::to_string(targets[sourceIndex]) + "))";
+  }
+  program += "))";
+
+  MegalodonKernelSyntax::PrimitiveStep step =
+    factorStep(id, parent, leftLiteral, rightLiteral, result);
+  step.rendered.pop_back();
+  step.rendered += " " + program + ")";
+  return step;
+}
+
 MegalodonKernelSyntax::PrimitiveStep equalitySymmetryStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,

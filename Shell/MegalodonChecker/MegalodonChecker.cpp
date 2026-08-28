@@ -51,6 +51,28 @@ namespace Shell {
 
 namespace {
 
+MegalodonProofExpander::FactorClauseStep ivyFactorClauseStep(
+  const std::string& id,
+  const std::string& parentId,
+  std::size_t leftLiteral,
+  std::size_t rightLiteral,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::vector<std::string>& sourceLiterals,
+  const std::vector<std::string>& resultLiterals)
+{
+  MegalodonProofExpander::FactorClauseStep step{
+    id,
+    MegalodonKernelSyntax::unitRef(parentId),
+    leftLiteral,
+    rightLiteral,
+    result,
+  };
+  step.hasIvyProgram = true;
+  step.sourceLiterals = sourceLiterals;
+  step.resultLiterals = resultLiterals;
+  return step;
+}
+
 bool emitLegacyMegalodonJsonDiagnostics()
 {
   return std::getenv("VAMPIRE_MEGALODON_LEGACY_JSON") != nullptr;
@@ -2063,12 +2085,14 @@ bool MegalodonChecker::certificateCondensationStepSexpr(
           std::vector<std::string> next = removeAt(current, right);
           const std::string factorId = stepBase + "_factor" + std::to_string(factorCount++);
           MegalodonKernelSyntax::PrimitiveStep factor =
-            MegalodonKernelBuilder::factorStep(
+            MegalodonKernelBuilder::factorIvyStep(
               factorId,
               MegalodonKernelSyntax::unitRef(currentParentId),
               left,
               right,
-              MegalodonKernelSyntax::clause(clauseSexprFromLiterals(next)));
+              MegalodonKernelSyntax::clause(clauseSexprFromLiterals(next)),
+              current,
+              next);
           steps.push_back(factor.rendered);
           primitives.push_back(std::move(factor));
           current = next;
@@ -7020,15 +7044,18 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         const std::string& parentId,
         std::size_t leftLiteral,
         std::size_t rightLiteral,
-        const std::string& resultClause) {
+        const std::vector<std::string>& sourceLiterals,
+        const std::vector<std::string>& resultLiterals) {
       MegalodonProofExpander::ClauseStepRequest request;
-      request.step = MegalodonProofExpander::FactorClauseStep{
+      request.step = ivyFactorClauseStep(
         stepId,
-        MegalodonKernelSyntax::unitRef(parentId),
+        parentId,
         leftLiteral,
         rightLiteral,
-        MegalodonKernelSyntax::clause(resultClause),
-      };
+        MegalodonKernelSyntax::clause(
+          certificateClauseSexprFromRenderedLiterals(resultLiterals)),
+        sourceLiterals,
+        resultLiterals);
       expansionRequests.push_back(std::move(request));
     };
   std::string previousTraceSelectedLiteralSexpr;
@@ -7405,14 +7432,13 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         std::vector<std::string> factored = current;
         factored.erase(factored.begin() + right);
         const std::string factorId = unitId + "_final_factor" + std::to_string(finalFactorCount++);
-        const std::string factorResultClause =
-          certificateClauseSexprFromRenderedLiterals(factored);
         addFactorStep(
           factorId,
           currentParentId,
           left,
           right,
-          factorResultClause);
+          current,
+          factored);
         if (right < currentLiterals.size()) {
           currentLiterals.erase(currentLiterals.begin() + right);
         }
@@ -7834,13 +7860,14 @@ bool MegalodonChecker::certificateResolveStepSexpr(
             const std::string factorId = stepBase + "_factor" + std::to_string(factorCount++);
             const std::string factorClause = clauseSexprFromLiterals(candidate);
             MegalodonProofExpander::ClauseStepRequest request;
-            request.step = MegalodonProofExpander::FactorClauseStep{
+            request.step = ivyFactorClauseStep(
               factorId,
-              MegalodonKernelSyntax::unitRef(currentParentId),
+              currentParentId,
               left,
               right,
               MegalodonKernelSyntax::clause(factorClause),
-            };
+              current,
+              candidate);
             expansionRequests.push_back(std::move(request));
             current = candidate;
             currentParentId = factorId;
@@ -8721,13 +8748,14 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
                 const std::string factorId = stepBase + "_factor" + std::to_string(factorCount++);
                 const std::string factorClause = clauseSexprFromLiterals(candidate);
                 MegalodonProofExpander::ClauseStepRequest request;
-                request.step = MegalodonProofExpander::FactorClauseStep{
+                request.step = ivyFactorClauseStep(
                   factorId,
-                  MegalodonKernelSyntax::unitRef(currentParentId),
+                  currentParentId,
                   left,
                   right,
                   MegalodonKernelSyntax::clause(factorClause),
-                };
+                  currentClause,
+                  candidate);
                 expansionRequests.push_back(std::move(request));
                 currentClause = candidate;
                 currentParentId = factorId;
@@ -9214,13 +9242,14 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
               std::string factorMetadata = syntheticVariableSortsMetadata(factorId, candidate);
               const std::string factorResultClause = clauseFromLiterals(candidate);
               MegalodonProofExpander::ClauseStepRequest factorRequest;
-              factorRequest.step = MegalodonProofExpander::FactorClauseStep{
+              factorRequest.step = ivyFactorClauseStep(
                 factorId,
-                MegalodonKernelSyntax::unitRef(currentParentId),
+                currentParentId,
                 left,
                 right,
                 MegalodonKernelSyntax::clause(factorResultClause),
-              };
+                currentLiterals,
+                candidate);
               if (!factorMetadata.empty()) {
                 factorRequest.trailingRecords.push_back(
                   std::move(factorMetadata));
@@ -9353,14 +9382,15 @@ bool MegalodonChecker::certificateFactorStepSexpr(
         const bool finalFactor = sameMultiset(candidate, actual);
         const std::string factorId = finalFactor ? stepBase : stepBase + "_factor" + std::to_string(factorCount++);
         MegalodonProofExpander::ClauseStepRequest factorRequest;
-        factorRequest.step = MegalodonProofExpander::FactorClauseStep{
+        factorRequest.step = ivyFactorClauseStep(
           factorId,
-          MegalodonKernelSyntax::unitRef(currentParentId),
+          currentParentId,
           left,
           right,
           MegalodonKernelSyntax::clause(
             clauseSexprFromLiterals(finalFactor ? actual : candidate)),
-        };
+          current,
+          finalFactor ? actual : candidate);
         expansionRequests.push_back(std::move(factorRequest));
         current = finalFactor ? actual : candidate;
         currentParentId = factorId;
@@ -10775,14 +10805,15 @@ bool MegalodonChecker::certificateParamodulateStepSexpr(
                   std::vector<std::string> factored = removeAt(currentClause, right);
                   const std::string factorId = "u" + std::to_string(unit->number()) + "_factor" + std::to_string(factorCount++);
                   MegalodonProofExpander::ClauseStepRequest request;
-                  request.step = MegalodonProofExpander::FactorClauseStep{
+                  request.step = ivyFactorClauseStep(
                     factorId,
-                    MegalodonKernelSyntax::unitRef(currentParentId),
+                    currentParentId,
                     left,
                     right,
                     MegalodonKernelSyntax::clause(
                       clauseSexprFromLiterals(factored)),
-                  };
+                    currentClause,
+                    factored);
                   expansionRequests.push_back(std::move(request));
                   currentClause = factored;
                   currentParentId = factorId;
@@ -11371,15 +11402,19 @@ bool MegalodonChecker::certificateForwardSubsumptionDemodulationStepsSexpr(
                 ? stepBase
                 : stepBase + "_factor" + std::to_string(factorIndex);
               MegalodonProofExpander::ClauseStepRequest factorRequest;
-              factorRequest.step = MegalodonProofExpander::FactorClauseStep{
+              const std::vector<std::string>& factorSource = factorIndex == 0
+                ? paramodulationResult
+                : conclusionFactorResults[factorIndex - 1];
+              factorRequest.step = ivyFactorClauseStep(
                 factorId,
-                MegalodonKernelSyntax::unitRef(conclusionParentId),
+                conclusionParentId,
                 conclusionFactors[factorIndex].first,
                 conclusionFactors[factorIndex].second,
                 MegalodonKernelSyntax::clause(
                   clauseSexprFromLiterals(
                     conclusionFactorResults[factorIndex])),
-              };
+                factorSource,
+                conclusionFactorResults[factorIndex]);
               expansionRequests.push_back(std::move(factorRequest));
               conclusionParentId = factorId;
             }
@@ -12272,6 +12307,7 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                 auto emitFactors =
                   [&](std::vector<MegalodonProofExpander::ClauseStepRequest>& candidateSteps,
                       std::string& candidateParentId,
+                      std::vector<std::string> factorSource,
                       const std::vector<std::pair<unsigned, unsigned>>& factors,
                       const std::vector<std::vector<std::string>>& factorResults) {
                     for (std::size_t factorIndex = 0; factorIndex < factors.size(); ++factorIndex) {
@@ -12279,18 +12315,19 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                         ? stepBase
                         : stepBase + "_factor" + std::to_string(factorIndex);
                       MegalodonProofExpander::ClauseStepRequest request;
-                      request.step =
-                        MegalodonProofExpander::FactorClauseStep{
+                      request.step = ivyFactorClauseStep(
                           factorId,
-                          MegalodonKernelSyntax::unitRef(candidateParentId),
+                          candidateParentId,
                           factors[factorIndex].first,
                           factors[factorIndex].second,
                           MegalodonKernelSyntax::clause(
                             clauseSexprFromLiterals(
                               factorResults[factorIndex])),
-                        };
+                          factorSource,
+                          factorResults[factorIndex]);
                       candidateSteps.push_back(std::move(request));
                       candidateParentId = factorId;
+                      factorSource = factorResults[factorIndex];
                     }
                   };
                 auto finishExpanded =
@@ -12317,7 +12354,12 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                     std::vector<std::pair<unsigned, unsigned>> factors;
                     std::vector<std::vector<std::string>> factorResults;
                     if (factorDuplicateLiteralsToActual(candidateClause, factors, factorResults)) {
-                      emitFactors(candidateSteps, candidateParentId, factors, factorResults);
+                      emitFactors(
+                        candidateSteps,
+                        candidateParentId,
+                        candidateClause,
+                        factors,
+                        factorResults);
                       return true;
                     }
 
@@ -12359,7 +12401,12 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                         };
                       candidateSteps.push_back(std::move(request));
                       candidateParentId = symmetryStepId;
-                      emitFactors(candidateSteps, candidateParentId, symmetryFactors, symmetryFactorResults);
+                      emitFactors(
+                        candidateSteps,
+                        candidateParentId,
+                        symmetryClause,
+                        symmetryFactors,
+                        symmetryFactorResults);
                       return true;
                     }
                     return false;
@@ -12528,16 +12575,21 @@ bool MegalodonChecker::certificateDemodulationStepsSexpr(
                 ? stepBase
                 : stepBase + "_factor" + std::to_string(factorIndex);
               MegalodonProofExpander::ClauseStepRequest request;
-              request.step =
-                MegalodonProofExpander::FactorClauseStep{
+              const std::vector<std::string>& factorSource = factorIndex == 0
+                ? (needsConclusionSymmetry
+                    ? conclusionSymmetryResult
+                    : paramodulationResult)
+                : conclusionFactorResults[factorIndex - 1];
+              request.step = ivyFactorClauseStep(
                   factorId,
-                  MegalodonKernelSyntax::unitRef(conclusionParentId),
+                  conclusionParentId,
                   conclusionFactors[factorIndex].first,
                   conclusionFactors[factorIndex].second,
                   MegalodonKernelSyntax::clause(
                     clauseSexprFromLiterals(
                       conclusionFactorResults[factorIndex])),
-                };
+                  factorSource,
+                  conclusionFactorResults[factorIndex]);
               expansionRequests.push_back(std::move(request));
               conclusionParentId = factorId;
             }
@@ -13046,14 +13098,15 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
           const std::string factorId =
             stepBase + "_factor" + std::to_string(factorCount++);
           MegalodonProofExpander::ClauseStepRequest request;
-          request.step = MegalodonProofExpander::FactorClauseStep{
+          request.step = ivyFactorClauseStep(
               factorId,
-              MegalodonKernelSyntax::unitRef(currentParentId),
+              currentParentId,
               left,
               right,
               MegalodonKernelSyntax::clause(
                 clauseSexprFromLiterals(factored)),
-            };
+              currentClause,
+              factored);
           expansionRequests.push_back(std::move(request));
           addSyntheticVariableSorts(factorId, factored);
           currentClause = std::move(factored);
