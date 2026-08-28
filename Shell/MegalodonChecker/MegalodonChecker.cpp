@@ -5007,21 +5007,62 @@ bool MegalodonChecker::certificateRectifyFormulaStepSexpr(
       Kernel::TermList::var(targetVariable),
     });
   }
+  const std::string unitId = "u" + std::to_string(unit->number());
+  const std::string parentId = "u" + std::to_string(parent->number());
+  std::vector<std::string> parentArguments;
+  std::string producerProofError;
+  if (!producerParentArguments(
+        _certificateProducerFreeVariableSorts,
+        parentId,
+        parentArguments,
+        producerProofError)) {
+    return false;
+  }
+  for (std::string& argument : parentArguments) {
+    for (const auto& [sourceVariable, targetVariable] :
+         rectifyInfo->freeVariableRenaming) {
+      if (argument == variableName(sourceVariable)) {
+        argument = variableName(targetVariable);
+        break;
+      }
+    }
+  }
+  std::string sourceProof = "(parent " + sexprQuote(parentId) + ")";
+  for (const std::string& argument : parentArguments) {
+    sourceProof =
+      "(term_apply " + sourceProof + " (term (TMH "
+      + sexprQuote(argument) + ")))";
+  }
+  std::string producerProof;
   std::string transportError;
   if (!certificateFormulaTransport(
         sourceFormulaObject,
         resultFormulaObject,
         freeVariableMap,
         renamings.program,
-        transportError)) {
+        transportError,
+        false,
+        &sourceProof,
+        &producerProof,
+        unitId + "_rectify_")
+      || !closeProducerProofOverEliminatedVariables(
+           _certificateProducerFreeVariableSorts,
+           {parentId},
+           unitId,
+           producerProof,
+           producerProofError)) {
     std::cerr << "megalodon formula transport expansion failed for u"
-              << unit->number() << ": " << transportError << std::endl;
+              << unit->number() << ": "
+              << (transportError.empty()
+                    ? producerProofError : transportError)
+              << std::endl;
     return false;
   }
   renamings.hasProgram = true;
+  renamings.producerProof = std::move(producerProof);
   auto built = MegalodonKernelBuilder::rectifyFormulaStep(
-    "u" + std::to_string(unit->number()),
-    MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number())),
+    unitId,
+    MegalodonKernelSyntax::unitRef(parentId),
     MegalodonKernelSyntax::formula(sourceFormula),
     MegalodonKernelSyntax::formula(resultFormula),
     renamings);

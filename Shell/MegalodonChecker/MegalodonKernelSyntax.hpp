@@ -790,6 +790,7 @@ struct RenderedKernelRectifyRenamings {
   RenderedKernelSubstitution variableMap;
   bool hasProgram = false;
   RenderedKernelEnnfTrace program;
+  std::string producerProof;
 };
 
 struct RenderedKernelCnfProjection {

@@ -1528,6 +1528,11 @@ MegalodonKernelSyntax::PrimitiveStep rectifyFormulaStep(
       MegalodonKernelSyntax::renderEnnfTrace(renamings.program),
     });
   }
+  const bool direct = !renamings.producerProof.empty();
+  const std::string renderedProof = direct
+    ? " (producer_proof (program \"ivy_nd_v1\" (proof "
+      + renamings.producerProof + ")))"
+    : "";
   step.rendered =
     "(rectify_formula " + quote(id)
     + " (parent " + quote(parent.value) + ")"
@@ -1535,8 +1540,10 @@ MegalodonKernelSyntax::PrimitiveStep rectifyFormulaStep(
     + " (free_variable_map " + renderedVariableMap + ")"
     + renderedRenamings
     + renderedProgram
+    + renderedProof
     + " (result (formula " + result.sexpr + "))"
-    + " (builder \"typed_v2\"))";
+    + " (builder \"" + (direct ? "typed_v3" : "typed_v2") + "\"))";
+  step.producerProof = renamings.producerProof;
   return step;
 }
 

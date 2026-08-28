@@ -504,6 +504,25 @@ phase before completing certificates. Earlier cached certificates contained
 304 transformations; classification places their former 82 no-program steps
 within the now-supported producer rules.
 
+Rectification is now direct. Vampire reuses its formula-transport lowerer over
+the exact canonical parent and result formulas and emits one ordinary
+`ivy_nd_v1` term in every fresh `typed_v3` rectification record. The fixed
+transport basis is `identity`, `forall`, `exists`, `implies`, `and`, `or`, and
+positive or negative equality symmetry. Binder introductions, Church-encoded
+junction elimination, equality elimination, and parent applications are all
+explicit producer syntax. The existing recorder tree remains in the record as
+independently checked structural evidence; it is not elaborated into a proof
+by Megalodon on the fresh path.
+
+The fixed `hammer.1007.43` gate emits five direct rectification proofs. Its
+large `u98` object exercises every transport basis rule except bare
+`identity`; other records cover identity as well. Megalodon checks the proof
+parent boundary and sends the term to its generic Ivy elaborator in both its
+native-core and source-emission routes. Source emission creates no
+`u*_transport_*` claims. Mutations reject altered node structure, a fabricated
+map, an undeclared parent, and a type-invalid proof. The recursive OCaml
+transport constructor remains only for archived `typed_v2` records.
+
 The fixed `hammer.1081.36` gate covers two paramodulation steps whose result
 drops a parent variable. Vampire closes each direct proof explicitly by
 lambda-abstracting the eliminated variable and applying that lambda to a typed
@@ -526,10 +545,10 @@ Megalodon.
 
 1. Extend the producer proof-expansion pass analogous to Prover9's
    `expand_proof_ivy` beyond the now-direct AVATAR, local Skolem, clausal
-   kernel, CNF, and FOOL objects. The next frequent preprocessing macros are
-   rectification and ENNF: Vampire must emit their complete small proof terms
-   from recorder data, after which the corresponding fresh Megalodon
-   constructors must be removed. Implement equality-resolution constraints
+   kernel, CNF, FOOL, and rectification objects. The next frequent
+   preprocessing macro is ENNF: Vampire must emit its complete small proof
+   terms from recorder data, after which the corresponding fresh Megalodon
+   constructor must be removed. Implement equality-resolution constraints
    when a live producer trace exercises them, rather than designing against an
    absent corpus class.
 2. Run Skolem-use collection over those expanded nodes and emit a finite,
