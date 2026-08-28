@@ -1433,5 +1433,118 @@ bool expandFormulaTransport(
     result);
 }
 
+bool expandGoalReplay(
+  const std::vector<GoalReplayStep>& steps,
+  const std::string& finalStep,
+  MegalodonKernelSyntax::RenderedKernelGoalReplay& result,
+  std::string& error)
+{
+  std::map<std::string, const GoalReplayStep*> byId;
+  for (const auto& step : steps) {
+    if (step.id.empty() || !byId.emplace(step.id, &step).second) {
+      error = "goal replay has an empty or duplicate step id";
+      return false;
+    }
+  }
+  auto final = byId.find(finalStep);
+  if (final == byId.end() || !final->second->final) {
+    error = "goal replay final step is not the refutation root";
+    return false;
+  }
+
+  std::set<std::string> reachable;
+  std::set<std::string> active;
+  std::function<bool(const std::string&)> visit =
+    [&](const std::string& id) {
+      if (reachable.find(id) != reachable.end()) {
+        return true;
+      }
+      auto found = byId.find(id);
+      if (found == byId.end()) {
+        error = "goal replay references missing parent " + id;
+        return false;
+      }
+      if (!active.insert(id).second) {
+        error = "goal replay proof graph is cyclic at " + id;
+        return false;
+      }
+      for (const std::string& parent : found->second->parentIds) {
+        if (!visit(parent)) {
+          return false;
+        }
+      }
+      active.erase(id);
+      reachable.insert(id);
+      return true;
+    };
+  if (!visit(finalStep)) {
+    return false;
+  }
+
+  std::vector<const GoalReplayStep*> conjectures;
+  std::vector<const GoalReplayStep*> negatedConjectures;
+  for (const auto& step : steps) {
+    if (reachable.find(step.id) == reachable.end()) {
+      continue;
+    }
+    if (step.sourceRole == "conjecture") {
+      conjectures.push_back(&step);
+    } else if (step.sourceRole == "negated_conjecture") {
+      negatedConjectures.push_back(&step);
+    }
+  }
+  if (conjectures.size() != 1 || negatedConjectures.size() != 1) {
+    error = "goal replay requires exactly one conjecture and one negated conjecture";
+    return false;
+  }
+  const GoalReplayStep& conjecture = *conjectures.front();
+  const GoalReplayStep& negated = *negatedConjectures.front();
+  if (conjecture.formula.sexpr.empty()
+      || negated.formula.sexpr.empty()
+      || std::find(
+           negated.parentIds.begin(),
+           negated.parentIds.end(),
+           conjecture.id) == negated.parentIds.end()) {
+    error = "goal replay negated conjecture is not linked to its conjecture parent";
+    return false;
+  }
+
+  result = MegalodonKernelSyntax::RenderedKernelGoalReplay();
+  result.finalStep = MegalodonKernelSyntax::unitRef(finalStep);
+  result.conjectureStep = MegalodonKernelSyntax::unitRef(conjecture.id);
+  result.conjectureFormula = conjecture.formula;
+  result.negatedConjectureStep = MegalodonKernelSyntax::unitRef(negated.id);
+  result.negatedConjectureFormula = negated.formula;
+  for (const auto& step : steps) {
+    if (!step.source
+        || step.sourceRole == "conjecture"
+        || reachable.find(step.id) == reachable.end()) {
+      continue;
+    }
+    if (step.sourceRole != "axiom"
+        && step.sourceRole != "definition"
+        && step.sourceRole != "set_reflexivity"
+        && step.sourceRole != "negated_conjecture") {
+      error = "goal replay has unsupported source role " + step.sourceRole;
+      return false;
+    }
+    result.sources.push_back({
+      MegalodonKernelSyntax::unitRef(step.id),
+      step.sourceRole,
+    });
+  }
+  if (std::none_of(
+        result.sources.begin(),
+        result.sources.end(),
+        [&](const auto& source) {
+          return source.step.value == negated.id
+            && source.role == "negated_conjecture";
+        })) {
+    error = "goal replay source leaves omit the negated conjecture";
+    return false;
+  }
+  return true;
+}
+
 }
 }

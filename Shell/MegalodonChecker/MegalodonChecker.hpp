@@ -228,6 +228,10 @@ private:
   bool safeApplySubstitution(Kernel::TermList term, const Kernel::Substitution& substitution, Kernel::TermList& result) const;
   bool safeApplySubstitution(Kernel::Literal* literal, const Kernel::Substitution& substitution, Kernel::Literal*& result) const;
   std::string certificatePositionSexpr(const std::vector<unsigned>& position) const;
+  bool certificateSourceDetails(
+    Kernel::Unit* unit,
+    std::string& sourceKind,
+    std::string& sourceName);
   bool certificateSource(Kernel::Unit* unit, std::string& result);
   bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result);
   bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result, const std::vector<std::string>& deBruijnBinders);
@@ -423,6 +427,7 @@ private:
   std::vector<std::string> _certificateSteps;
   std::vector<std::string> _certificateNativeMetadata;
   std::vector<std::string> _certificateNativeSteps;
+  std::map<unsigned, std::string> _certificateNativeSourceFormulaByUnit;
   std::set<unsigned> _certificateNativeStepIds;
   std::set<unsigned> _certificateEmittedNativeStepIds;
   std::map<unsigned, std::vector<MegalodonKernelSyntax::PrimitiveStep>>

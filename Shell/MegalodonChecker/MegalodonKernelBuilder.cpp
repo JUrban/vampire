@@ -113,6 +113,40 @@ std::string renderFoolProgramNode(
 
 }
 
+std::string goalReplayBlock(
+  const MegalodonKernelSyntax::RenderedKernelGoalReplay& replay)
+{
+  if (replay.version != "ivy_goal_replay_v1"
+      || replay.finalStep.value.empty()
+      || replay.conjectureStep.value.empty()
+      || replay.conjectureFormula.sexpr.empty()
+      || replay.negatedConjectureStep.value.empty()
+      || replay.negatedConjectureFormula.sexpr.empty()
+      || replay.closure != "classical_xm") {
+    return "";
+  }
+  std::string sources = "(sources";
+  for (const auto& source : replay.sources) {
+    if (source.step.value.empty() || source.role.empty()) {
+      return "";
+    }
+    sources +=
+      " (source (step " + quote(source.step.value) + ")"
+      + " (role " + quote(source.role) + "))";
+  }
+  sources += ")";
+  return
+    "(goal_replay_block " + quote(replay.version)
+    + " (final " + quote(replay.finalStep.value) + ")"
+    + " (conjecture (step " + quote(replay.conjectureStep.value) + ")"
+    + " (formula " + replay.conjectureFormula.sexpr + "))"
+    + " (negated_conjecture (step "
+    + quote(replay.negatedConjectureStep.value) + ")"
+    + " (formula " + replay.negatedConjectureFormula.sexpr + "))"
+    + " " + sources
+    + " (closure " + quote(replay.closure) + "))";
+}
+
 std::string PrimitiveChain::render(
   MegalodonKernelSyntax::PrimitiveStep primitive)
 {

@@ -30,6 +30,9 @@ private:
   std::map<std::string, MegalodonKernelSyntax::PrimitiveStep> _primitives;
 };
 
+std::string goalReplayBlock(
+  const MegalodonKernelSyntax::RenderedKernelGoalReplay& replay);
+
 std::string skolemRefutationScopeBlock(
   const std::string& finalStep,
   const std::vector<MegalodonKernelSyntax::PrimitiveStep>& skolemSteps);

@@ -157,6 +157,15 @@ struct FormulaTransportRequest {
   bool preserveSourceNegativeEqualityOrientation = false;
 };
 
+struct GoalReplayStep {
+  std::string id;
+  std::vector<std::string> parentIds;
+  std::string sourceRole;
+  bool source = false;
+  bool final = false;
+  MegalodonKernelSyntax::RenderedKernelFormula formula;
+};
+
 bool expandGroundProof(
   const std::vector<Step>& steps,
   const std::string& finalStep,
@@ -174,6 +183,12 @@ bool expandClauseProof(
 bool expandFormulaTransport(
   const FormulaTransportRequest& request,
   FormulaTransportNode& result,
+  std::string& error);
+
+bool expandGoalReplay(
+  const std::vector<GoalReplayStep>& steps,
+  const std::string& finalStep,
+  MegalodonKernelSyntax::RenderedKernelGoalReplay& result,
   std::string& error);
 
 }

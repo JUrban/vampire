@@ -3128,10 +3128,13 @@ std::string MegalodonChecker::certificatePositionSexpr(const std::vector<unsigne
   return out.str();
 }
 
-bool MegalodonChecker::certificateSource(Kernel::Unit* unit, std::string& result)
+bool MegalodonChecker::certificateSourceDetails(
+  Kernel::Unit* unit,
+  std::string& sourceKind,
+  std::string& sourceName)
 {
   Kernel::Unit* sourceUnit = unit;
-  std::string sourceKind = "axiom";
+  sourceKind = "axiom";
   bool negatedConjectureInference = unit->inference().rule() == Kernel::InferenceRule::NEGATED_CONJECTURE;
   if (negatedConjectureInference) {
     UnitIterator parentIterator = unit->getParents();
@@ -3169,10 +3172,20 @@ bool MegalodonChecker::certificateSource(Kernel::Unit* unit, std::string& result
     }
   }
 
-  std::string sourceName = "u" + std::to_string(sourceUnit->number());
+  sourceName = "u" + std::to_string(sourceUnit->number());
   std::string axiomName;
   if (Parse::TPTP::findAxiomName(sourceUnit, axiomName) && !axiomName.empty()) {
     sourceName = axiomName;
+  }
+  return true;
+}
+
+bool MegalodonChecker::certificateSource(Kernel::Unit* unit, std::string& result)
+{
+  std::string sourceKind;
+  std::string sourceName;
+  if (!certificateSourceDetails(unit, sourceKind, sourceName)) {
+    return false;
   }
   result = "(source " + sourceKind + " " + sexprQuote(sourceName) + ")";
   return true;
@@ -3460,13 +3473,16 @@ bool MegalodonChecker::certificateFormulaInputStepSexpr(Kernel::Unit* unit, std:
     return false;
   }
   std::string literal;
+  std::string formula;
   std::string source;
   if (!certificateFormulaNativeLiteralSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), literal)
+    || !certificateFormulaTermSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), formula)
     || !certificateSource(unit, source)) {
     return false;
   }
   const std::string id = "u" + std::to_string(unit->number());
   result = "(formula_input " + sexprQuote(id) + " " + source + " " + literal + ")";
+  _certificateNativeSourceFormulaByUnit[unit->number()] = formula;
   return true;
 }
 
@@ -3487,6 +3503,7 @@ bool MegalodonChecker::certificateFormulaTermInputStepSexpr(Kernel::Unit* unit, 
   }
   const std::string id = "u" + std::to_string(unit->number());
   result = "(formula_term_input " + sexprQuote(id) + " " + source + " (formula " + formula + "))";
+  _certificateNativeSourceFormulaByUnit[unit->number()] = formula;
   return true;
 }
 
@@ -14561,6 +14578,62 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
   out << "  (problem \"vampire-native-certificate\")\n";
   for (const std::string& metadata : _certificateNativeMetadata) {
     out << "  " << metadata << "\n";
+  }
+  std::vector<MegalodonProofExpander::GoalReplayStep> goalReplaySteps;
+  bool hasNegatedConjecture = false;
+  const std::string finalStep =
+    "u" + std::to_string((*proof.rbegin())->number());
+  for (Kernel::Unit* unit : proof) {
+    MegalodonProofExpander::GoalReplayStep step;
+    step.id = "u" + std::to_string(unit->number());
+    for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+      step.parentIds.push_back(
+        "u" + std::to_string(parent->number()));
+    }
+    step.final = step.id == finalStep;
+    const Kernel::InferenceRule& rule = unit->inference().rule();
+    step.source = rule == Kernel::InferenceRule::INPUT
+      || rule == Kernel::InferenceRule::NEGATED_CONJECTURE;
+    if (step.source) {
+      std::string sourceName;
+      if (!certificateSourceDetails(
+            unit, step.sourceRole, sourceName)) {
+        INVALID_OPERATION(
+          "typed goal replay source classification failed at " + step.id);
+      }
+      hasNegatedConjecture = hasNegatedConjecture
+        || step.sourceRole == "negated_conjecture";
+    }
+    if (!unit->isClause()
+        && (step.sourceRole == "conjecture"
+            || step.sourceRole == "negated_conjecture")) {
+      auto formula =
+        _certificateNativeSourceFormulaByUnit.find(unit->number());
+      if (formula == _certificateNativeSourceFormulaByUnit.end()) {
+        INVALID_OPERATION(
+          "typed goal replay source formula was not emitted at " + step.id);
+      }
+      step.formula = MegalodonKernelSyntax::formula(formula->second);
+    }
+    goalReplaySteps.push_back(std::move(step));
+  }
+  if (hasNegatedConjecture) {
+    MegalodonKernelSyntax::RenderedKernelGoalReplay goalReplay;
+    std::string goalReplayError;
+    if (!MegalodonProofExpander::expandGoalReplay(
+          goalReplaySteps,
+          finalStep,
+          goalReplay,
+          goalReplayError)) {
+      INVALID_OPERATION(
+        "typed goal replay expansion failed: " + goalReplayError);
+    }
+    const std::string renderedGoalReplay =
+      MegalodonKernelBuilder::goalReplayBlock(goalReplay);
+    if (renderedGoalReplay.empty()) {
+      INVALID_OPERATION("typed goal replay serialization failed");
+    }
+    out << "  " << renderedGoalReplay << "\n";
   }
   std::vector<MegalodonKernelSyntax::PrimitiveStep> skolemSteps;
   for (Kernel::Unit* unit : proof) {
@@ -30037,6 +30110,7 @@ void MegalodonChecker::print()
   _certificateSteps.clear();
   _certificateNativeMetadata.clear();
   _certificateNativeSteps.clear();
+  _certificateNativeSourceFormulaByUnit.clear();
   _certificateNativeStepIds.clear();
   _certificateEmittedNativeStepIds.clear();
   _certificateEmittedNativePrimitiveStepsByUnit.clear();

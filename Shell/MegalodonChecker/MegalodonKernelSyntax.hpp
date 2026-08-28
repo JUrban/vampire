@@ -718,6 +718,22 @@ struct RenderedKernelSourceFormulaTransform {
   std::vector<RenderedKernelTransformationPair> transformationPairs;
 };
 
+struct RenderedKernelGoalReplaySource {
+  RenderedKernelUnitRef step;
+  std::string role;
+};
+
+struct RenderedKernelGoalReplay {
+  std::string version = "ivy_goal_replay_v1";
+  RenderedKernelUnitRef finalStep;
+  RenderedKernelUnitRef conjectureStep;
+  RenderedKernelFormula conjectureFormula;
+  RenderedKernelUnitRef negatedConjectureStep;
+  RenderedKernelFormula negatedConjectureFormula;
+  std::vector<RenderedKernelGoalReplaySource> sources;
+  std::string closure = "classical_xm";
+};
+
 struct RenderedKernelFoolProgramNode {
   std::size_t index = 0;
   std::string rule;
