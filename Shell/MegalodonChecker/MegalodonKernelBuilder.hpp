@@ -59,6 +59,17 @@ MegalodonKernelSyntax::PrimitiveStep resolveStep(
   std::size_t rightPivot,
   const MegalodonKernelSyntax::RenderedKernelClause& result);
 
+MegalodonKernelSyntax::PrimitiveStep resolveIvyStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& leftParent,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& rightParent,
+  std::size_t leftPivot,
+  std::size_t rightPivot,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::vector<std::string>& leftLiterals,
+  const std::vector<std::string>& rightLiterals,
+  const std::vector<std::string>& resultLiterals);
+
 MegalodonKernelSyntax::PrimitiveStep factorStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,

@@ -6995,16 +6995,24 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
         const std::string& rightParentId,
         std::size_t leftPivot,
         std::size_t rightPivot,
-        const std::string& resultClause) {
+        const std::vector<std::string>& leftLiterals,
+        const std::vector<std::string>& rightLiterals,
+        const std::vector<std::string>& resultLiterals) {
       MegalodonProofExpander::ClauseStepRequest request;
-      request.step = MegalodonProofExpander::ResolveClauseStep{
+      MegalodonProofExpander::ResolveClauseStep resolveStep{
         stepId,
         MegalodonKernelSyntax::unitRef(leftParentId),
         MegalodonKernelSyntax::unitRef(rightParentId),
         leftPivot,
         rightPivot,
-        MegalodonKernelSyntax::clause(resultClause),
+        MegalodonKernelSyntax::clause(
+          certificateClauseSexprFromRenderedLiterals(resultLiterals)),
       };
+      resolveStep.hasIvyProgram = true;
+      resolveStep.leftLiterals = leftLiterals;
+      resolveStep.rightLiterals = rightLiterals;
+      resolveStep.resultLiterals = resultLiterals;
+      request.step = std::move(resolveStep);
       expansionRequests.push_back(std::move(request));
     };
   auto addFactorStep =
@@ -7302,15 +7310,15 @@ bool MegalodonChecker::certificateUnitResultingResolutionStepsSexpr(
       return fail("post-resolve split append failed");
     }
     const std::string resolveId = unitId + "_resolve" + std::to_string(traceIndex);
-    const std::string resolveResultClause =
-      certificateClauseSexprFromRenderedLiterals(nextRendered);
     addResolveStep(
       resolveId,
       currentParentId,
       unitParentId,
       selectedIndex,
       0,
-      resolveResultClause);
+      currentRendered,
+      unitRendered,
+      nextRendered);
     addSyntheticVariableSorts(resolveId, nextLiterals);
     currentLiterals = nextLiterals;
     currentRendered = nextRendered;
@@ -7784,7 +7792,7 @@ bool MegalodonChecker::certificateResolveStepSexpr(
     const std::string resolveResultClause =
       clauseSexprFromLiterals(exactResult ? actual : expected);
     MegalodonProofExpander::ClauseStepRequest resolveRequest;
-    resolveRequest.step = MegalodonProofExpander::ResolveClauseStep{
+    MegalodonProofExpander::ResolveClauseStep resolveStep{
       resolveId,
       MegalodonKernelSyntax::unitRef(leftParentId),
       MegalodonKernelSyntax::unitRef(rightParentId),
@@ -7792,6 +7800,17 @@ bool MegalodonChecker::certificateResolveStepSexpr(
       rightIndex,
       MegalodonKernelSyntax::clause(resolveResultClause),
     };
+    resolveStep.hasIvyProgram = true;
+    resolveStep.leftLiterals = leftParentLiterals;
+    resolveStep.rightLiterals = rightParentLiterals;
+    if (flipLeftPivot) {
+      resolveStep.leftLiterals[leftIndex] = flippedLeftPivotLiteral;
+    }
+    if (flipRightPivot) {
+      resolveStep.rightLiterals[rightIndex] = flippedRightPivotLiteral;
+    }
+    resolveStep.resultLiterals = exactResult ? actual : expected;
+    resolveRequest.step = std::move(resolveStep);
     expansionRequests.push_back(std::move(resolveRequest));
     if (!exactResult) {
       std::vector<std::string> current = expected;
@@ -8265,6 +8284,23 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
       return false;
     }
 
+    std::vector<std::vector<std::string>> substitutedParentClauses(2);
+    for (std::size_t parentIndex = 0; parentIndex < 2; ++parentIndex) {
+      for (Kernel::Literal* literal : parents[parentIndex]->iterLits()) {
+        std::string renderedLiteral;
+        if (!substitutedLiteralSexpr(
+              literal,
+              replayInfo->substitutionForBanksSub[parentIndex],
+              renderedLiteral)) {
+          return false;
+        }
+        substitutedParentClauses[parentIndex].push_back(std::move(renderedLiteral));
+      }
+      if (!appendCertificateSplitLiteralsSexpr(
+            parents[parentIndex], substitutedParentClauses[parentIndex])) {
+        return false;
+      }
+    }
     std::vector<std::string> expected;
     if (!appendSubstitutedClauseExcept(expected, parents[leftIndex], replayInfo->substitutionForBanksSub[leftIndex], leftPivot)
       || !appendSubstitutedClauseExcept(expected, parents[rightIndex], replayInfo->substitutionForBanksSub[rightIndex], rightPivot)) {
@@ -8272,10 +8308,11 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
     }
     std::sort(expected.begin(), expected.end());
     expected.erase(std::unique(expected.begin(), expected.end()), expected.end());
-    std::vector<std::string> actual;
-    if (!appendCertificateClauseLiteralsSexpr(unit->asClause(), actual)) {
+    std::vector<std::string> actualRaw;
+    if (!appendCertificateClauseLiteralsSexpr(unit->asClause(), actualRaw)) {
       return false;
     }
+    std::vector<std::string> actual = actualRaw;
     std::sort(actual.begin(), actual.end());
     actual.erase(std::unique(actual.begin(), actual.end()), actual.end());
     if (expected != actual) {
@@ -8339,7 +8376,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
       return false;
     }
     MegalodonProofExpander::ClauseStepRequest resolveRequest;
-    resolveRequest.step = MegalodonProofExpander::ResolveClauseStep{
+    MegalodonProofExpander::ResolveClauseStep resolveStep{
       stepBase,
       MegalodonKernelSyntax::unitRef(parentIds[leftIndex]),
       MegalodonKernelSyntax::unitRef(parentIds[rightIndex]),
@@ -8347,6 +8384,11 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
       rightPivotIndex,
       MegalodonKernelSyntax::clause(conclusion),
     };
+    resolveStep.hasIvyProgram = true;
+    resolveStep.leftLiterals = substitutedParentClauses[leftIndex];
+    resolveStep.rightLiterals = substitutedParentClauses[rightIndex];
+    resolveStep.resultLiterals = actualRaw;
+    resolveRequest.step = std::move(resolveStep);
     expansionRequests.push_back(std::move(resolveRequest));
 
     MegalodonProofExpander::ClauseExpansion expansion;
@@ -8520,10 +8562,13 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
         }
 
         std::string sideSubst;
+        std::vector<std::string> mainClauseLiterals;
         std::vector<std::string> sideClauseLiterals;
         bool sideNonIdentity = false;
         std::string conclusion;
-        if (!certificateSubstitutionSexprForClause(
+        if (!appendCertificateClauseLiteralsSexpr(
+              parents[mainParentIndex], mainClauseLiterals)
+          || !certificateSubstitutionSexprForClause(
               sideSubstitution,
               parents[sideParentIndex],
               sideSubst)
@@ -8596,6 +8641,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
             };
           expansionRequests.push_back(std::move(request));
           sideParentId = sideSymmetryId;
+          sideClauseLiterals = std::move(sideSymmetryLiterals);
         }
         std::string parentIds[2];
         parentIds[mainParentIndex] = "u" + std::to_string(parents[mainParentIndex]->number());
@@ -8605,7 +8651,7 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
         std::vector<std::string> resolveResult = needsPostResolutionNormalization ? resolvedClause : actualRaw;
         const std::string resolveResultClause = clauseSexprFromLiterals(resolveResult);
         MegalodonProofExpander::ClauseStepRequest resolveRequest;
-        resolveRequest.step = MegalodonProofExpander::ResolveClauseStep{
+        MegalodonProofExpander::ResolveClauseStep resolveStep{
           resolveId,
           MegalodonKernelSyntax::unitRef(parentIds[mainParentIndex]),
           MegalodonKernelSyntax::unitRef(parentIds[sideParentIndex]),
@@ -8613,6 +8659,11 @@ bool MegalodonChecker::certificateSubstitutedResolutionStepsSexpr(
           sideIndex,
           MegalodonKernelSyntax::clause(resolveResultClause),
         };
+        resolveStep.hasIvyProgram = true;
+        resolveStep.leftLiterals = mainClauseLiterals;
+        resolveStep.rightLiterals = sideClauseLiterals;
+        resolveStep.resultLiterals = resolveResult;
+        resolveRequest.step = std::move(resolveStep);
         expansionRequests.push_back(std::move(resolveRequest));
         if (needsPostResolutionNormalization) {
           std::vector<std::string> currentClause = resolvedClause;
@@ -9127,7 +9178,7 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
         std::string resolveMetadata = syntheticVariableSortsMetadata(resolveId, resolveLiterals);
         const std::string resolveResultClause = clauseFromLiterals(resolveLiterals);
         MegalodonProofExpander::ClauseStepRequest resolveRequest;
-        resolveRequest.step = MegalodonProofExpander::ResolveClauseStep{
+        MegalodonProofExpander::ResolveClauseStep resolveStep{
           resolveId,
           MegalodonKernelSyntax::unitRef(mainParentId),
           MegalodonKernelSyntax::unitRef(resolveSideParentId),
@@ -9135,6 +9186,11 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
           sideLiteralIndex,
           MegalodonKernelSyntax::clause(resolveResultClause),
         };
+        resolveStep.hasIvyProgram = true;
+        resolveStep.leftLiterals = mainClauseLiterals;
+        resolveStep.rightLiterals = sideClauseLiterals;
+        resolveStep.resultLiterals = resolveLiterals;
+        resolveRequest.step = std::move(resolveStep);
         if (!resolveMetadata.empty()) {
           resolveRequest.trailingRecords.push_back(std::move(resolveMetadata));
         }

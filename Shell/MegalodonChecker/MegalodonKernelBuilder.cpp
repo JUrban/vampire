@@ -851,6 +851,85 @@ MegalodonKernelSyntax::PrimitiveStep resolveStep(
       + " (result " + result.sexpr + "))");
 }
 
+MegalodonKernelSyntax::PrimitiveStep resolveIvyStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& leftParent,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& rightParent,
+  std::size_t leftPivot,
+  std::size_t rightPivot,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::vector<std::string>& leftLiterals,
+  const std::vector<std::string>& rightLiterals,
+  const std::vector<std::string>& resultLiterals)
+{
+  if (leftPivot >= leftLiterals.size()
+    || rightPivot >= rightLiterals.size()
+    || resultLiterals.size() + 2 != leftLiterals.size() + rightLiterals.size()) {
+    return resolveStep(
+      id, leftParent, rightParent, leftPivot, rightPivot, result);
+  }
+
+  std::vector<bool> usedResult(resultLiterals.size(), false);
+  std::size_t nodeIndex = 0;
+  auto clauseSexpr = [](const std::vector<std::string>& literals) {
+    std::string rendered = "(clause";
+    for (const std::string& literal : literals) {
+      rendered += " " + literal;
+    }
+    return rendered + ")";
+  };
+  auto sideProgram =
+    [&](const char* side,
+        const std::vector<std::string>& literals,
+        std::size_t pivot,
+        std::string& rendered) {
+      rendered = "(" + std::string(side) + " (source "
+        + clauseSexpr(literals) + ") (nodes";
+      for (std::size_t literalIndex = 0; literalIndex < literals.size(); ++literalIndex) {
+        rendered += " (node (index " + std::to_string(nodeIndex++)
+          + ") (literal " + std::to_string(literalIndex) + ")";
+        if (literalIndex == pivot) {
+          rendered += " (action \"pivot\"))";
+          continue;
+        }
+        std::size_t target = resultLiterals.size();
+        for (std::size_t resultIndex = 0;
+             resultIndex < resultLiterals.size();
+             ++resultIndex) {
+          if (!usedResult[resultIndex]
+            && literals[literalIndex] == resultLiterals[resultIndex]) {
+            target = resultIndex;
+            break;
+          }
+        }
+        if (target == resultLiterals.size()) {
+          return false;
+        }
+        usedResult[target] = true;
+        rendered += " (action \"copy\") (target "
+          + std::to_string(target) + "))";
+      }
+      rendered += "))";
+      return true;
+    };
+
+  std::string leftProgram;
+  std::string rightProgram;
+  if (!sideProgram("left", leftLiterals, leftPivot, leftProgram)
+    || !sideProgram("right", rightLiterals, rightPivot, rightProgram)
+    || std::find(usedResult.begin(), usedResult.end(), false) != usedResult.end()) {
+    return resolveStep(
+      id, leftParent, rightParent, leftPivot, rightPivot, result);
+  }
+
+  MegalodonKernelSyntax::PrimitiveStep step = resolveStep(
+    id, leftParent, rightParent, leftPivot, rightPivot, result);
+  step.rendered.pop_back();
+  step.rendered += " (program \"ivy_resolve_v1\" "
+    + leftProgram + " " + rightProgram + "))";
+  return step;
+}
+
 MegalodonKernelSyntax::PrimitiveStep factorStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,

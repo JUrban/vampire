@@ -84,6 +84,10 @@ struct ResolveClauseStep {
   std::size_t leftPivot = 0;
   std::size_t rightPivot = 0;
   MegalodonKernelSyntax::RenderedKernelClause result;
+  bool hasIvyProgram = false;
+  std::vector<std::string> leftLiterals;
+  std::vector<std::string> rightLiterals;
+  std::vector<std::string> resultLiterals;
 };
 
 struct ParamodulateClauseStep {
