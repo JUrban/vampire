@@ -896,10 +896,12 @@ MegalodonKernelSyntax::PrimitiveStep resolveIvyStep(
   const MegalodonKernelSyntax::RenderedKernelClause& result,
   const std::vector<std::string>& leftLiterals,
   const std::vector<std::string>& rightLiterals,
-  const std::vector<std::string>& resultLiterals)
+  const std::vector<std::string>& resultLiterals,
+  const std::string& producerProof)
 {
   if (leftPivot >= leftLiterals.size()
     || rightPivot >= rightLiterals.size()
+    || producerProof.empty()
     || resultLiterals.size() + 2 != leftLiterals.size() + rightLiterals.size()) {
     return resolveStep(
       id, leftParent, rightParent, leftPivot, rightPivot, result);
@@ -961,8 +963,10 @@ MegalodonKernelSyntax::PrimitiveStep resolveIvyStep(
   MegalodonKernelSyntax::PrimitiveStep step = resolveStep(
     id, leftParent, rightParent, leftPivot, rightPivot, result);
   step.rendered.pop_back();
-  step.rendered += " (program \"ivy_resolve_v1\" "
-    + leftProgram + " " + rightProgram + "))";
+  step.rendered += " (program \"ivy_resolve_v2\" "
+    + leftProgram + " " + rightProgram
+    + " (producer_proof (program \"ivy_nd_v1\" (proof "
+    + producerProof + ")))))";
   return step;
 }
 
@@ -994,7 +998,8 @@ MegalodonKernelSyntax::PrimitiveStep factorIvyStep(
   std::size_t rightLiteral,
   const MegalodonKernelSyntax::RenderedKernelClause& result,
   const std::vector<std::string>& sourceLiterals,
-  const std::vector<std::string>& resultLiterals)
+  const std::vector<std::string>& resultLiterals,
+  const std::string& producerProof)
 {
   const std::size_t removed = std::max(leftLiteral, rightLiteral);
   const std::size_t retained = std::min(leftLiteral, rightLiteral);
@@ -1002,6 +1007,7 @@ MegalodonKernelSyntax::PrimitiveStep factorIvyStep(
     || rightLiteral >= sourceLiterals.size()
     || leftLiteral == rightLiteral
     || sourceLiterals[leftLiteral] != sourceLiterals[rightLiteral]
+    || producerProof.empty()
     || resultLiterals.size() + 1 != sourceLiterals.size()) {
     return factorStep(id, parent, leftLiteral, rightLiteral, result);
   }
@@ -1041,7 +1047,7 @@ MegalodonKernelSyntax::PrimitiveStep factorIvyStep(
   }
   sourceClause += ")";
   std::string program =
-    "(program \"ivy_factor_v1\" (source " + sourceClause + ") (nodes";
+    "(program \"ivy_factor_v2\" (source " + sourceClause + ") (nodes";
   for (std::size_t sourceIndex = 0;
        sourceIndex < sourceLiterals.size();
        ++sourceIndex) {
@@ -1050,7 +1056,8 @@ MegalodonKernelSyntax::PrimitiveStep factorIvyStep(
       + (sourceIndex == removed ? "merge" : "copy") + "\") (target "
       + std::to_string(targets[sourceIndex]) + "))";
   }
-  program += "))";
+  program += ") (producer_proof (program \"ivy_nd_v1\" (proof "
+    + producerProof + "))))";
 
   MegalodonKernelSyntax::PrimitiveStep step =
     factorStep(id, parent, leftLiteral, rightLiteral, result);

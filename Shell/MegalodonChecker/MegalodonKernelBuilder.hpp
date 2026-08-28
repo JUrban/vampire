@@ -71,7 +71,8 @@ MegalodonKernelSyntax::PrimitiveStep resolveIvyStep(
   const MegalodonKernelSyntax::RenderedKernelClause& result,
   const std::vector<std::string>& leftLiterals,
   const std::vector<std::string>& rightLiterals,
-  const std::vector<std::string>& resultLiterals);
+  const std::vector<std::string>& resultLiterals,
+  const std::string& producerProof);
 
 MegalodonKernelSyntax::PrimitiveStep factorStep(
   const std::string& id,
@@ -87,7 +88,8 @@ MegalodonKernelSyntax::PrimitiveStep factorIvyStep(
   std::size_t rightLiteral,
   const MegalodonKernelSyntax::RenderedKernelClause& result,
   const std::vector<std::string>& sourceLiterals,
-  const std::vector<std::string>& resultLiterals);
+  const std::vector<std::string>& resultLiterals,
+  const std::string& producerProof);
 
 MegalodonKernelSyntax::PrimitiveStep equalitySymmetryStep(
   const std::string& id,

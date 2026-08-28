@@ -114,6 +114,17 @@ subsumption resolution, and similar macros must lower into these explicit
 records where possible. Macro labels may remain diagnostic metadata but cannot
 replace the primitive chain.
 
+Direct `resolve` and duplicate-deleting `factor` records carry an
+`ivy_nd_v1` proof block (`ivy_resolve_v2` and `ivy_factor_v2`). Vampire applies
+every quantified parent variable explicitly, in the order of the producer
+free-variable contract, before eliminating or rebuilding the clause. This is
+the Prover9/Ivy `instantiate` discipline: Megalodon validates parent references
+and elaborates the supplied proof tree, but does not infer parent
+instantiations, pivots, duplicate mappings, or disjunction cases. Synthetic
+parents created while lowering unit-resulting and subsumption resolution must
+therefore enter the same producer variable-contract table before their proof
+blocks are built.
+
 ### AVATAR
 
 AVATAR remains a separate layer. A qualifying refutation has explicit split

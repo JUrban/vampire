@@ -844,7 +844,8 @@ bool expandClauseProof(
             step->result,
             step->leftLiterals,
             step->rightLiterals,
-            step->resultLiterals)
+            step->resultLiterals,
+            step->producerProof)
         : MegalodonKernelBuilder::resolveStep(
             step->id,
             step->leftParent,
@@ -890,7 +891,8 @@ bool expandClauseProof(
             step->rightLiteral,
             step->result,
             step->sourceLiterals,
-            step->resultLiterals)
+            step->resultLiterals,
+            step->producerProof)
         : MegalodonKernelBuilder::factorStep(
             step->id,
             step->parent,
@@ -1557,11 +1559,13 @@ public:
 
   bool projection(
     const std::string& parentId,
+    const std::vector<std::string>& parentArguments,
     const std::vector<std::string>& source,
     const std::vector<std::string>& target,
     std::string& result)
   {
-    return projectionFromProof(parent(parentId), source, target, result);
+    return projectionFromProof(
+      instantiate(parent(parentId), parentArguments), source, target, result);
   }
 
   bool projectionFromProof(
@@ -1597,9 +1601,11 @@ public:
 
   bool resolution(
     const std::string& leftParent,
+    const std::vector<std::string>& leftParentArguments,
     const std::vector<std::string>& left,
     std::size_t leftPivot,
     const std::string& rightParent,
+    const std::vector<std::string>& rightParentArguments,
     const std::vector<std::string>& right,
     std::size_t rightPivot,
     const std::vector<std::string>& target,
@@ -1613,7 +1619,7 @@ public:
     result = eliminate(
       left,
       0,
-      parent(leftParent),
+      instantiate(parent(leftParent), leftParentArguments),
       targetTerm,
       [&](std::size_t leftIndex, const std::string& leftProof) {
         if (leftIndex != leftPivot) {
@@ -1622,7 +1628,7 @@ public:
         return eliminate(
           right,
           0,
-          parent(rightParent),
+          instantiate(parent(rightParent), rightParentArguments),
           targetTerm,
           [&](std::size_t rightIndex, const std::string& rightProof) {
             if (rightIndex != rightPivot) {
@@ -1706,6 +1712,17 @@ private:
     const std::string& term)
   {
     return "(term_apply " + proof + " " + term + ")";
+  }
+
+  static std::string instantiate(
+    std::string proof,
+    const std::vector<std::string>& arguments)
+  {
+    for (const std::string& argument : arguments) {
+      proof = termApply(
+        proof, "(term (TMH " + quote(argument) + "))");
+    }
+    return proof;
   }
 
   static std::string proofApply(
@@ -1850,10 +1867,23 @@ bool expandAvatarSatProjectionProof(
   std::string& result,
   std::string& error)
 {
+  return expandClauseProjectionProof(
+    parentId, {}, sourceLiterals, resultLiterals, result, error);
+}
+
+bool expandClauseProjectionProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const std::vector<std::string>& sourceLiterals,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error)
+{
   IvyClauseProofBuilder builder;
   if (parentId.empty()
       || !builder.projection(
-           parentId, sourceLiterals, resultLiterals, result)) {
+           parentId, parentArguments,
+           sourceLiterals, resultLiterals, result)) {
     error = "AVATAR SAT projection is not a producer-explicit clause projection";
     return false;
   }
@@ -1871,11 +1901,30 @@ bool expandAvatarSatResolutionProof(
   std::string& result,
   std::string& error)
 {
+  return expandClauseResolutionProof(
+    leftParentId, {}, leftLiterals, leftPivot,
+    rightParentId, {}, rightLiterals, rightPivot,
+    resultLiterals, result, error);
+}
+
+bool expandClauseResolutionProof(
+  const std::string& leftParentId,
+  const std::vector<std::string>& leftParentArguments,
+  const std::vector<std::string>& leftLiterals,
+  std::size_t leftPivot,
+  const std::string& rightParentId,
+  const std::vector<std::string>& rightParentArguments,
+  const std::vector<std::string>& rightLiterals,
+  std::size_t rightPivot,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error)
+{
   IvyClauseProofBuilder builder;
   if (leftParentId.empty() || rightParentId.empty()
       || !builder.resolution(
-           leftParentId, leftLiterals, leftPivot,
-           rightParentId, rightLiterals, rightPivot,
+           leftParentId, leftParentArguments, leftLiterals, leftPivot,
+           rightParentId, rightParentArguments, rightLiterals, rightPivot,
            resultLiterals, result)) {
     error = "AVATAR SAT resolution is not the declared producer pivot step";
     return false;

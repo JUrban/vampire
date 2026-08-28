@@ -88,6 +88,7 @@ struct ResolveClauseStep {
   std::vector<std::string> leftLiterals;
   std::vector<std::string> rightLiterals;
   std::vector<std::string> resultLiterals;
+  std::string producerProof;
 };
 
 struct ParamodulateClauseStep {
@@ -117,6 +118,7 @@ struct FactorClauseStep {
   bool hasIvyProgram = false;
   std::vector<std::string> sourceLiterals;
   std::vector<std::string> resultLiterals;
+  std::string producerProof;
 };
 
 using ClauseStep = std::variant<
@@ -241,11 +243,32 @@ bool expandAvatarSatProjectionProof(
   std::string& result,
   std::string& error);
 
+bool expandClauseProjectionProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const std::vector<std::string>& sourceLiterals,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error);
+
 bool expandAvatarSatResolutionProof(
   const std::string& leftParentId,
   const std::vector<std::string>& leftLiterals,
   std::size_t leftPivot,
   const std::string& rightParentId,
+  const std::vector<std::string>& rightLiterals,
+  std::size_t rightPivot,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error);
+
+bool expandClauseResolutionProof(
+  const std::string& leftParentId,
+  const std::vector<std::string>& leftParentArguments,
+  const std::vector<std::string>& leftLiterals,
+  std::size_t leftPivot,
+  const std::string& rightParentId,
+  const std::vector<std::string>& rightParentArguments,
   const std::vector<std::string>& rightLiterals,
   std::size_t rightPivot,
   const std::vector<std::string>& resultLiterals,
