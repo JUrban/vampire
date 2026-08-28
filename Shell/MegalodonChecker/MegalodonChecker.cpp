@@ -1725,6 +1725,17 @@ bool MegalodonChecker::certificateAvatarSplitStepSexpr(Kernel::Unit* unit, std::
     item.formula = MegalodonKernelSyntax::formula(targetLeaves[index].formula);
     program.cases.push_back(std::move(item));
   }
+  {
+    std::vector<MegalodonKernelSyntax::RenderedKernelSatLiteral> originLiterals;
+    for (const auto& leaf : targetLeaves) {
+      MegalodonKernelSyntax::RenderedKernelSatLiteral literal;
+      literal.variable = leaf.splitVar;
+      literal.positive = leaf.positive;
+      originLiterals.push_back(literal);
+    }
+    _certificateAvatarSatOriginLiteralsByUnit[unit->number()] =
+      std::move(originLiterals);
+  }
   debugAvatarSplitStage("target");
 
   Kernel::Clause* mainParent = source->asClause();
@@ -2414,6 +2425,22 @@ bool MegalodonChecker::certificateAvatarRefutationStepSexpr(Kernel::Unit* unit, 
           originSteps.push_back(originStep);
         }
       }
+      auto proofStep = std::find_if(
+        satTrace.proofSteps.begin(),
+        satTrace.proofSteps.end(),
+        [&](const MegalodonKernelSyntax::RenderedKernelSatProofStep& step) {
+          return step.kind == "input" && step.id == clause->number;
+        });
+      if (proofStep == satTrace.proofSteps.end()) {
+        return;
+      }
+      auto emittedOrder =
+        _certificateAvatarSatOriginLiteralsByUnit.find(origin->number());
+      proofStep->hasOriginLiterals = true;
+      proofStep->originLiterals =
+        emittedOrder == _certificateAvatarSatOriginLiteralsByUnit.end()
+          ? proofStep->literals
+          : emittedOrder->second;
     });
   satTrace.hasResultClause = true;
   satTrace.resultClause = MegalodonKernelSyntax::clause("(clause)");

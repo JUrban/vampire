@@ -25,6 +25,7 @@ struct RenderedKernelCnfProjection;
 struct RenderedKernelEnnfTrace;
 struct RenderedKernelRectifyRenamings;
 struct RenderedKernelSkolemUse;
+struct RenderedKernelSatLiteral;
 }
 
 class MegalodonChecker : public Kernel::InferenceStore::AbstractProofPrinter {
@@ -434,6 +435,8 @@ private:
     _certificateNativePrimitiveStepsByUnit;
   std::map<unsigned, std::vector<MegalodonKernelSyntax::PrimitiveStep>>
     _certificateEmittedNativePrimitiveStepsByUnit;
+  std::map<unsigned, std::vector<MegalodonKernelSyntax::RenderedKernelSatLiteral>>
+    _certificateAvatarSatOriginLiteralsByUnit;
   std::vector<MegalodonKernelSyntax::PrimitiveStep>
     _certificateNativeAuxiliaryPrimitiveSteps;
   std::map<unsigned, std::string> _certificateResolutionLoweringSourceByUnit;

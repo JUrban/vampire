@@ -454,6 +454,8 @@ struct RenderedKernelSatProofStep {
   std::string kind;
   bool hasOriginUnit = false;
   RenderedKernelUnitRef originUnit;
+  bool hasOriginLiterals = false;
+  std::vector<RenderedKernelSatLiteral> originLiterals;
   std::vector<RenderedKernelSatProofParent> parents;
 };
 

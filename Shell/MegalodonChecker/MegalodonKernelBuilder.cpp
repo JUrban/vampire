@@ -2232,6 +2232,42 @@ bool sameSatClauseMultiset(SatClause left, SatClause right)
   return left == right;
 }
 
+bool exactSatPermutation(
+  const SatClause& source,
+  const SatClause& target,
+  std::vector<std::size_t>& permutation)
+{
+  if (source.size() != target.size()) {
+    return false;
+  }
+  std::vector<bool> used(source.size(), false);
+  permutation.clear();
+  permutation.reserve(target.size());
+  for (const SatLiteral& literal : target) {
+    std::size_t sourceIndex = 0;
+    while (sourceIndex < source.size()
+           && (used[sourceIndex] || source[sourceIndex] != literal)) {
+      ++sourceIndex;
+    }
+    if (sourceIndex == source.size()) {
+      permutation.clear();
+      return false;
+    }
+    used[sourceIndex] = true;
+    permutation.push_back(sourceIndex);
+  }
+  return true;
+}
+
+std::string renderSatPermutation(const std::vector<std::size_t>& permutation)
+{
+  std::string rendered = "(permutation";
+  for (std::size_t index : permutation) {
+    rendered += " " + std::to_string(index);
+  }
+  return rendered + ")";
+}
+
 bool complementarySatLiterals(const SatLiteral& left, const SatLiteral& right)
 {
   return left.variable == right.variable && left.positive != right.positive;
@@ -2336,15 +2372,40 @@ bool lowerAvatarSatProof(
       return false;
     }
     if (step.kind == "input") {
-      if (!step.hasOriginUnit) {
+      if (!step.hasOriginUnit || !step.hasOriginLiterals
+          || !sameSatClauseMultiset(step.originLiterals, step.literals)) {
         return false;
       }
-      checked.emplace(step.id, step.literals);
-      rendered +=
-        " (sat_input " + std::to_string(step.id)
-        + " (origin " + quote(step.originUnit.value) + ")"
-        + " " + renderSatClause(step.literals) + ")";
-      ++exactStepCount;
+      if (step.originLiterals == step.literals) {
+        checked.emplace(step.id, step.literals);
+        rendered +=
+          " (sat_input " + std::to_string(step.id)
+          + " (origin " + quote(step.originUnit.value) + ")"
+          + " " + renderSatClause(step.literals) + ")";
+        ++exactStepCount;
+      } else {
+        if (nextSyntheticId == std::numeric_limits<unsigned>::max()) {
+          return false;
+        }
+        const unsigned originInputId = nextSyntheticId++;
+        checked.emplace(originInputId, step.originLiterals);
+        std::vector<std::size_t> permutation;
+        if (!exactSatPermutation(
+              step.originLiterals, step.literals, permutation)) {
+          return false;
+        }
+        rendered +=
+          " (sat_input " + std::to_string(originInputId)
+          + " (origin " + quote(step.originUnit.value) + ")"
+          + " " + renderSatClause(step.originLiterals) + ")";
+        rendered +=
+          " (sat_permute " + std::to_string(step.id)
+          + " (parent " + std::to_string(originInputId) + ")"
+          + " " + renderSatPermutation(permutation)
+          + " (result " + renderSatClause(step.literals) + "))";
+        checked.emplace(step.id, step.literals);
+        exactStepCount += 2;
+      }
       continue;
     }
     if (step.kind != "rup" || step.parents.empty()) {
@@ -2401,16 +2462,31 @@ bool lowerAvatarSatProof(
             + " (result " + renderSatClause(operation.result) + "))";
           break;
         case ExactSatOperationKind::Permute:
+          {
+          const auto current = checked.find(currentId);
+          if (current == checked.end()) {
+            return false;
+          }
+          std::vector<std::size_t> permutation;
+          if (!exactSatPermutation(
+                current->second, operation.result, permutation)) {
+            return false;
+          }
           rendered +=
             " (sat_permute " + std::to_string(operationId)
             + " (parent " + std::to_string(currentId) + ")"
+            + " " + renderSatPermutation(permutation)
             + " (result " + renderSatClause(operation.result) + "))";
           break;
+          }
       }
+      checked.emplace(operationId, operation.result);
       currentId = operationId;
       ++exactStepCount;
     }
-    checked.emplace(step.id, step.literals);
+    if (checked.find(step.id) == checked.end()) {
+      checked.emplace(step.id, step.literals);
+    }
   }
   rendered += ")";
   return !sourceSteps.empty();
