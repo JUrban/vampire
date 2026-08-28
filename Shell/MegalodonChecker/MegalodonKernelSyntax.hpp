@@ -320,6 +320,7 @@ struct RenderedKernelAvatarLiteralClass {
   std::size_t literalCount = 0;
   std::vector<std::string> literals;
   std::vector<std::size_t> parentLiteralIndices;
+  bool positive = true;
   bool hasMatchedSplitLevel = false;
   unsigned matchedSplitLevel = 0;
   bool hasMatchedSplitVar = false;
@@ -329,6 +330,8 @@ struct RenderedKernelAvatarLiteralClass {
 struct RenderedKernelAvatarParentVarBinding {
   std::size_t index = 0;
   std::string parentVar;
+  bool hasType = false;
+  RenderedKernelType type;
   bool hasComponentVar = false;
   std::string componentVar;
   bool hasSplitVar = false;
@@ -358,6 +361,31 @@ struct RenderedKernelAvatarCounterexampleProgram {
   RenderedKernelFormula finalBody;
 };
 
+struct RenderedKernelAvatarSplitCase {
+  std::size_t index = 0;
+  unsigned splitVar = 0;
+  bool positive = false;
+  std::string path;
+  RenderedKernelFormula formula;
+};
+
+enum class RenderedKernelAvatarSplitSourceAction {
+  Focus,
+  Counterexample,
+  PreviousSplit,
+};
+
+struct RenderedKernelAvatarSplitSourceNode {
+  std::size_t index = 0;
+  std::size_t literal = 0;
+  RenderedKernelAvatarSplitSourceAction action =
+    RenderedKernelAvatarSplitSourceAction::Focus;
+  std::size_t literalClass = 0;
+  std::size_t componentLiteral = 0;
+  unsigned splitVar = 0;
+  std::size_t caseIndex = 0;
+};
+
 struct RenderedKernelAvatarSplitStep {
   RenderedKernelUnitRef sourceUnit;
   bool hasSourceClause = false;
@@ -378,6 +406,13 @@ struct RenderedKernelAvatarSplitStep {
   std::vector<RenderedKernelAvatarLiteralClass> literalClasses;
   std::vector<RenderedKernelAvatarParentVarBinding> parentVarBindings;
   std::vector<RenderedKernelAvatarCounterexampleProgram> counterexamplePrograms;
+  bool hasIvyProgram = false;
+  std::vector<RenderedKernelAvatarSplitCase> cases;
+  bool hasFocus = false;
+  unsigned focusSplitVar = 0;
+  std::size_t focusLiteralClass = 0;
+  std::size_t focusComponentParent = 0;
+  std::vector<RenderedKernelAvatarSplitSourceNode> sourceNodes;
 };
 
 struct RenderedKernelSatInput {

@@ -245,6 +245,12 @@ MegalodonKernelSyntax::PrimitiveStep avatarSplitStep(
   const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& parents,
   const MegalodonKernelSyntax::RenderedKernelClause& result);
 
+MegalodonKernelSyntax::PrimitiveStep avatarSplitIvyStep(
+  const std::string& id,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& parents,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const MegalodonKernelSyntax::RenderedKernelAvatarSplitStep& program);
+
 MegalodonKernelSyntax::PrimitiveStep avatarContradictionStep(
   const std::string& id,
   const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& parents,

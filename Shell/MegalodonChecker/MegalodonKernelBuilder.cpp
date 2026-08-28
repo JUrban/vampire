@@ -1904,6 +1904,162 @@ MegalodonKernelSyntax::PrimitiveStep avatarSplitStep(
       + " (result " + result.sexpr + "))");
 }
 
+MegalodonKernelSyntax::PrimitiveStep avatarSplitIvyStep(
+  const std::string& id,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& parents,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const MegalodonKernelSyntax::RenderedKernelAvatarSplitStep& split)
+{
+  MegalodonKernelSyntax::PrimitiveStep step =
+    avatarSplitStep(id, parents, result);
+  if (!split.hasIvyProgram || !split.hasSourceClause
+      || (!split.hasResultFormula && !split.hasResultClause)) {
+    return step;
+  }
+
+  std::string program =
+    "(program \"ivy_avatar_split_v1\""
+    " (source " + split.sourceClause.sexpr + ")";
+  if (split.hasResultFormula) {
+    program += " (target (formula " + split.resultFormula.sexpr + "))";
+  } else {
+    program += " (target " + split.resultClause.sexpr + ")";
+  }
+
+  program += " (cases";
+  for (const auto& item : split.cases) {
+    program +=
+      " (case (index " + std::to_string(item.index)
+      + ") (split " + std::to_string(item.splitVar) + " "
+      + (item.positive ? "true" : "false")
+      + ") (path " + quote(item.path) + ") (formula "
+      + item.formula.sexpr + "))";
+  }
+  program += ")";
+
+  program += " (components";
+  for (const auto& parent : split.componentParents) {
+    if (!parent.hasClauseSexpr) {
+      return step;
+    }
+    program +=
+      " (component (index " + std::to_string(parent.refIndex)
+      + ") (parent " + quote(parent.unit.value)
+      + ") (split " + std::to_string(parent.split.variable) + " "
+      + (parent.split.positive ? "true" : "false")
+      + ") (body " + parent.clauseSexpr.sexpr + "))";
+  }
+  program += ")";
+
+  program += " (classes";
+  for (const auto& literalClass : split.literalClasses) {
+    if (!literalClass.hasMatchedSplitVar
+        || literalClass.parentLiteralIndices.size()
+             != literalClass.literalCount) {
+      return step;
+    }
+    program +=
+      " (class (index " + std::to_string(literalClass.index)
+      + ") (split " + std::to_string(literalClass.matchedSplitVar)
+      + ") (positive " + (literalClass.positive ? "true" : "false")
+      + ") (source_literals";
+    for (std::size_t literal : literalClass.parentLiteralIndices) {
+      program += " " + std::to_string(literal);
+    }
+    program += "))";
+  }
+  program += ")";
+
+  program += " (bindings";
+  for (const auto& binding : split.parentVarBindings) {
+    if (!binding.hasType || !binding.hasComponentVar
+        || !binding.hasSplitVar) {
+      return step;
+    }
+    program +=
+      " (binding (index " + std::to_string(binding.index)
+      + ") (parent_var " + quote(binding.parentVar)
+      + ") (type " + binding.type.sexpr
+      + ") (component_var " + quote(binding.componentVar)
+      + ") (split " + std::to_string(binding.splitVar) + ")";
+    if (binding.hasCounterexampleProgram) {
+      program +=
+        " (witness (program "
+        + std::to_string(binding.counterexampleProgram)
+        + ") (stage " + std::to_string(binding.counterexampleStage) + "))";
+    }
+    program += ")";
+  }
+  program += ")";
+
+  program += " (counterexamples";
+  for (const auto& counterexample : split.counterexamplePrograms) {
+    program +=
+      " (counterexample (index " + std::to_string(counterexample.index)
+      + ") (split " + std::to_string(counterexample.splitVar)
+      + ") (source (formula " + counterexample.source.sexpr
+      + ")) (body (formula " + counterexample.body.sexpr
+      + ")) (stages";
+    for (const auto& stage : counterexample.stages) {
+      program +=
+        " (stage (index " + std::to_string(stage.index)
+        + ") (variable " + quote(stage.variable)
+        + ") (type " + stage.type.sexpr
+        + ") (source (formula " + stage.source.sexpr
+        + ")) (predicate (formula " + stage.predicate.sexpr
+        + ")) (witness (term " + stage.witness.sexpr
+        + ")) (target (formula " + stage.target.sexpr + ")))";
+    }
+    program +=
+      ") (final_body (formula " + counterexample.finalBody.sexpr + ")))";
+  }
+  program += ")";
+
+  if (split.hasFocus) {
+    program +=
+      " (focus (split " + std::to_string(split.focusSplitVar)
+      + ") (class " + std::to_string(split.focusLiteralClass)
+      + ") (component " + std::to_string(split.focusComponentParent) + "))";
+  } else {
+    program += " (terminal \"contradiction\")";
+  }
+
+  program += " (source_nodes";
+  for (const auto& node : split.sourceNodes) {
+    program +=
+      " (node (index " + std::to_string(node.index)
+      + ") (literal " + std::to_string(node.literal) + ")";
+    switch (node.action) {
+      case MegalodonKernelSyntax::RenderedKernelAvatarSplitSourceAction::Focus:
+        program +=
+          " (action \"focus\") (class "
+          + std::to_string(node.literalClass)
+          + ") (component_literal "
+          + std::to_string(node.componentLiteral) + ")";
+        break;
+      case MegalodonKernelSyntax::RenderedKernelAvatarSplitSourceAction::Counterexample:
+        program +=
+          " (action \"counterexample\") (class "
+          + std::to_string(node.literalClass)
+          + ") (component_literal "
+          + std::to_string(node.componentLiteral)
+          + ") (split " + std::to_string(node.splitVar) + ")";
+        break;
+      case MegalodonKernelSyntax::RenderedKernelAvatarSplitSourceAction::PreviousSplit:
+        program +=
+          " (action \"previous_split\") (case "
+          + std::to_string(node.caseIndex) + ")";
+        break;
+    }
+    program += ")";
+  }
+  program += "))";
+
+  step.rendered.pop_back();
+  step.rendered += " " + program + ")";
+  return step;
+}
+
 MegalodonKernelSyntax::PrimitiveStep avatarContradictionStep(
   const std::string& id,
   const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& parents,

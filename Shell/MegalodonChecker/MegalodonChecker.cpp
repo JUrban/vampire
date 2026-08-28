@@ -1522,43 +1522,6 @@ bool MegalodonChecker::certificateAvatarSplitStepSexpr(Kernel::Unit* unit, std::
   if (unit->inference().rule() != Kernel::InferenceRule::AVATAR_SPLIT_CLAUSE) {
     return false;
   }
-  std::string renderedClause;
-  if (unit->isClause()) {
-    if (!certificateClauseSexpr(unit->asClause(), renderedClause)) {
-      return false;
-    }
-  } else {
-    std::string formula;
-    if (certificateAvatarFormulaTermSexpr(
-          static_cast<Kernel::FormulaUnit*>(unit)->formula(),
-          formula)) {
-      renderedClause = "(clause (pos " + formula + "))";
-    } else {
-      const auto* satExtraRaw = env.proofExtra.find(unit);
-      if (satExtraRaw == nullptr) {
-        return false;
-      }
-      const auto* satExtra =
-        static_cast<const Indexing::SATClauseExtra*>(satExtraRaw);
-      if (satExtra->clause == nullptr) {
-        return false;
-      }
-      std::ostringstream clause;
-      clause << "(clause";
-      for (SATLiteral literal : satExtra->clause->iter()) {
-        clause << " (" << (literal.positive() ? "pos" : "neg")
-               << " (TMH "
-               << sexprQuote("split_" + std::to_string(literal.var()))
-               << "))";
-      }
-      clause << ')';
-      renderedClause = clause.str();
-    }
-  }
-  if (renderedClause.empty()) {
-    return false;
-  }
-  std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef> parents;
   std::vector<Kernel::Unit*> parentUnits;
   for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
     parentUnits.push_back(parent);
@@ -1574,6 +1537,9 @@ bool MegalodonChecker::certificateAvatarSplitStepSexpr(Kernel::Unit* unit, std::
     return false;
   }
   Kernel::Unit* source = *sourceParent;
+  if (!source->isClause()) {
+    return false;
+  }
   parentUnits.erase(sourceParent);
   std::sort(
     parentUnits.begin(),
@@ -1581,24 +1547,691 @@ bool MegalodonChecker::certificateAvatarSplitStepSexpr(Kernel::Unit* unit, std::
     [](Kernel::Unit* left, Kernel::Unit* right) {
       return left->number() < right->number();
     });
+
+  std::string renderedClause;
+  std::string targetFormula;
+  if (unit->isClause()) {
+    if (!certificateClauseSexpr(unit->asClause(), renderedClause)) {
+      return false;
+    }
+  } else {
+    if (!certificateAvatarFormulaTermSexpr(
+          static_cast<Kernel::FormulaUnit*>(unit)->formula(),
+          targetFormula)) {
+      return false;
+    }
+    renderedClause = "(clause (pos " + targetFormula + "))";
+  }
+
+  std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef> parents;
   parents.push_back(
     MegalodonKernelSyntax::unitRef("u" + std::to_string(source->number())));
   for (Kernel::Unit* parent : parentUnits) {
     parents.push_back(
       MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number())));
   }
+
+  MegalodonKernelSyntax::RenderedKernelAvatarSplitStep program;
+  auto debugAvatarSplitStage = [&](const std::string& stage) {
+    if (std::getenv("MEGALODON_CERT_DEBUG")) {
+      std::cerr << "megalodon avatar_split u" << unit->number()
+                << " producer stage " << stage << std::endl;
+    }
+  };
+  program.sourceUnit = parents.front();
+  std::string sourceClause;
+  if (!certificateClauseSexpr(source->asClause(), sourceClause)) {
+    return false;
+  }
+  program.hasSourceClause = true;
+  program.sourceClause = MegalodonKernelSyntax::clause(sourceClause);
+  program.hasResultFormula = true;
+
+  auto literalFormula = [](const std::string& literal, std::string& formula) {
+    if (literal.size() < 7 || literal.back() != ')') {
+      return false;
+    }
+    const bool positive = literal.compare(0, 5, "(pos ") == 0;
+    const bool negative = literal.compare(0, 5, "(neg ") == 0;
+    if (!positive && !negative) {
+      return false;
+    }
+    const std::string atom = literal.substr(5, literal.size() - 6);
+    formula = positive
+      ? atom
+      : "(IMP " + atom + " (TMH \"vampire_false\"))";
+    return true;
+  };
+
+  std::vector<SATLiteral> satLiterals;
+  if (const auto* satExtraRaw = env.proofExtra.find(unit)) {
+    const auto* satExtra =
+      static_cast<const Indexing::SATClauseExtra*>(satExtraRaw);
+    if (satExtra->clause != nullptr) {
+      for (SATLiteral literal : satExtra->clause->iter()) {
+        satLiterals.push_back(literal);
+      }
+    }
+  }
+  auto matchSplitFormula =
+    [&](const std::string& formula, unsigned& splitVar, bool& positive) {
+      for (SATLiteral literal : satLiterals) {
+        const std::string atom =
+          "(TMH " + sexprQuote("split_" + std::to_string(literal.var())) + ")";
+        const std::string expected = literal.positive()
+          ? atom
+          : "(IMP " + atom + " (TMH \"vampire_false\"))";
+        if (formula == expected) {
+          splitVar = literal.var();
+          positive = literal.positive();
+          return true;
+        }
+      }
+      return false;
+    };
+
+  struct TargetLeaf {
+    std::string formula;
+    std::string path;
+    unsigned splitVar = 0;
+    bool positive = false;
+  };
+  std::vector<TargetLeaf> targetLeaves;
+  if (!unit->isClause()) {
+    std::function<bool(Kernel::Formula*, const std::string&)> collectTarget;
+    collectTarget =
+      [&](Kernel::Formula* formula, const std::string& path) {
+        if (formula->connective() == Kernel::OR) {
+          std::vector<Kernel::Formula*> args;
+          auto iterator = formula->args()->iter();
+          while (iterator.hasNext()) {
+            args.push_back(iterator.next());
+          }
+          if (args.empty()) {
+            return false;
+          }
+          std::function<bool(std::size_t, const std::string&)> collectPrefix;
+          collectPrefix = [&](std::size_t count, const std::string& prefix) {
+            if (count == 1) {
+              return collectTarget(args[0], prefix);
+            }
+            return collectPrefix(count - 1, prefix + "L")
+              && collectTarget(args[count - 1], prefix + "R");
+          };
+          return collectPrefix(args.size(), path);
+        }
+        std::string rendered;
+        unsigned splitVar = 0;
+        bool positive = false;
+        if (!certificateAvatarFormulaTermSexpr(formula, rendered)
+            || !matchSplitFormula(rendered, splitVar, positive)) {
+          return false;
+        }
+        targetLeaves.push_back({rendered, path, splitVar, positive});
+        return true;
+      };
+    if (!collectTarget(
+          static_cast<Kernel::FormulaUnit*>(unit)->formula(), "")) {
+      return false;
+    }
+  } else {
+    std::vector<std::string> resultLiterals;
+    if (!appendCertificateClauseLiteralsSexpr(
+          unit->asClause(), resultLiterals)
+        || resultLiterals.empty()) {
+      return false;
+    }
+    std::vector<std::string> formulas;
+    for (const std::string& literal : resultLiterals) {
+      std::string formula;
+      unsigned splitVar = 0;
+      bool positive = false;
+      if (!literalFormula(literal, formula)
+          || !matchSplitFormula(formula, splitVar, positive)) {
+        return false;
+      }
+      formulas.push_back(formula);
+      targetLeaves.push_back({formula, "", splitVar, positive});
+    }
+    targetFormula = formulas.back();
+    for (std::size_t index = formulas.size() - 1; index > 0; --index) {
+      targetFormula =
+        "(AP (AP (TMH \"vampire_or\") "
+        + formulas[index - 1] + ") " + targetFormula + ")";
+    }
+    std::function<std::string(std::size_t, std::size_t)> rightPath =
+      [&](std::size_t index, std::size_t count) {
+        if (count == 1) {
+          return std::string();
+        }
+        return index == 0
+          ? std::string("L")
+          : std::string("R") + rightPath(index - 1, count - 1);
+      };
+    for (std::size_t index = 0; index < targetLeaves.size(); ++index) {
+      targetLeaves[index].path = rightPath(index, targetLeaves.size());
+    }
+  }
+  if (targetLeaves.empty() || targetFormula.empty()) {
+    return false;
+  }
+  program.resultFormula = MegalodonKernelSyntax::formula(targetFormula);
+  for (std::size_t index = 0; index < targetLeaves.size(); ++index) {
+    MegalodonKernelSyntax::RenderedKernelAvatarSplitCase item;
+    item.index = index;
+    item.splitVar = targetLeaves[index].splitVar;
+    item.positive = targetLeaves[index].positive;
+    item.path = targetLeaves[index].path;
+    item.formula = MegalodonKernelSyntax::formula(targetLeaves[index].formula);
+    program.cases.push_back(std::move(item));
+  }
+  debugAvatarSplitStage("target");
+
+  Kernel::Clause* mainParent = source->asClause();
+  std::set<unsigned> previousSplitVars;
+  if (!mainParent->noSplits()) {
+    for (unsigned split : iterTraits(mainParent->splits()->iter())) {
+      previousSplitVars.insert(Splitter::getLiteralFromName(split).var());
+    }
+  }
+
+  std::map<unsigned, Kernel::Clause*> components;
+  struct ComponentInfo {
+    std::size_t refIndex = 0;
+    Kernel::Clause* clause = nullptr;
+  };
+  std::map<unsigned, ComponentInfo> componentBySplitVar;
+  for (Kernel::Unit* splitParent : parentUnits) {
+    const auto* splitExtraRaw = env.proofExtra.find(splitParent);
+    if (splitExtraRaw == nullptr) {
+      return false;
+    }
+    const auto* splitExtra =
+      static_cast<const SplitDefinitionExtra*>(splitExtraRaw);
+    if (splitExtra->component == nullptr
+        || !splitExtra->component->isComponent()
+        || splitExtra->component->noSplits()) {
+      return false;
+    }
+    const unsigned componentLevel = splitExtra->component->splits()->sval();
+    const SATLiteral componentLiteral =
+      Splitter::getLiteralFromName(componentLevel);
+    components.insert({componentLevel, splitExtra->component});
+
+    MegalodonKernelSyntax::RenderedKernelAvatarComponentParent parent;
+    parent.refIndex = program.componentParents.size();
+    parent.unit = MegalodonKernelSyntax::unitRef(
+      "u" + std::to_string(splitParent->number()));
+    parent.split.level = componentLevel;
+    parent.split.variable = componentLiteral.var();
+    parent.split.positive = componentLiteral.positive();
+    std::vector<std::string> componentLiterals;
+    for (Kernel::Literal* literal : splitExtra->component->iterLits()) {
+      std::string renderedLiteral;
+      if (!certificateLiteralSexpr(literal, renderedLiteral)) {
+        return false;
+      }
+      componentLiterals.push_back(std::move(renderedLiteral));
+    }
+    const std::string componentClause =
+      certificateClauseSexprFromRenderedLiterals(componentLiterals);
+    parent.hasClauseSexpr = true;
+    parent.clauseSexpr = MegalodonKernelSyntax::clause(componentClause);
+    if (previousSplitVars.find(componentLiteral.var())
+          == previousSplitVars.end()
+        && componentBySplitVar.find(componentLiteral.var())
+          == componentBySplitVar.end()) {
+      componentBySplitVar.emplace(
+        componentLiteral.var(),
+        ComponentInfo{parent.refIndex, splitExtra->component});
+    }
+    program.componentParents.push_back(std::move(parent));
+  }
+  program.componentParentCount = program.componentParents.size();
+  debugAvatarSplitStage("components");
+
+  Stack<LiteralStack> disjointLiterals;
+  if (!Splitter::getComponents(mainParent, disjointLiterals)) {
+    disjointLiterals.reset();
+    LiteralStack component;
+    for (Kernel::Literal* literal : mainParent->iterLits()) {
+      component.push(literal);
+    }
+    disjointLiterals.push(std::move(component));
+  }
+  Substitution fullSubst;
+  std::map<unsigned, unsigned> varToSplitMap;
+  std::map<std::size_t, std::pair<std::size_t, std::size_t>>
+    sourceLiteralClass;
+  decltype(disjointLiterals)::Iterator classes(disjointLiterals);
+  while (classes.hasNext()) {
+    LiteralStack klass = classes.next();
+    MegalodonKernelSyntax::RenderedKernelAvatarLiteralClass literalClass;
+    literalClass.index = program.literalClasses.size();
+    literalClass.literalCount = klass.size();
+    for (unsigned literalIndex = 0; literalIndex < klass.size(); ++literalIndex) {
+      bool found = false;
+      for (unsigned parentLiteralIndex = 0;
+           parentLiteralIndex < mainParent->length();
+           ++parentLiteralIndex) {
+        if ((*mainParent)[parentLiteralIndex] == klass[literalIndex]) {
+          literalClass.parentLiteralIndices.push_back(parentLiteralIndex);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        return false;
+      }
+    }
+
+    bool matched = false;
+    std::vector<std::size_t> componentLiteralIndices;
+    for (const auto& componentEntry : components) {
+      const unsigned splitLevel = componentEntry.first;
+      Kernel::Clause* component = componentEntry.second;
+      if (klass.size() != component->length()) {
+        continue;
+      }
+      Substitution subst;
+      if (klass.size() == 1 && klass[0]->ground()
+          && Kernel::Literal::positiveLiteral(klass[0])
+             == Kernel::Literal::positiveLiteral((*component)[0])) {
+        literalClass.positive =
+          klass[0]->polarity() == (*component)[0]->polarity();
+        literalClass.hasMatchedSplitLevel = true;
+        literalClass.matchedSplitLevel = splitLevel;
+        literalClass.hasMatchedSplitVar = true;
+        literalClass.matchedSplitVar =
+          Splitter::getLiteralFromName(splitLevel).var();
+        componentLiteralIndices.push_back(0);
+        matched = true;
+        break;
+      }
+      bool complementary = false;
+      if (!Kernel::MLVariant::isVariant(
+            klass.begin(), component, false, &subst)) {
+        subst.reset();
+        complementary = true;
+        if (!Kernel::MLVariant::isVariant(
+              klass.begin(), component, true, &subst)) {
+          continue;
+        }
+      }
+      literalClass.positive = !complementary;
+      Substitution sourceToComponent;
+      for (auto [var, term] : iterTraits(subst.items())) {
+        if (!term.isVar()) {
+          return false;
+        }
+        fullSubst.bind(term.var(), Kernel::TermList::var(var));
+        if (!sourceToComponent.bind(
+              term.var(), Kernel::TermList::var(var))) {
+          return false;
+        }
+        varToSplitMap[term.var()] =
+          Splitter::getLiteralFromName(splitLevel).var();
+      }
+      std::set<std::size_t> usedComponentLiterals;
+      for (std::size_t sourceLiteralIndex = 0;
+           sourceLiteralIndex < klass.size();
+           ++sourceLiteralIndex) {
+        Kernel::Literal* sourceLiteral = klass[sourceLiteralIndex];
+        Kernel::Literal* renamed =
+          Kernel::SubstHelper::apply(sourceLiteral, sourceToComponent);
+        bool found = false;
+        for (std::size_t componentLiteralIndex = 0;
+             componentLiteralIndex < component->length();
+             ++componentLiteralIndex) {
+          Kernel::Literal* expected = complementary
+            ? Kernel::Literal::complementaryLiteral(
+                (*component)[componentLiteralIndex])
+            : (*component)[componentLiteralIndex];
+          if (usedComponentLiterals.find(componentLiteralIndex)
+                == usedComponentLiterals.end()
+              && renamed == expected) {
+            componentLiteralIndices.push_back(componentLiteralIndex);
+            usedComponentLiterals.insert(componentLiteralIndex);
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          return false;
+        }
+      }
+      literalClass.hasMatchedSplitLevel = true;
+      literalClass.matchedSplitLevel = splitLevel;
+      literalClass.hasMatchedSplitVar = true;
+      literalClass.matchedSplitVar =
+        Splitter::getLiteralFromName(splitLevel).var();
+      matched = true;
+      break;
+    }
+    if (!matched) {
+      return false;
+    }
+    if (componentLiteralIndices.size()
+        != literalClass.parentLiteralIndices.size()) {
+      return false;
+    }
+    for (std::size_t literalIndex = 0;
+         literalIndex < literalClass.parentLiteralIndices.size();
+         ++literalIndex) {
+      sourceLiteralClass.emplace(
+        literalClass.parentLiteralIndices[literalIndex],
+        std::make_pair(
+          literalClass.index, componentLiteralIndices[literalIndex]));
+    }
+    program.literalClasses.push_back(std::move(literalClass));
+  }
+  if (sourceLiteralClass.size() != mainParent->length()) {
+    return false;
+  }
+  debugAvatarSplitStage("classes");
+
+  auto focusCase = std::find_if(
+    program.cases.begin(), program.cases.end(),
+    [&](const auto& item) {
+      return item.positive
+        && componentBySplitVar.find(item.splitVar) != componentBySplitVar.end()
+        && std::any_of(
+             program.literalClasses.begin(), program.literalClasses.end(),
+             [&](const auto& literalClass) {
+               return literalClass.hasMatchedSplitVar
+                 && literalClass.matchedSplitVar == item.splitVar
+                 && literalClass.positive == item.positive;
+             });
+    });
+  program.hasFocus = focusCase != program.cases.end();
+  if (program.hasFocus) {
+    program.focusSplitVar = focusCase->splitVar;
+    const auto focusClass = std::find_if(
+      program.literalClasses.begin(), program.literalClasses.end(),
+      [&](const auto& literalClass) {
+        return literalClass.hasMatchedSplitVar
+          && literalClass.matchedSplitVar == program.focusSplitVar
+          && literalClass.positive;
+      });
+    if (focusClass == program.literalClasses.end()) {
+      return false;
+    }
+    program.focusLiteralClass = focusClass->index;
+    program.focusComponentParent =
+      componentBySplitVar.at(program.focusSplitVar).refIndex;
+    debugAvatarSplitStage("focus");
+  } else {
+    debugAvatarSplitStage("terminal_contradiction");
+  }
+
+  auto clauseBodyFormulaSexpr =
+    [&](Kernel::Clause* clause, std::string& body) {
+      std::vector<std::string> literals;
+      for (Kernel::Literal* literal : clause->iterLits()) {
+        std::string renderedLiteral;
+        std::string formula;
+        if (!certificateLiteralSexpr(literal, renderedLiteral)
+            || !literalFormula(renderedLiteral, formula)) {
+          return false;
+        }
+        literals.push_back(std::move(formula));
+      }
+      if (literals.empty()) {
+        body = "(TMH \"vampire_false\")";
+        return true;
+      }
+      body = literals.back();
+      for (std::size_t index = literals.size() - 1; index > 0; --index) {
+        body =
+          "(AP (AP (TMH \"vampire_or\") "
+          + literals[index - 1] + ") " + body + ")";
+      }
+      return true;
+    };
+  auto choiceOperatorForType = [](const std::string& type) {
+    if (type == "(SET)") return std::string("Eps_i");
+    if (type == "(PROP)") return std::string("Eps_prop");
+    if (type == "(AR (SET) (PROP))") return std::string("Eps_set_prop");
+    if (type == "(AR (SET) (SET))") return std::string("Eps_set_set");
+    if (type == "(AR (SET) (AR (SET) (PROP)))") {
+      return std::string("Eps_set_set_prop");
+    }
+    return std::string();
+  };
+  struct CounterexampleIndex {
+    std::size_t program = 0;
+    std::map<unsigned, std::size_t> stageByVariable;
+  };
+  std::map<unsigned, CounterexampleIndex> counterexampleBySplitVar;
+  for (const auto& componentEntry : componentBySplitVar) {
+    const unsigned splitVar = componentEntry.first;
+    Kernel::Clause* component = componentEntry.second.clause;
+    Lib::DHMap<unsigned, Kernel::TermList> componentSortMap;
+    Kernel::SortHelper::collectVariableSorts(component, componentSortMap);
+    std::vector<std::pair<unsigned, Kernel::TermList>> binders;
+    Lib::DHMap<unsigned, Kernel::TermList>::Iterator sortIterator(
+      componentSortMap);
+    while (sortIterator.hasNext()) {
+      unsigned variable;
+      Kernel::TermList sort;
+      sortIterator.next(variable, sort);
+      binders.push_back({variable, sort});
+    }
+    std::sort(binders.begin(), binders.end());
+    if (binders.empty()) {
+      continue;
+    }
+    std::string body;
+    if (!clauseBodyFormulaSexpr(component, body)) {
+      return false;
+    }
+    std::vector<std::string> binderTypes;
+    for (const auto& binder : binders) {
+      std::string type;
+      if (!certificateTypeSexpr(binder.second, type)
+          || choiceOperatorForType(type).empty()) {
+        return false;
+      }
+      binderTypes.push_back(type);
+    }
+    auto quantifyFrom =
+      [&](std::size_t begin, std::string formula) {
+        for (std::size_t index = binders.size(); index > begin; --index) {
+          const std::size_t binder = index - 1;
+          formula =
+            "(ALLV " + sexprQuote(variableName(binders[binder].first))
+            + " " + binderTypes[binder] + " " + formula + ")";
+        }
+        return formula;
+      };
+    auto instantiatePrefix =
+      [&](std::size_t count, std::string formula,
+          const std::vector<std::string>& witnesses) {
+        for (std::size_t index = count; index > 0; --index) {
+          const std::size_t binder = index - 1;
+          formula =
+            "(VLAMV " + sexprQuote(variableName(binders[binder].first))
+            + " " + binderTypes[binder] + " " + formula + ")";
+        }
+        for (std::size_t index = 0; index < count; ++index) {
+          formula = "(AP " + formula + " " + witnesses[index] + ")";
+        }
+        return formula;
+      };
+
+    MegalodonKernelSyntax::RenderedKernelAvatarCounterexampleProgram counterexample;
+    counterexample.index = program.counterexamplePrograms.size();
+    counterexample.splitVar = splitVar;
+    counterexample.version = "classical_choice_v1";
+    counterexample.body = MegalodonKernelSyntax::formula(body);
+    std::string current = quantifyFrom(0, body);
+    counterexample.source = MegalodonKernelSyntax::formula(current);
+    std::vector<std::string> witnesses;
+    CounterexampleIndex index;
+    index.program = counterexample.index;
+    for (std::size_t binder = 0; binder < binders.size(); ++binder) {
+      const std::string variable = variableName(binders[binder].first);
+      std::string targetOpen = quantifyFrom(binder + 1, body);
+      targetOpen = instantiatePrefix(binder, targetOpen, witnesses);
+      const std::string predicate =
+        "(VLAMV " + sexprQuote(variable) + " " + binderTypes[binder]
+        + " (IMP " + targetOpen + " (TMH \"vampire_false\")))";
+      const std::string witness =
+        "(AP (TMH " + sexprQuote(choiceOperatorForType(binderTypes[binder]))
+        + ") " + predicate + ")";
+      witnesses.push_back(witness);
+      const std::string target = instantiatePrefix(
+        binder + 1, quantifyFrom(binder + 1, body), witnesses);
+
+      MegalodonKernelSyntax::RenderedKernelAvatarCounterexampleStage stage;
+      stage.index = binder;
+      stage.variable = variable;
+      stage.type = MegalodonKernelSyntax::type(binderTypes[binder]);
+      stage.source = MegalodonKernelSyntax::formula(current);
+      stage.predicate = MegalodonKernelSyntax::formula(predicate);
+      stage.witness = MegalodonKernelSyntax::term(witness);
+      stage.target = MegalodonKernelSyntax::formula(target);
+      counterexample.stages.push_back(std::move(stage));
+      index.stageByVariable[binders[binder].first] = binder;
+      current = target;
+    }
+    counterexample.finalBody = MegalodonKernelSyntax::formula(current);
+    counterexampleBySplitVar.emplace(splitVar, std::move(index));
+    program.counterexamplePrograms.push_back(std::move(counterexample));
+  }
+  debugAvatarSplitStage("counterexamples");
+
+  Lib::DHMap<unsigned, Kernel::TermList> mainParentSorts;
+  Kernel::SortHelper::collectVariableSorts(mainParent, mainParentSorts);
+  std::set<unsigned> sortedParentVars;
+  for (unsigned variable : iterTraits(mainParentSorts.domain())) {
+    sortedParentVars.insert(variable);
+  }
+  for (unsigned variable : sortedParentVars) {
+    const Kernel::TermList substituted = fullSubst.apply(variable);
+    const auto splitVar = varToSplitMap.find(variable);
+    if (!substituted.isVar() || splitVar == varToSplitMap.end()) {
+      return false;
+    }
+    Kernel::TermList sort;
+    if (!mainParentSorts.find(variable, sort)) {
+      return false;
+    }
+    std::string type;
+    if (!certificateTypeSexpr(sort, type)) {
+      return false;
+    }
+    MegalodonKernelSyntax::RenderedKernelAvatarParentVarBinding binding;
+    binding.index = program.parentVarBindings.size();
+    binding.parentVar = variableName(variable);
+    binding.hasType = true;
+    binding.type = MegalodonKernelSyntax::type(type);
+    binding.hasComponentVar = true;
+    binding.componentVar = variableName(substituted.var());
+    binding.hasSplitVar = true;
+    binding.splitVar = splitVar->second;
+    const auto counterexample =
+      counterexampleBySplitVar.find(splitVar->second);
+    if (counterexample != counterexampleBySplitVar.end()) {
+      const auto stage =
+        counterexample->second.stageByVariable.find(substituted.var());
+      if (stage == counterexample->second.stageByVariable.end()) {
+        return false;
+      }
+      binding.hasCounterexampleProgram = true;
+      binding.counterexampleProgram = counterexample->second.program;
+      binding.counterexampleStage = stage->second;
+    }
+    program.parentVarBindings.push_back(std::move(binding));
+  }
+  debugAvatarSplitStage("bindings");
+
+  for (std::size_t literalIndex = 0;
+       literalIndex < mainParent->length();
+       ++literalIndex) {
+    const auto location = sourceLiteralClass.find(literalIndex);
+    if (location == sourceLiteralClass.end()) {
+      return false;
+    }
+    const auto& literalClass =
+      program.literalClasses[location->second.first];
+    MegalodonKernelSyntax::RenderedKernelAvatarSplitSourceNode node;
+    node.index = program.sourceNodes.size();
+    node.literal = literalIndex;
+    node.literalClass = location->second.first;
+    node.componentLiteral = location->second.second;
+    node.splitVar = literalClass.matchedSplitVar;
+    node.action = program.hasFocus
+        && literalClass.hasMatchedSplitVar
+        && literalClass.matchedSplitVar == program.focusSplitVar
+        && literalClass.positive
+      ? MegalodonKernelSyntax::RenderedKernelAvatarSplitSourceAction::Focus
+      : MegalodonKernelSyntax::RenderedKernelAvatarSplitSourceAction::Counterexample;
+    if (node.action
+          == MegalodonKernelSyntax::RenderedKernelAvatarSplitSourceAction::Counterexample
+        && !std::any_of(
+             program.cases.begin(), program.cases.end(),
+             [&](const auto& item) {
+               return item.splitVar == node.splitVar
+                 && item.positive == literalClass.positive;
+             })) {
+      return false;
+    }
+    program.sourceNodes.push_back(std::move(node));
+  }
+  debugAvatarSplitStage("ordinary_nodes");
+  if (!mainParent->noSplits()) {
+    std::size_t literalIndex = mainParent->length();
+    for (unsigned split : iterTraits(mainParent->splits()->iter())) {
+      std::string renderedLiteral;
+      std::string renderedFormula;
+      if (!certificateSplitLiteralSexpr(split, renderedLiteral)
+          || !literalFormula(renderedLiteral, renderedFormula)) {
+        return false;
+      }
+      const auto targetCase = std::find_if(
+        program.cases.begin(), program.cases.end(),
+        [&](const auto& item) {
+          return item.formula.sexpr == renderedFormula;
+        });
+      if (targetCase == program.cases.end()) {
+        debugAvatarSplitStage("previous_node_mismatch=" + renderedFormula);
+        return false;
+      }
+      MegalodonKernelSyntax::RenderedKernelAvatarSplitSourceNode node;
+      node.index = program.sourceNodes.size();
+      node.literal = literalIndex++;
+      node.action =
+        MegalodonKernelSyntax::RenderedKernelAvatarSplitSourceAction::PreviousSplit;
+      node.caseIndex = targetCase->index;
+      program.sourceNodes.push_back(std::move(node));
+    }
+  }
+  debugAvatarSplitStage("previous_nodes");
+  std::vector<std::string> sourceLiterals;
+  if (!appendCertificateClauseLiteralsSexpr(mainParent, sourceLiterals)
+      || program.sourceNodes.size() != sourceLiterals.size()) {
+    return false;
+  }
+  program.hasIvyProgram = true;
+
   if (std::getenv("MEGALODON_CERT_DEBUG")) {
     std::cerr << "megalodon native avatar_split u" << unit->number()
+              << (program.hasFocus ? " Ivy focus split_" : " Ivy terminal ")
+              << (program.hasFocus
+                    ? std::to_string(program.focusSplitVar)
+                    : std::string("contradiction"))
               << " canonical parents";
     for (const auto& parent : parents) {
       std::cerr << ' ' << parent.value;
     }
     std::cerr << std::endl;
   }
-  const auto step = MegalodonKernelBuilder::avatarSplitStep(
+  const auto step = MegalodonKernelBuilder::avatarSplitIvyStep(
     "u" + std::to_string(unit->number()),
     parents,
-    MegalodonKernelSyntax::clause(renderedClause));
+    MegalodonKernelSyntax::clause(renderedClause),
+    program);
   _certificateNativePrimitiveStepsByUnit[unit->number()] = {step};
   result = MegalodonKernelBuilder::avatarPrimitiveWithMetadata(step);
   return true;
