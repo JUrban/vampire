@@ -183,6 +183,10 @@ private:
   bool appendCertificateSplitLiteralsSexpr(Kernel::Clause* clause, std::vector<std::string>& literals);
   bool appendCertificateClauseLiteralsSexpr(Kernel::Clause* clause, std::vector<std::string>& literals);
   bool certificateClauseSexpr(Kernel::Clause* clause, std::string& result);
+  bool appendCertificatePrimitiveVariableContractsSexpr(
+    const std::string& stepId,
+    const std::vector<Kernel::Literal*>& literals,
+    std::vector<std::string>& metadata);
   bool certificateSubstitutionSexpr(const Kernel::Substitution& substitution, std::string& result);
   bool certificateSubstitutionSexprForClause(
     const Kernel::Substitution& substitution,

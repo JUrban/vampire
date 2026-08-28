@@ -728,6 +728,57 @@ bool MegalodonChecker::certificateClauseSexpr(Kernel::Clause* clause, std::strin
   return true;
 }
 
+bool MegalodonChecker::appendCertificatePrimitiveVariableContractsSexpr(
+  const std::string& stepId,
+  const std::vector<Kernel::Literal*>& literals,
+  std::vector<std::string>& metadata)
+{
+  Lib::DHMap<unsigned, Kernel::TermList> variableSorts;
+  for (Kernel::Literal* literal : literals) {
+    Kernel::SortHelper::collectVariableSorts(literal, variableSorts);
+  }
+
+  std::vector<std::pair<unsigned, Kernel::TermList>> producerSorts;
+  std::vector<std::pair<unsigned, std::string>> renderedSorts;
+  Lib::DHMap<unsigned, Kernel::TermList>::Iterator iterator(variableSorts);
+  while (iterator.hasNext()) {
+    unsigned variable;
+    Kernel::TermList sort;
+    iterator.next(variable, sort);
+    std::string renderedSort;
+    if (!sortToMegalodon(sort, renderedSort)) {
+      return false;
+    }
+    producerSorts.push_back({variable, sort});
+    renderedSorts.push_back(
+      {variable, variableName(variable) + ":" + renderedSort});
+  }
+  auto variableOrder = [](const auto& left, const auto& right) {
+    return left.first < right.first;
+  };
+  std::sort(producerSorts.begin(), producerSorts.end(), variableOrder);
+  std::sort(renderedSorts.begin(), renderedSorts.end(), variableOrder);
+  _certificateProducerFreeVariableSorts[stepId] = producerSorts;
+
+  auto appendRecord = [&](const char* tag) {
+    std::ostringstream record;
+    record << '(' << tag << ' ' << sexprQuote(stepId) << " (";
+    for (std::size_t index = 0; index < renderedSorts.size(); ++index) {
+      if (index != 0) {
+        record << ' ';
+      }
+      record << sexprQuote(renderedSorts[index].second);
+    }
+    record << "))";
+    metadata.push_back(record.str());
+  };
+  if (!renderedSorts.empty()) {
+    appendRecord("step_variable_sorts");
+  }
+  appendRecord("step_free_variable_sorts");
+  return true;
+}
+
 namespace {
 
 std::set<unsigned> certificateClauseVariables(Kernel::Clause* clause)
@@ -5353,6 +5404,17 @@ bool MegalodonChecker::certificateDefinitionRewriteStepsSexpr(
               MegalodonKernelSyntax::clause(resultClause));
           steps.push_back(paramodulatePrimitive.rendered);
           primitives.push_back(std::move(paramodulatePrimitive));
+          if (!isLast) {
+            std::vector<std::string> primitiveMetadata;
+            if (!appendCertificatePrimitiveVariableContractsSexpr(
+                  stepId, nextClause, primitiveMetadata)) {
+              return false;
+            }
+            steps.insert(
+              steps.end(),
+              primitiveMetadata.begin(),
+              primitiveMetadata.end());
+          }
 
           currentClause = nextClause;
           currentParentId = stepId;
@@ -5676,6 +5738,17 @@ bool MegalodonChecker::certificateDefinitionFoldingStepsSexpr(
         MegalodonKernelSyntax::clause(resultClause));
     steps.push_back(paramodulatePrimitive.rendered);
     primitives.push_back(std::move(paramodulatePrimitive));
+    if (!isLast) {
+      std::vector<std::string> primitiveMetadata;
+      if (!appendCertificatePrimitiveVariableContractsSexpr(
+            stepId, nextClause, primitiveMetadata)) {
+        return emitDefinitionRewriteChain();
+      }
+      steps.insert(
+        steps.end(),
+        primitiveMetadata.begin(),
+        primitiveMetadata.end());
+    }
 
     currentClause = nextClause;
     currentParentId = stepId;
