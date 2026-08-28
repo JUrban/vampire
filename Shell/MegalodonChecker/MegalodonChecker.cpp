@@ -3903,7 +3903,10 @@ bool MegalodonChecker::certificateFormulaTransport(
   const std::vector<std::pair<unsigned, Kernel::TermList>>& freeVariableMap,
   MegalodonKernelSyntax::RenderedKernelEnnfTrace& result,
   std::string& error,
-  bool preserveSourceNegativeEqualityOrientation)
+  bool preserveSourceNegativeEqualityOrientation,
+  const std::string* sourceProof,
+  std::string* targetProof,
+  const std::string& proofNamePrefix)
 {
   MegalodonProofExpander::FormulaTransportRequest request;
   request.source = source;
@@ -3976,7 +3979,325 @@ bool MegalodonChecker::certificateFormulaTransport(
     }
     return true;
   };
-  return render(program, result);
+  if (!render(program, result)) {
+    return false;
+  }
+  if ((sourceProof == nullptr) != (targetProof == nullptr)) {
+    error = "formula transport direct proof has only one endpoint";
+    return false;
+  }
+  if (sourceProof == nullptr) {
+    return true;
+  }
+
+  auto formulaTerm = [](const std::string& value) {
+    return "(formula " + value + ")";
+  };
+  auto rawTerm = [](const std::string& value) {
+    return "(term " + value + ")";
+  };
+  auto hypothesis = [&](const std::string& name) {
+    return "(hyp " + sexprQuote(name) + ")";
+  };
+  auto termApply = [](const std::string& proof, const std::string& term) {
+    return "(term_apply " + proof + " " + term + ")";
+  };
+  auto proofApply = [](const std::string& left, const std::string& right) {
+    return "(proof_apply " + left + " " + right + ")";
+  };
+  auto proofLambda = [&](const std::string& name,
+                         const std::string& proposition,
+                         const std::string& body) {
+    return "(proof_lambda " + sexprQuote(name) + " " + proposition
+      + " " + body + ")";
+  };
+  auto termLambda = [&](const std::string& name,
+                        const std::string& type,
+                        const std::string& body) {
+    return "(term_lambda " + sexprQuote(name) + " " + type
+      + " " + body + ")";
+  };
+  auto implication = [](const std::string& left, const std::string& right) {
+    return "(IMP " + left + " " + right + ")";
+  };
+  std::size_t proofFresh = 0;
+  auto fresh = [&](const char* stem) {
+    return proofNamePrefix + stem
+      + std::to_string(proofFresh++);
+  };
+
+  auto positiveEqualitySymmetry =
+    [&](const std::string& proof,
+        const std::string& sort,
+        const std::string& left,
+        const std::string& right) {
+      const std::string predicate = fresh("relation_");
+      const std::string first = fresh("first_");
+      const std::string second = fresh("second_");
+      const std::string premise = fresh("premise_");
+      const std::string predicateTerm =
+        "(TMH " + sexprQuote(predicate) + ")";
+      const std::string firstTerm = "(TMH " + sexprQuote(first) + ")";
+      const std::string secondTerm = "(TMH " + sexprQuote(second) + ")";
+      const std::string relationType =
+        "(AR " + sort + " (AR " + sort + " (PROP)))";
+      const std::string relation =
+        "(LAMV " + sexprQuote(first) + " " + sort
+        + " (LAMV " + sexprQuote(second) + " " + sort
+        + " (AP (AP " + predicateTerm + " " + secondTerm + ") "
+        + firstTerm + ")))";
+      const std::string swappedPremise =
+        "(AP (AP " + predicateTerm + " " + right + ") " + left + ")";
+      return termLambda(
+        predicate,
+        relationType,
+        proofLambda(
+          premise,
+          formulaTerm(swappedPremise),
+          proofApply(
+            termApply(proof, rawTerm(relation)),
+            hypothesis(premise))));
+    };
+
+  std::function<bool(
+    const MegalodonProofExpander::FormulaTransportNode&,
+    const MegalodonKernelSyntax::RenderedKernelEnnfTrace&,
+    const std::string&,
+    std::string&)> buildProof;
+  buildProof = [&](const auto& node,
+                   const auto& rendered,
+                   const std::string& input,
+                   std::string& output) {
+    if (node.children.size() != rendered.children.size()) {
+      error = "formula transport direct proof child count changed";
+      return false;
+    }
+    if (node.primitive == "transport_identity") {
+      output = input;
+      return true;
+    }
+    if (node.primitive == "transport_equality_symmetry_positive"
+        || node.primitive == "transport_equality_symmetry_negative") {
+      if (node.source->connective() != Kernel::LITERAL
+          || node.target->connective() != Kernel::LITERAL
+          || !node.source->literal()->isEquality()
+          || !node.target->literal()->isEquality()) {
+        error = "formula transport equality proof has non-equality endpoints";
+        return false;
+      }
+      const auto substitutions = variableSubstitutions(
+        node.primitive == "transport_equality_symmetry_positive"
+          ? node.sourceVariableMap
+          : node.targetVariableMap);
+      Kernel::Literal* literal =
+        node.primitive == "transport_equality_symmetry_positive"
+          ? node.source->literal()
+          : node.target->literal();
+      const bool preserveOrientation =
+        node.primitive == "transport_equality_symmetry_positive"
+          ? node.preserveSourceNegativeEqualityOrientation
+          : node.preserveTargetNegativeEqualityOrientation;
+      std::string sort;
+      std::string left;
+      std::string right;
+      if (!certificateTypeSexpr(
+            Kernel::SortHelper::getEqualityArgumentSort(literal), sort)
+          || !certificateTermSexpr(
+            *literal->nthArgument(0), left, {}, substitutions,
+            preserveOrientation)
+          || !certificateTermSexpr(
+            *literal->nthArgument(1), right, {}, substitutions,
+            preserveOrientation)) {
+        error = "cannot render formula transport equality proof";
+        return false;
+      }
+      if (node.primitive == "transport_equality_symmetry_positive") {
+        output = positiveEqualitySymmetry(input, sort, left, right);
+        return true;
+      }
+      static const std::string equalityHash =
+        "5a6af35fb6d6bea477dd0f822b8e01ca0d57cc50dfd41744307bc94597fdaa4a";
+      const std::string targetAtom =
+        "(AP (AP (TPAP (TMH " + sexprQuote(equalityHash) + ") "
+        + sort + ") " + left + ") " + right + ")";
+      const std::string equalityHypothesis = fresh("target_equality_");
+      output = proofLambda(
+        equalityHypothesis,
+        formulaTerm(targetAtom),
+        proofApply(
+          input,
+          positiveEqualitySymmetry(
+            hypothesis(equalityHypothesis), sort, left, right)));
+      return true;
+    }
+    if (node.primitive == "transport_forall_map") {
+      if (rendered.children.size() != 1
+          || rendered.children[0].context.size()
+             != rendered.context.size() + 1) {
+        error = "formula transport forall proof has no exact binder context";
+        return false;
+      }
+      const auto& binder = rendered.children[0].context.back();
+      std::string child;
+      if (!buildProof(
+            node.children[0], rendered.children[0],
+            termApply(
+              input,
+              rawTerm("(TMH " + sexprQuote(binder.variable) + ")")),
+            child)) {
+        return false;
+      }
+      output = termLambda(binder.variable, binder.type.sexpr, child);
+      return true;
+    }
+    if (node.primitive == "transport_exists_map") {
+      if (rendered.children.size() != 1
+          || rendered.children[0].context.size()
+             != rendered.context.size() + 1) {
+        error = "formula transport exists proof has no exact binder context";
+        return false;
+      }
+      const auto& childNode = rendered.children[0];
+      const auto& binder = childNode.context.back();
+      const std::string resultName = fresh("exists_result_");
+      const std::string handlerName = fresh("exists_handler_");
+      const std::string sourceName = fresh("exists_source_");
+      const std::string resultTerm =
+        "(TMH " + sexprQuote(resultName) + ")";
+      const std::string binderTerm =
+        "(TMH " + sexprQuote(binder.variable) + ")";
+      std::string transformed;
+      if (!buildProof(
+            node.children[0], childNode,
+            hypothesis(sourceName), transformed)) {
+        return false;
+      }
+      const std::string sourceHandler = termLambda(
+        binder.variable,
+        binder.type.sexpr,
+        proofLambda(
+          sourceName,
+          formulaTerm(childNode.sourceFormula.sexpr),
+          proofApply(
+            termApply(hypothesis(handlerName), rawTerm(binderTerm)),
+            transformed)));
+      const std::string targetHandler =
+        "(ALLV " + sexprQuote(binder.variable) + " " + binder.type.sexpr
+        + " " + implication(childNode.resultFormula.sexpr, resultTerm) + ")";
+      output = termLambda(
+        resultName,
+        "(PROP)",
+        proofLambda(
+          handlerName,
+          formulaTerm(targetHandler),
+          proofApply(
+            termApply(input, formulaTerm(resultTerm)),
+            sourceHandler)));
+      return true;
+    }
+    if (node.primitive == "transport_imp_map") {
+      if (rendered.children.size() != 2) {
+        error = "formula transport implication proof has the wrong arity";
+        return false;
+      }
+      const std::string argumentName = fresh("imp_argument_");
+      std::string sourceArgument;
+      std::string targetResult;
+      if (!buildProof(
+            node.children[0], rendered.children[0],
+            hypothesis(argumentName), sourceArgument)
+          || !buildProof(
+            node.children[1], rendered.children[1],
+            proofApply(input, sourceArgument), targetResult)) {
+        return false;
+      }
+      output = proofLambda(
+        argumentName,
+        formulaTerm(rendered.children[0].sourceFormula.sexpr),
+        targetResult);
+      return true;
+    }
+    if (node.primitive == "transport_and_map"
+        || node.primitive == "transport_or_map") {
+      if (rendered.children.size() != 2) {
+        error = "formula transport junction proof has the wrong arity";
+        return false;
+      }
+      const std::string resultName = fresh("junction_result_");
+      const std::string resultTerm =
+        "(TMH " + sexprQuote(resultName) + ")";
+      const std::string leftName = fresh("junction_left_");
+      const std::string rightName = fresh("junction_right_");
+      std::string transformedLeft;
+      std::string transformedRight;
+      if (!buildProof(
+            node.children[0], rendered.children[0],
+            hypothesis(leftName), transformedLeft)
+          || !buildProof(
+            node.children[1], rendered.children[1],
+            hypothesis(rightName), transformedRight)) {
+        return false;
+      }
+      if (node.primitive == "transport_and_map") {
+        const std::string handlerName = fresh("and_handler_");
+        const std::string sourceHandler = proofLambda(
+          leftName,
+          formulaTerm(rendered.children[0].sourceFormula.sexpr),
+          proofLambda(
+            rightName,
+            formulaTerm(rendered.children[1].sourceFormula.sexpr),
+            proofApply(
+              proofApply(hypothesis(handlerName), transformedLeft),
+              transformedRight)));
+        const std::string targetHandler = implication(
+          rendered.children[0].resultFormula.sexpr,
+          implication(
+            rendered.children[1].resultFormula.sexpr,
+            resultTerm));
+        output = termLambda(
+          resultName,
+          "(PROP)",
+          proofLambda(
+            handlerName,
+            formulaTerm(targetHandler),
+            proofApply(
+              termApply(input, formulaTerm(resultTerm)),
+              sourceHandler)));
+        return true;
+      }
+      const std::string leftHandler = fresh("or_left_handler_");
+      const std::string rightHandler = fresh("or_right_handler_");
+      const std::string leftBranch = proofLambda(
+        leftName,
+        formulaTerm(rendered.children[0].sourceFormula.sexpr),
+        proofApply(hypothesis(leftHandler), transformedLeft));
+      const std::string rightBranch = proofLambda(
+        rightName,
+        formulaTerm(rendered.children[1].sourceFormula.sexpr),
+        proofApply(hypothesis(rightHandler), transformedRight));
+      output = termLambda(
+        resultName,
+        "(PROP)",
+        proofLambda(
+          leftHandler,
+          formulaTerm(implication(
+            rendered.children[0].resultFormula.sexpr, resultTerm)),
+          proofLambda(
+            rightHandler,
+            formulaTerm(implication(
+              rendered.children[1].resultFormula.sexpr, resultTerm)),
+            proofApply(
+              proofApply(
+                termApply(input, formulaTerm(resultTerm)),
+                leftBranch),
+              rightBranch))));
+      return true;
+    }
+    error = "formula transport direct proof has unsupported primitive "
+      + node.primitive;
+    return false;
+  };
+  return buildProof(program, result, *sourceProof, *targetProof);
 }
 
 bool MegalodonChecker::certificateRectifyFormulaStepSexpr(
@@ -5000,6 +5321,53 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
       return true;
     };
 
+  auto ivyFormula = [](const std::string& value) {
+    return "(formula " + value + ")";
+  };
+  auto ivyHypothesis = [&](const std::string& name) {
+    return "(hyp " + sexprQuote(name) + ")";
+  };
+  auto ivyKnown = [&](const std::string& name) {
+    return "(known " + sexprQuote(name) + ")";
+  };
+  auto ivyTermApply = [](const std::string& proof, const std::string& term) {
+    return "(term_apply " + proof + " " + term + ")";
+  };
+  auto ivyProofApply = [](const std::string& left, const std::string& right) {
+    return "(proof_apply " + left + " " + right + ")";
+  };
+  auto ivyProofLambda = [&](const std::string& name,
+                            const std::string& proposition,
+                            const std::string& body) {
+    return "(proof_lambda " + sexprQuote(name) + " " + proposition
+      + " " + body + ")";
+  };
+  auto ivyTermLambda = [&](const std::string& name,
+                           const std::string& type,
+                           const std::string& body) {
+    return "(term_lambda " + sexprQuote(name) + " " + type
+      + " " + body + ")";
+  };
+  std::size_t skolemProofFresh = 0;
+  auto ivyFresh = [&](const char* stem) {
+    return std::string("ivy_skolem_u") + std::to_string(unit->number())
+      + "_" + stem + std::to_string(skolemProofFresh++);
+  };
+  auto choiceForType = [](const std::string& type) {
+    if (type == "(SET)") return std::string("vampire_exists_set_choice");
+    if (type == "(PROP)") return std::string("vampire_exists_prop_choice");
+    if (type == "(AR (SET) (PROP))") {
+      return std::string("vampire_exists_set_prop_choice");
+    }
+    if (type == "(AR (SET) (SET))") {
+      return std::string("vampire_exists_set_set_choice");
+    }
+    if (type == "(AR (SET) (AR (SET) (PROP)))") {
+      return std::string("vampire_exists_set_set_prop_choice");
+    }
+    return std::string();
+  };
+
   auto buildChoiceProgram =
     [&](const InferenceRecorder::SkolemInferenceExtra::Witness& recorded,
         MegalodonKernelSyntax::RenderedKernelScopedSkolemWitness& rendered) {
@@ -5345,14 +5713,49 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
         recorded.replacedVariable,
         recorded.witnessTerm,
       }};
+      std::string predicateBody;
+      if (!certificateFormulaTermSexpr(
+            recorded.stageSourceFormula->qarg(), predicateBody)) {
+        return false;
+      }
+      for (std::size_t index = remainingVariables.size(); index-- > 0;) {
+        std::string type;
+        if (!certificateTypeSexpr(remainingVariables[index].second, type)) {
+          return false;
+        }
+        predicateBody =
+          "(AP (TMH \"vampire_exists_prop\") (VLAMV "
+          + sexprQuote(variableName(remainingVariables[index].first))
+          + " " + type + " " + predicateBody + "))";
+      }
+      std::string replacedType;
+      if (!certificateTypeSexpr(sourceVariables.front().second, replacedType)) {
+        return false;
+      }
+      const std::string choiceTheorem = choiceForType(replacedType);
+      if (choiceTheorem.empty()) {
+        return false;
+      }
+      const std::string predicate =
+        "(LAMV " + sexprQuote(variableName(sourceVariables.front().first))
+        + " " + replacedType + " " + predicateBody + ")";
+      const std::string sourceHypothesis = ivyFresh("stage_source_");
+      const std::string choiceProof = ivyProofApply(
+        ivyTermApply(ivyKnown(choiceTheorem), ivyFormula(predicate)),
+        ivyHypothesis(sourceHypothesis));
+      std::string normalizedProof;
       std::string transportError;
+      const std::string transportProofPrefix = ivyFresh("transport_") + "_";
       if (!certificateFormulaTransport(
             rawChoiceFormula,
             recorded.stageTargetFormula,
             choiceSubstitution,
             rendered.transportProgram,
             transportError,
-            true)) {
+            true,
+            &choiceProof,
+            &normalizedProof,
+            transportProofPrefix)) {
         std::cerr << "megalodon Skolem choice transport expansion failed for u"
                   << unit->number() << ": " << transportError << std::endl;
         return false;
@@ -5373,6 +5776,10 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
         MegalodonKernelSyntax::formula(std::move(rawChoiceTarget));
       rendered.stageTarget =
         MegalodonKernelSyntax::formula(std::move(stageTarget));
+      rendered.producerTransform = ivyProofLambda(
+        sourceHypothesis,
+        ivyFormula(rendered.stageSource.sexpr),
+        normalizedProof);
       return true;
     };
 
@@ -5507,9 +5914,89 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
       new Kernel::FormulaList(left, new Kernel::FormulaList(right))));
   };
 
+  auto ivyImplication = [](const std::string& left,
+                           const std::string& right) {
+    return "(IMP " + left + " " + right + ")";
+  };
+  auto ivyRawTerm = [](const std::string& value) {
+    return "(term " + value + ")";
+  };
+  auto ivyAndMap = [&](const std::string& sourceLeft,
+                       const std::string& sourceRight,
+                       const std::string& targetLeft,
+                       const std::string& targetRight,
+                       const std::string& input,
+                       const std::string& leftName,
+                       const std::string& leftProof,
+                       const std::string& rightName,
+                       const std::string& rightProof) {
+    const std::string resultName = ivyFresh("and_result_");
+    const std::string handlerName = ivyFresh("and_handler_");
+    const std::string resultTerm =
+      "(TMH " + sexprQuote(resultName) + ")";
+    const std::string sourceHandler = ivyProofLambda(
+      leftName,
+      ivyFormula(sourceLeft),
+      ivyProofLambda(
+        rightName,
+        ivyFormula(sourceRight),
+        ivyProofApply(
+          ivyProofApply(ivyHypothesis(handlerName), leftProof),
+          rightProof)));
+    return ivyTermLambda(
+      resultName,
+      "(PROP)",
+      ivyProofLambda(
+        handlerName,
+        ivyFormula(ivyImplication(
+          targetLeft, ivyImplication(targetRight, resultTerm))),
+        ivyProofApply(
+          ivyTermApply(input, ivyFormula(resultTerm)),
+          sourceHandler)));
+  };
+  auto ivyOrMap = [&](const std::string& sourceLeft,
+                      const std::string& sourceRight,
+                      const std::string& targetLeft,
+                      const std::string& targetRight,
+                      const std::string& input,
+                      const std::string& leftName,
+                      const std::string& leftProof,
+                      const std::string& rightName,
+                      const std::string& rightProof) {
+    const std::string resultName = ivyFresh("or_result_");
+    const std::string leftHandler = ivyFresh("or_left_handler_");
+    const std::string rightHandler = ivyFresh("or_right_handler_");
+    const std::string resultTerm =
+      "(TMH " + sexprQuote(resultName) + ")";
+    const std::string leftBranch = ivyProofLambda(
+      leftName,
+      ivyFormula(sourceLeft),
+      ivyProofApply(ivyHypothesis(leftHandler), leftProof));
+    const std::string rightBranch = ivyProofLambda(
+      rightName,
+      ivyFormula(sourceRight),
+      ivyProofApply(ivyHypothesis(rightHandler), rightProof));
+    return ivyTermLambda(
+      resultName,
+      "(PROP)",
+      ivyProofLambda(
+        leftHandler,
+        ivyFormula(ivyImplication(targetLeft, resultTerm)),
+        ivyProofLambda(
+          rightHandler,
+          ivyFormula(ivyImplication(targetRight, resultTerm)),
+          ivyProofApply(
+            ivyProofApply(
+              ivyTermApply(input, ivyFormula(resultTerm)),
+              leftBranch),
+            rightBranch))));
+  };
+
   std::vector<MegalodonKernelSyntax::RenderedKernelScopedSkolemBranch> branches;
   Kernel::Formula* currentContextFormula =
     normalizeContextShape(recording->sourceFormula);
+  std::string producerProof =
+    "(parent " + sexprQuote("u" + std::to_string(parent->number())) + ")";
   for (std::size_t branchIndex = 0;
        branchIndex < recording->branches.size();
        ++branchIndex) {
@@ -5625,6 +6112,125 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
       }
       branch.contextStages.push_back(std::move(stage));
     }
+
+    std::function<bool(
+      std::size_t,
+      Kernel::Formula*,
+      Kernel::Formula*,
+      const std::string&,
+      std::string&)> liftProof;
+    liftProof = [&](std::size_t frameIndex,
+                    Kernel::Formula* source,
+                    Kernel::Formula* target,
+                    const std::string& input,
+                    std::string& output) {
+      if (frameIndex == contextFrames.size()) {
+        std::string renderedSource;
+        std::string renderedTarget;
+        if (!certificateFormulaTermSexpr(source, renderedSource)
+            || !certificateFormulaTermSexpr(target, renderedTarget)
+            || renderedSource != branch.source.sexpr
+            || renderedTarget != branch.target.sexpr) {
+          return false;
+        }
+        output = input;
+        std::string current = renderedSource;
+        for (const auto& witness : branch.witnesses) {
+          if (witness.producerTransform.empty()
+              || current != witness.stageSource.sexpr) {
+            return false;
+          }
+          output = ivyProofApply(witness.producerTransform, output);
+          current = witness.stageTarget.sexpr;
+        }
+        return current == renderedTarget;
+      }
+
+      const SkolemContextFrame& frame = contextFrames[frameIndex];
+      if (frame.quantified) {
+        if (source->connective() != Kernel::FORALL
+            || target->connective() != Kernel::FORALL) {
+          return false;
+        }
+        std::string type;
+        if (!certificateTypeSexpr(frame.variableSort, type)) {
+          return false;
+        }
+        const std::string binder = variableName(frame.variable);
+        std::string body;
+        if (!liftProof(
+              frameIndex + 1,
+              source->qarg(),
+              target->qarg(),
+              ivyTermApply(
+                input,
+                ivyRawTerm("(TMH " + sexprQuote(binder) + ")")),
+              body)) {
+          return false;
+        }
+        output = ivyTermLambda(binder, type, body);
+        return true;
+      }
+
+      auto children = [](Kernel::Formula* formula) {
+        std::vector<Kernel::Formula*> result;
+        auto iterator = formula->args()->iter();
+        while (iterator.hasNext()) {
+          result.push_back(iterator.next());
+        }
+        return result;
+      };
+      if (source->connective() != frame.connective
+          || target->connective() != frame.connective) {
+        return false;
+      }
+      const auto sourceChildren = children(source);
+      const auto targetChildren = children(target);
+      if (sourceChildren.size() != 2 || targetChildren.size() != 2) {
+        return false;
+      }
+      std::string sourceLeft;
+      std::string sourceRight;
+      std::string targetLeft;
+      std::string targetRight;
+      if (!certificateFormulaTermSexpr(sourceChildren[0], sourceLeft)
+          || !certificateFormulaTermSexpr(sourceChildren[1], sourceRight)
+          || !certificateFormulaTermSexpr(targetChildren[0], targetLeft)
+          || !certificateFormulaTermSexpr(targetChildren[1], targetRight)) {
+        return false;
+      }
+      const std::string leftName = ivyFresh("context_left_");
+      const std::string rightName = ivyFresh("context_right_");
+      std::string leftProof = ivyHypothesis(leftName);
+      std::string rightProof = ivyHypothesis(rightName);
+      if (!liftProof(
+            frameIndex + 1,
+            sourceChildren[frame.selectedLeft ? 0 : 1],
+            targetChildren[frame.selectedLeft ? 0 : 1],
+            ivyHypothesis(frame.selectedLeft ? leftName : rightName),
+            frame.selectedLeft ? leftProof : rightProof)) {
+        return false;
+      }
+      output = frame.connective == Kernel::AND
+        ? ivyAndMap(
+            sourceLeft, sourceRight, targetLeft, targetRight,
+            input, leftName, leftProof, rightName, rightProof)
+        : ivyOrMap(
+            sourceLeft, sourceRight, targetLeft, targetRight,
+            input, leftName, leftProof, rightName, rightProof);
+      return true;
+    };
+
+    std::string branchProof;
+    if (!liftProof(
+          0,
+          currentContextFormula,
+          contextTarget,
+          producerProof,
+          branchProof)) {
+      return false;
+    }
+    producerProof = std::move(branchProof);
     currentContextFormula = contextTarget;
     branches.push_back(std::move(branch));
   }
@@ -5641,7 +6247,11 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
     MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number())),
     MegalodonKernelSyntax::formula(sourceFormula),
     branches,
-    MegalodonKernelSyntax::formula(resultFormula));
+    MegalodonKernelSyntax::formula(resultFormula),
+    producerProof);
+  if (built.id.empty() || built.rendered.empty()) {
+    return false;
+  }
   for (std::size_t branchIndex = 0;
        branchIndex < recording->branches.size();
        ++branchIndex) {

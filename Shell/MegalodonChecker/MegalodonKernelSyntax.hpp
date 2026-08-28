@@ -580,6 +580,9 @@ struct RenderedKernelScopedSkolemWitness {
   bool hasTransportProgram = false;
   RenderedKernelEnnfTrace transportProgram;
   RenderedKernelFormula stageTarget;
+  // Producer-internal proof transformer. The top-level skolem_formula Ivy
+  // object inlines this term; the typed witness trace remains diagnostic.
+  std::string producerTransform;
 };
 
 struct RenderedKernelScopedSkolemContextStage {

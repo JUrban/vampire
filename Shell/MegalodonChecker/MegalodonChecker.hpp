@@ -263,7 +263,10 @@ private:
     const std::vector<std::pair<unsigned, Kernel::TermList>>& freeVariableMap,
     MegalodonKernelSyntax::RenderedKernelEnnfTrace& result,
     std::string& error,
-    bool preserveSourceNegativeEqualityOrientation = false);
+    bool preserveSourceNegativeEqualityOrientation = false,
+    const std::string* sourceProof = nullptr,
+    std::string* targetProof = nullptr,
+    const std::string& proofNamePrefix = "ivy_transport_");
   bool certificateRectifyFormulaStepSexpr(
     Kernel::Unit* unit,
     std::string& result,

@@ -195,7 +195,8 @@ MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
   const MegalodonKernelSyntax::RenderedKernelFormula& source,
   const std::vector<MegalodonKernelSyntax::RenderedKernelScopedSkolemBranch>& branches,
-  const MegalodonKernelSyntax::RenderedKernelFormula& result);
+  const MegalodonKernelSyntax::RenderedKernelFormula& result,
+  const std::string& producerProof);
 
 MegalodonKernelSyntax::PrimitiveStep cnfLiteralStep(
   const std::string& id,

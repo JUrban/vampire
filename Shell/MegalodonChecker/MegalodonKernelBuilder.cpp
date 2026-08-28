@@ -1577,7 +1577,8 @@ MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
   const MegalodonKernelSyntax::RenderedKernelFormula& source,
   const std::vector<MegalodonKernelSyntax::RenderedKernelScopedSkolemBranch>& branches,
-  const MegalodonKernelSyntax::RenderedKernelFormula& result)
+  const MegalodonKernelSyntax::RenderedKernelFormula& result,
+  const std::string& producerProof)
 {
   MegalodonKernelSyntax::PrimitiveStep step;
   step.rule = "skolem_formula";
@@ -1739,11 +1740,16 @@ MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
       ") (target (formula " + branch.target.sexpr + ")))";
   }
   renderedBranches += ")";
+  if (producerProof.empty()) {
+    return MegalodonKernelSyntax::PrimitiveStep();
+  }
   step.rendered =
     "(skolem_formula " + quote(id)
     + " (parent " + quote(parent.value) + ")"
     + " (source (formula " + source.sexpr + ")) "
     + renderedBranches
+    + " (producer_proof (program \"ivy_nd_v1\" (proof "
+    + producerProof + ")))"
     + " (result (formula " + result.sexpr + "))"
     + " (builder \"typed_v5\"))";
   return step;
