@@ -1546,5 +1546,1023 @@ bool expandGoalReplay(
   return true;
 }
 
+bool expandAvatarContradictionProof(
+  const AvatarContradictionProofRequest& request,
+  std::string& result,
+  std::string& error)
+{
+  auto quote = [](const std::string& value) {
+    std::string rendered = "\"";
+    for (char ch : value) {
+      switch (ch) {
+        case '\\': rendered += "\\\\"; break;
+        case '"': rendered += "\\\""; break;
+        case '\n': rendered += "\\n"; break;
+        case '\r': rendered += "\\r"; break;
+        case '\t': rendered += "\\t"; break;
+        default: rendered += ch; break;
+      }
+    }
+    return rendered + '"';
+  };
+  auto literalFormula = [](const std::string& literal, std::string& formula) {
+    if (literal.size() < 7 || literal.back() != ')') {
+      return false;
+    }
+    const bool positive = literal.compare(0, 5, "(pos ") == 0;
+    const bool negative = literal.compare(0, 5, "(neg ") == 0;
+    if (!positive && !negative) {
+      return false;
+    }
+    const std::string atom = literal.substr(5, literal.size() - 6);
+    formula = positive
+      ? atom
+      : "(IMP " + atom + " (TMH \"vampire_false\"))";
+    return true;
+  };
+  auto formulaOr = [](const std::string& left, const std::string& right) {
+    return "(AP (AP (TMH \"vampire_or\") " + left + ") " + right + ")";
+  };
+  if (request.parentId.empty()
+      || request.sourceLiterals.empty()
+      || request.resultLiterals.size() != 1) {
+    error = "AVATAR contradiction direct proof has an empty parent/source or non-unit result";
+    return false;
+  }
+
+  std::vector<std::string> literalFormulas(request.sourceLiterals.size());
+  for (std::size_t index = 0; index < request.sourceLiterals.size(); ++index) {
+    if (!literalFormula(request.sourceLiterals[index], literalFormulas[index])) {
+      error = "AVATAR contradiction direct proof has a malformed source literal";
+      return false;
+    }
+  }
+  std::string targetFormula;
+  for (std::size_t offset = 0; offset < literalFormulas.size(); ++offset) {
+    const std::size_t index = literalFormulas.size() - offset - 1;
+    targetFormula = targetFormula.empty()
+      ? literalFormulas[index]
+      : formulaOr(targetFormula, literalFormulas[index]);
+  }
+  if (request.resultLiterals.front() != "(pos " + targetFormula + ")") {
+    error = "AVATAR contradiction direct proof result is not the producer literal fold";
+    return false;
+  }
+
+  auto formula = [](const std::string& value) {
+    return "(formula " + value + ")";
+  };
+  auto literal = [](const std::string& value) {
+    return "(literal " + value + ")";
+  };
+  auto clause = [](const std::vector<std::string>& literals) {
+    std::string value = "(clause (clause";
+    for (const std::string& literal : literals) {
+      value += " " + literal;
+    }
+    return value + "))";
+  };
+  auto hypothesis = [&](const std::string& name) {
+    return "(hyp " + quote(name) + ")";
+  };
+  auto termApply = [](const std::string& proof, const std::string& term) {
+    return "(term_apply " + proof + " " + term + ")";
+  };
+  auto proofApply = [](const std::string& left, const std::string& right) {
+    return "(proof_apply " + left + " " + right + ")";
+  };
+  auto proofLambda = [&](const std::string& name,
+                         const std::string& proposition,
+                         const std::string& body) {
+    return "(proof_lambda " + quote(name) + " " + proposition
+      + " " + body + ")";
+  };
+  auto termLambda = [&](const std::string& name,
+                        const std::string& type,
+                        const std::string& body) {
+    return "(term_lambda " + quote(name) + " " + type
+      + " " + body + ")";
+  };
+  auto formulaImp = [](const std::string& left, const std::string& right) {
+    return "(IMP " + left + " " + right + ")";
+  };
+
+  std::size_t fresh = 0;
+  auto freshName = [&](const char* prefix) {
+    return std::string("ivy_") + prefix + std::to_string(fresh++);
+  };
+  auto orIntroduction = [&](const std::string& left,
+                            const std::string& right,
+                            const std::string& proof,
+                            bool injectLeft) {
+    const std::string resultName = freshName("q");
+    const std::string leftName = freshName("left");
+    const std::string rightName = freshName("right");
+    const std::string resultVariable = "(TMH " + quote(resultName) + ")";
+    return termLambda(
+      resultName,
+      "(PROP)",
+      proofLambda(
+        leftName,
+        formula(formulaImp(left, resultVariable)),
+        proofLambda(
+          rightName,
+          formula(formulaImp(right, resultVariable)),
+          proofApply(hypothesis(injectLeft ? leftName : rightName), proof))));
+  };
+
+  std::vector<std::size_t> literalOrder;
+  literalOrder.reserve(literalFormulas.size());
+  for (std::size_t offset = 0; offset < literalFormulas.size(); ++offset) {
+    literalOrder.push_back(literalFormulas.size() - offset - 1);
+  }
+  std::function<std::string(
+    const std::vector<std::size_t>&, std::size_t, const std::string&)>
+    inject;
+  inject = [&](const std::vector<std::size_t>& order,
+               std::size_t sourceIndex,
+               const std::string& proof) -> std::string {
+    if (order.size() == 1) {
+      return order.front() == sourceIndex ? proof : std::string();
+    }
+    std::vector<std::size_t> prefix(order.begin(), order.end() - 1);
+    const std::size_t last = order.back();
+    std::string left = literalFormulas[prefix.front()];
+    for (std::size_t index = 1; index < prefix.size(); ++index) {
+      left = formulaOr(left, literalFormulas[prefix[index]]);
+    }
+    if (last == sourceIndex) {
+      return orIntroduction(left, literalFormulas[last], proof, false);
+    }
+    const std::string inner = inject(prefix, sourceIndex, proof);
+    return inner.empty()
+      ? std::string()
+      : orIntroduction(left, literalFormulas[last], inner, true);
+  };
+
+  std::function<std::string(std::size_t, const std::string&)> consume;
+  consume = [&](std::size_t sourceIndex,
+                const std::string& sourceProof) -> std::string {
+    if (sourceIndex + 1 == request.sourceLiterals.size()) {
+      return inject(literalOrder, sourceIndex, sourceProof);
+    }
+    const std::string leftName = freshName("source");
+    const std::string restName = freshName("rest");
+    const std::vector<std::string> rest(
+      request.sourceLiterals.begin() + sourceIndex + 1,
+      request.sourceLiterals.end());
+    const std::string leftBranch = proofLambda(
+      leftName,
+      literal(request.sourceLiterals[sourceIndex]),
+      inject(literalOrder, sourceIndex, hypothesis(leftName)));
+    const std::string rightBranch = proofLambda(
+      restName,
+      clause(rest),
+      consume(sourceIndex + 1, hypothesis(restName)));
+    return proofApply(
+      proofApply(
+        termApply(sourceProof, formula(targetFormula)),
+        leftBranch),
+      rightBranch);
+  };
+
+  std::string parentProof = "(parent " + quote(request.parentId) + ")";
+  for (const std::string& argument : request.parentArguments) {
+    parentProof = termApply(
+      parentProof,
+      "(term (TMH " + quote(argument) + "))");
+  }
+  result = consume(0, parentProof);
+  if (result.empty()) {
+    error = "AVATAR contradiction direct proof could not inject a source literal";
+    return false;
+  }
+  return true;
+}
+
+bool expandAvatarSplitProof(
+  const MegalodonKernelSyntax::RenderedKernelAvatarSplitStep& request,
+  std::string& result,
+  std::string& error)
+{
+  using MegalodonKernelSyntax::RenderedKernelAvatarComponentParent;
+  using MegalodonKernelSyntax::RenderedKernelAvatarCounterexampleProgram;
+  using MegalodonKernelSyntax::RenderedKernelAvatarLiteralClass;
+  using MegalodonKernelSyntax::RenderedKernelAvatarSplitCase;
+  using MegalodonKernelSyntax::RenderedKernelAvatarSplitSourceAction;
+  using MegalodonKernelSyntax::RenderedKernelAvatarSplitSourceNode;
+  using MegalodonKernelSyntax::RenderedKernelTypedVariable;
+
+  auto quote = [](const std::string& value) {
+    std::string rendered = "\"";
+    for (char ch : value) {
+      switch (ch) {
+        case '\\': rendered += "\\\\"; break;
+        case '"': rendered += "\\\""; break;
+        case '\n': rendered += "\\n"; break;
+        case '\r': rendered += "\\r"; break;
+        case '\t': rendered += "\\t"; break;
+        default: rendered += ch; break;
+      }
+    }
+    return rendered + '"';
+  };
+  auto literalFormula = [](const std::string& literal, std::string& formula) {
+    if (literal.size() < 7 || literal.back() != ')') {
+      return false;
+    }
+    const bool positive = literal.compare(0, 5, "(pos ") == 0;
+    const bool negative = literal.compare(0, 5, "(neg ") == 0;
+    if (!positive && !negative) {
+      return false;
+    }
+    const std::string atom = literal.substr(5, literal.size() - 6);
+    formula = positive
+      ? atom
+      : "(IMP " + atom + " (TMH \"vampire_false\"))";
+    return true;
+  };
+  auto formulaOr = [](const std::string& left, const std::string& right) {
+    return "(AP (AP (TMH \"vampire_or\") " + left + ") " + right + ")";
+  };
+  auto formulaImp = [](const std::string& left, const std::string& right) {
+    return "(IMP " + left + " " + right + ")";
+  };
+  auto formula = [](const std::string& value) {
+    return "(formula " + value + ")";
+  };
+  auto literalTerm = [](const std::string& value) {
+    return "(literal " + value + ")";
+  };
+  auto clauseData = [](const std::vector<std::string>& literals) {
+    std::string value = "(clause";
+    for (const std::string& literal : literals) {
+      value += " " + literal;
+    }
+    return value + ")";
+  };
+  auto clauseTerm = [&](const std::vector<std::string>& literals) {
+    return "(clause " + clauseData(literals) + ")";
+  };
+  auto hypothesis = [&](const std::string& name) {
+    return "(hyp " + quote(name) + ")";
+  };
+  auto parent = [&](const std::string& name) {
+    return "(parent " + quote(name) + ")";
+  };
+  auto definition = [&](const std::string& name) {
+    return "(definition " + quote(name) + ")";
+  };
+  auto known = [&](const std::string& name) {
+    return "(known " + quote(name) + ")";
+  };
+  auto termApply = [](const std::string& proof, const std::string& term) {
+    return "(term_apply " + proof + " " + term + ")";
+  };
+  auto proofApply = [](const std::string& left, const std::string& right) {
+    return "(proof_apply " + left + " " + right + ")";
+  };
+  auto proofLambda = [&](const std::string& name,
+                         const std::string& proposition,
+                         const std::string& body) {
+    return "(proof_lambda " + quote(name) + " " + proposition
+      + " " + body + ")";
+  };
+  auto termLambda = [&](const std::string& name,
+                        const std::string& type,
+                        const std::string& body) {
+    return "(term_lambda " + quote(name) + " " + type
+      + " " + body + ")";
+  };
+  auto substitutedTerm = [&](const std::vector<std::pair<std::string, std::string>>& bindings,
+                             const std::string& body) {
+    if (bindings.empty()) {
+      return body;
+    }
+    std::string value = "(substitute (subst";
+    for (const auto& [name, replacement] : bindings) {
+      value += " (" + quote(name) + " " + replacement + ")";
+    }
+    return value + ") " + body + ")";
+  };
+  auto clauseFormula = [&](const std::vector<std::string>& literals,
+                           std::string& value) {
+    if (literals.empty()) {
+      value = "(TMH \"vampire_false\")";
+      return true;
+    }
+    std::vector<std::string> formulas(literals.size());
+    for (std::size_t index = 0; index < literals.size(); ++index) {
+      if (!literalFormula(literals[index], formulas[index])) {
+        return false;
+      }
+    }
+    value = formulas.back();
+    for (std::size_t index = formulas.size() - 1; index > 0; --index) {
+      value = formulaOr(formulas[index - 1], value);
+    }
+    return true;
+  };
+  auto quantifiedClauseFormula = [&](const RenderedKernelAvatarComponentParent& component,
+                                     std::string& value) {
+    if (!clauseFormula(component.literals, value)) {
+      return false;
+    }
+    for (std::size_t index = component.variables.size(); index > 0; --index) {
+      const RenderedKernelTypedVariable& variable = component.variables[index - 1];
+      value = "(ALLV " + quote(variable.variable) + " "
+        + variable.type.sexpr + " " + value + ")";
+    }
+    return true;
+  };
+
+  if (!request.hasIvyProgram || request.sourceUnit.value.empty()
+      || request.sourceLiterals.empty() || !request.hasResultFormula
+      || request.cases.empty()) {
+    error = "AVATAR split direct proof lacks producer source/target data";
+    return false;
+  }
+
+  std::size_t fresh = 0;
+  auto freshName = [&](const char* prefix) {
+    return std::string("ivy_") + prefix + std::to_string(fresh++);
+  };
+  auto orIntroduction = [&](const std::string& left,
+                            const std::string& right,
+                            const std::string& proof,
+                            bool injectLeft) {
+    const std::string q = freshName("q");
+    const std::string leftHyp = freshName("left");
+    const std::string rightHyp = freshName("right");
+    const std::string qTerm = "(TMH " + quote(q) + ")";
+    return termLambda(
+      q, "(PROP)",
+      proofLambda(
+        leftHyp, formula(formulaImp(left, qTerm)),
+        proofLambda(
+          rightHyp, formula(formulaImp(right, qTerm)),
+          proofApply(hypothesis(injectLeft ? leftHyp : rightHyp), proof))));
+  };
+  auto injectClause = [&](const std::vector<std::string>& literals,
+                          std::size_t literalIndex,
+                          const std::vector<std::pair<std::string, std::string>>& bindings,
+                          const std::string& proof) {
+    std::function<std::string(std::size_t, std::size_t, const std::string&)> inject;
+    inject = [&](std::size_t begin,
+                 std::size_t target,
+                 const std::string& inner) -> std::string {
+      if (begin >= literals.size() || target >= literals.size()) {
+        return std::string();
+      }
+      if (begin + 1 == literals.size()) {
+        return begin == target ? inner : std::string();
+      }
+      std::string left;
+      std::string right;
+      if (!literalFormula(literals[begin], left)) {
+        return std::string();
+      }
+      const std::vector<std::string> rest(
+        literals.begin() + begin + 1, literals.end());
+      if (!clauseFormula(rest, right)) {
+        return std::string();
+      }
+      const std::string substitutedLeft =
+        substitutedTerm(bindings, formula(left));
+      const std::string substitutedRight =
+        substitutedTerm(bindings, formula(right));
+      if (begin == target) {
+        const std::string q = freshName("q");
+        const std::string leftHyp = freshName("left");
+        const std::string rightHyp = freshName("right");
+        const std::string qTerm = "(TMH " + quote(q) + ")";
+        return termLambda(
+          q, "(PROP)",
+          proofLambda(
+            leftHyp,
+            substitutedTerm(bindings, formula(formulaImp(left, qTerm))),
+            proofLambda(
+              rightHyp,
+              substitutedTerm(bindings, formula(formulaImp(right, qTerm))),
+              proofApply(hypothesis(leftHyp), inner))));
+      }
+      const std::string nested = inject(begin + 1, target, inner);
+      if (nested.empty()) {
+        return std::string();
+      }
+      const std::string q = freshName("q");
+      const std::string leftHyp = freshName("left");
+      const std::string rightHyp = freshName("right");
+      const std::string qTerm = "(TMH " + quote(q) + ")";
+      return termLambda(
+        q, "(PROP)",
+        proofLambda(
+          leftHyp,
+          substitutedTerm(bindings, formula(formulaImp(left, qTerm))),
+          proofLambda(
+            rightHyp,
+            substitutedTerm(bindings, formula(formulaImp(right, qTerm))),
+            proofApply(hypothesis(rightHyp), nested))));
+    };
+    return inject(0, literalIndex, proof);
+  };
+
+  std::function<bool(const std::string&, std::string&)> targetAt;
+  targetAt = [&](const std::string& path, std::string& target) {
+    const auto leaf = std::find_if(
+      request.cases.begin(), request.cases.end(),
+      [&](const RenderedKernelAvatarSplitCase& item) {
+        return item.path == path;
+      });
+    if (leaf != request.cases.end()) {
+      target = leaf->formula.sexpr;
+      return true;
+    }
+    const bool hasDescendant = std::any_of(
+      request.cases.begin(), request.cases.end(),
+      [&](const RenderedKernelAvatarSplitCase& item) {
+        return item.path.size() > path.size()
+          && item.path.compare(0, path.size(), path) == 0;
+      });
+    if (!hasDescendant) {
+      return false;
+    }
+    std::string left;
+    std::string right;
+    if (!targetAt(path + "L", left) || !targetAt(path + "R", right)) {
+      return false;
+    }
+    target = formulaOr(left, right);
+    return true;
+  };
+  std::string targetFormula;
+  if (!targetAt("", targetFormula)
+      || targetFormula != request.resultFormula.sexpr) {
+    error = "AVATAR split direct proof target paths do not rebuild its result";
+    return false;
+  }
+  auto injectTarget = [&](const RenderedKernelAvatarSplitCase& item,
+                          const std::string& proof) {
+    std::function<std::string(const std::string&, const std::string&)> inject;
+    inject = [&](const std::string& prefix,
+                 const std::string& inner) -> std::string {
+      if (prefix == item.path) {
+        return inner;
+      }
+      std::string left;
+      std::string right;
+      if (!targetAt(prefix + "L", left) || !targetAt(prefix + "R", right)
+          || prefix.size() >= item.path.size()) {
+        return std::string();
+      }
+      if (item.path[prefix.size()] == 'L') {
+        return orIntroduction(left, right, inject(prefix + "L", inner), true);
+      }
+      if (item.path[prefix.size()] == 'R') {
+        return orIntroduction(left, right, inject(prefix + "R", inner), false);
+      }
+      return std::string();
+    };
+    return inject("", proof);
+  };
+
+  auto xmProof = [&](const std::string& proposition) {
+    const std::string q = freshName("xm_q");
+    const std::string left = freshName("xm_left");
+    const std::string right = freshName("xm_right");
+    const std::string notQ = freshName("xm_not_q");
+    const std::string prop = freshName("xm_prop");
+    const std::string qTerm = "(TMH " + quote(q) + ")";
+    const std::string notProp = formulaImp(
+      proposition, "(TMH \"vampire_false\")");
+    const std::string qFromNotProp = proofApply(
+      hypothesis(right),
+      proofLambda(
+        prop, formula(proposition),
+        proofApply(
+          hypothesis(notQ),
+          proofApply(hypothesis(left), hypothesis(prop)))));
+    return termLambda(
+      q, "(PROP)",
+      proofLambda(
+        left, formula(formulaImp(proposition, qTerm)),
+        proofLambda(
+          right, formula(formulaImp(notProp, qTerm)),
+          proofApply(
+            termApply(
+              known("e4b03c310442ae760be9945e176494db51515dfb952ee60fbd42e05527752af0"),
+              formula(qTerm)),
+            proofLambda(
+              notQ,
+              formula(formulaImp(qTerm, "(TMH \"vampire_false\")")),
+              proofApply(hypothesis(notQ), qFromNotProp))))));
+  };
+
+  auto componentByIndex = [&](std::size_t index)
+      -> const RenderedKernelAvatarComponentParent* {
+    const auto found = std::find_if(
+      request.componentParents.begin(), request.componentParents.end(),
+      [&](const RenderedKernelAvatarComponentParent& component) {
+        return component.refIndex == index;
+      });
+    return found == request.componentParents.end() ? nullptr : &*found;
+  };
+  auto componentBySplit = [&](unsigned split)
+      -> const RenderedKernelAvatarComponentParent* {
+    const auto found = std::find_if(
+      request.componentParents.begin(), request.componentParents.end(),
+      [&](const RenderedKernelAvatarComponentParent& component) {
+        return component.split.variable == split;
+      });
+    return found == request.componentParents.end() ? nullptr : &*found;
+  };
+  auto classByIndex = [&](std::size_t index)
+      -> const RenderedKernelAvatarLiteralClass* {
+    const auto found = std::find_if(
+      request.literalClasses.begin(), request.literalClasses.end(),
+      [&](const RenderedKernelAvatarLiteralClass& item) {
+        return item.index == index;
+      });
+    return found == request.literalClasses.end() ? nullptr : &*found;
+  };
+  auto counterexampleBySplit = [&](unsigned split)
+      -> const RenderedKernelAvatarCounterexampleProgram* {
+    const auto found = std::find_if(
+      request.counterexamplePrograms.begin(), request.counterexamplePrograms.end(),
+      [&](const RenderedKernelAvatarCounterexampleProgram& item) {
+        return item.splitVar == split;
+      });
+    return found == request.counterexamplePrograms.end() ? nullptr : &*found;
+  };
+  auto counterexampleByIndex = [&](std::size_t index)
+      -> const RenderedKernelAvatarCounterexampleProgram* {
+    const auto found = std::find_if(
+      request.counterexamplePrograms.begin(), request.counterexamplePrograms.end(),
+      [&](const RenderedKernelAvatarCounterexampleProgram& item) {
+        return item.index == index;
+      });
+    return found == request.counterexamplePrograms.end() ? nullptr : &*found;
+  };
+  auto sourceNode = [&](std::size_t index)
+      -> const RenderedKernelAvatarSplitSourceNode* {
+    const auto found = std::find_if(
+      request.sourceNodes.begin(), request.sourceNodes.end(),
+      [&](const RenderedKernelAvatarSplitSourceNode& item) {
+        return item.literal == index;
+      });
+    return found == request.sourceNodes.end() ? nullptr : &*found;
+  };
+  auto typeKnown = [](const std::string& type, bool choice) {
+    if (type == "(SET)") {
+      return choice ? std::string("vampire_exists_set_choice")
+                    : std::string("vampire_not_forall_exists_set");
+    }
+    if (type == "(PROP)") {
+      return choice ? std::string("vampire_exists_prop_choice")
+                    : std::string("vampire_not_forall_exists_prop");
+    }
+    if (type == "(AR (SET) (PROP))") {
+      return choice ? std::string("vampire_exists_set_prop_choice")
+                    : std::string("vampire_not_forall_exists_set_prop");
+    }
+    if (type == "(AR (SET) (SET))") {
+      return choice ? std::string("vampire_exists_set_set_choice")
+                    : std::string("vampire_not_forall_exists_set_set");
+    }
+    if (type == "(AR (SET) (AR (SET) (PROP)))") {
+      return choice ? std::string("vampire_exists_set_set_prop_choice")
+                    : std::string("vampire_not_forall_exists_set_set_prop");
+    }
+    return std::string();
+  };
+
+  const RenderedKernelAvatarComponentParent* focusComponent = request.hasFocus
+    ? componentByIndex(request.focusComponentParent)
+    : nullptr;
+  if (request.hasFocus && focusComponent == nullptr) {
+    error = "AVATAR split direct proof has no declared focus component";
+    return false;
+  }
+  const std::vector<RenderedKernelTypedVariable> focusVariables =
+    focusComponent == nullptr
+      ? std::vector<RenderedKernelTypedVariable>()
+      : focusComponent->variables;
+  auto isFocusVariable = [&](const RenderedKernelTypedVariable& variable) {
+    return std::any_of(
+      focusVariables.begin(), focusVariables.end(),
+      [&](const RenderedKernelTypedVariable& focus) {
+        return focus.variable == variable.variable
+          && focus.type.sexpr == variable.type.sexpr;
+      });
+  };
+  auto componentArguments = [&](const RenderedKernelAvatarComponentParent& component,
+                                std::vector<std::string>& arguments) {
+    const RenderedKernelAvatarCounterexampleProgram* counterexample =
+      counterexampleBySplit(component.split.variable);
+    for (const RenderedKernelTypedVariable& variable : component.variables) {
+      if (isFocusVariable(variable)) {
+        arguments.push_back("(TMH " + quote(variable.variable) + ")");
+        continue;
+      }
+      if (counterexample == nullptr) {
+        return false;
+      }
+      const auto stage = std::find_if(
+        counterexample->stages.begin(), counterexample->stages.end(),
+        [&](const auto& item) {
+          return item.variable == variable.variable
+            && item.type.sexpr == variable.type.sexpr;
+        });
+      if (stage == counterexample->stages.end()
+          || stage->directWitness.sexpr.empty()) {
+        return false;
+      }
+      arguments.push_back(stage->directWitness.sexpr);
+    }
+    return true;
+  };
+  auto componentBindings = [&](const RenderedKernelAvatarComponentParent& component,
+                               const std::vector<std::string>& arguments) {
+    std::vector<std::pair<std::string, std::string>> bindings;
+    for (std::size_t index = 0; index < component.variables.size(); ++index) {
+      bindings.push_back({component.variables[index].variable, arguments[index]});
+    }
+    return bindings;
+  };
+
+  struct Relation {
+    std::string splitToComponent;
+    std::string componentToSplit;
+    std::string componentFormula;
+  };
+  auto relation = [&](const RenderedKernelAvatarComponentParent& component,
+                      Relation& relationResult) {
+    if (!quantifiedClauseFormula(component, relationResult.componentFormula)) {
+      return false;
+    }
+    const std::string splitFormula =
+      "(TMH " + quote("split_" + std::to_string(component.split.variable)) + ")";
+    const std::string left = formulaImp(splitFormula, relationResult.componentFormula);
+    const std::string right = formulaImp(relationResult.componentFormula, splitFormula);
+    const std::string leftName = freshName("definition_left");
+    const std::string rightName = freshName("definition_right");
+    const std::string theorem = definition(component.unit.value);
+    relationResult.splitToComponent = proofApply(
+      termApply(theorem, formula(left)),
+      proofLambda(
+        leftName, formula(left),
+        proofLambda(rightName, formula(right), hypothesis(leftName))));
+    const std::string leftName2 = freshName("definition_left");
+    const std::string rightName2 = freshName("definition_right");
+    relationResult.componentToSplit = proofApply(
+      termApply(theorem, formula(right)),
+      proofLambda(
+        leftName2, formula(left),
+        proofLambda(rightName2, formula(right), hypothesis(rightName2))));
+    return true;
+  };
+
+  auto negativeComponent = [&](const RenderedKernelAvatarComponentParent& component,
+                               const Relation& componentRelation,
+                               const std::string& notSplit,
+                               std::string& proof) {
+    const std::string componentHyp = freshName("closed_component");
+    proof = proofLambda(
+      componentHyp,
+      formula(componentRelation.componentFormula),
+      proofApply(
+        notSplit,
+        proofApply(componentRelation.componentToSplit, hypothesis(componentHyp))));
+    const RenderedKernelAvatarCounterexampleProgram* counterexample =
+      counterexampleBySplit(component.split.variable);
+    if (component.variables.empty()) {
+      return true;
+    }
+    if (counterexample == nullptr
+        || counterexample->stages.size() != component.variables.size()) {
+      return false;
+    }
+    for (std::size_t index = 0; index < component.variables.size(); ++index) {
+      const RenderedKernelTypedVariable& variable = component.variables[index];
+      const auto& stage = counterexample->stages[index];
+      if (stage.variable != variable.variable
+          || stage.type.sexpr != variable.type.sexpr
+          || stage.openBody.sexpr.empty()
+          || stage.positivePredicate.sexpr.empty()
+          || stage.negativePredicate.sexpr.empty()) {
+        return false;
+      }
+      const std::string notForall = typeKnown(variable.type.sexpr, false);
+      const std::string choice = typeKnown(variable.type.sexpr, true);
+      if (notForall.empty() || choice.empty()) {
+        return false;
+      }
+      const std::string pointwiseHyp = freshName("pointwise");
+      const std::string pointwise = termLambda(
+        variable.variable,
+        variable.type.sexpr,
+        proofLambda(
+          pointwiseHyp,
+          formula(formulaImp(
+            stage.openBody.sexpr, "(TMH \"vampire_false\")")),
+          hypothesis(pointwiseHyp)));
+      const std::string existsNegative = proofApply(
+        proofApply(
+          termApply(
+            termApply(
+              known(notForall), formula(stage.positivePredicate.sexpr)),
+            formula(stage.negativePredicate.sexpr)),
+          pointwise),
+        proof);
+      proof = proofApply(
+        termApply(known(choice), formula(stage.negativePredicate.sexpr)),
+        existsNegative);
+    }
+    return true;
+  };
+
+  std::vector<std::pair<std::string, std::string>> sourceBindings;
+  std::vector<std::string> sourceArguments;
+  for (const RenderedKernelTypedVariable& variable : request.sourceVariables) {
+    const auto binding = std::find_if(
+      request.parentVarBindings.begin(), request.parentVarBindings.end(),
+      [&](const auto& item) {
+        return item.parentVar == variable.variable
+          && item.hasType && item.type.sexpr == variable.type.sexpr;
+      });
+    if (binding == request.parentVarBindings.end()
+        || !binding->hasComponentVar) {
+      error = "AVATAR split direct proof lacks an exact source-variable binding";
+      return false;
+    }
+    std::string argument;
+    const RenderedKernelTypedVariable candidate{
+      binding->componentVar, variable.type};
+    if (isFocusVariable(candidate)) {
+      argument = "(TMH " + quote(binding->componentVar) + ")";
+    } else if (binding->hasCounterexampleProgram) {
+      const RenderedKernelAvatarCounterexampleProgram* counterexample =
+        counterexampleByIndex(binding->counterexampleProgram);
+      if (counterexample == nullptr
+          || binding->counterexampleStage >= counterexample->stages.size()) {
+        error = "AVATAR split direct proof source witness index is unavailable";
+        return false;
+      }
+      argument = counterexample->stages[binding->counterexampleStage]
+        .directWitness.sexpr;
+    }
+    if (argument.empty()) {
+      error = "AVATAR split direct proof source binding has no producer witness";
+      return false;
+    }
+    sourceArguments.push_back(argument);
+    sourceBindings.push_back({variable.variable, argument});
+  }
+
+  std::string sourceProof = parent(request.sourceUnit.value);
+  for (const std::string& argument : sourceArguments) {
+    sourceProof = termApply(sourceProof, formula(argument));
+  }
+
+  struct Assignment {
+    bool positive = false;
+    std::string proof;
+  };
+  struct LiteralResult {
+    bool contradiction = false;
+    std::string proof;
+  };
+  using Assignments = std::map<unsigned, Assignment>;
+
+  std::function<std::string(std::size_t, const Assignments&)> proveCases;
+  auto proveTerminal = [&](const Assignments& assignments, std::string& terminal) {
+    std::vector<std::string> terminalLiterals;
+    std::vector<std::pair<std::string, std::string>> terminalBindings;
+    std::string terminalTerm = formula(targetFormula);
+    if (focusComponent != nullptr) {
+      std::vector<std::string> arguments;
+      if (!componentArguments(*focusComponent, arguments)) {
+        return false;
+      }
+      terminalLiterals = focusComponent->literals;
+      terminalBindings = componentBindings(*focusComponent, arguments);
+      terminalTerm = substitutedTerm(
+        terminalBindings, clauseTerm(terminalLiterals));
+    }
+    auto falseElim = [&](const std::string& contradiction) {
+      return termApply(contradiction, terminalTerm);
+    };
+    auto assignment = [&](unsigned split) -> const Assignment* {
+      const auto found = assignments.find(split);
+      return found == assignments.end() ? nullptr : &found->second;
+    };
+    auto proveLiteral = [&](std::size_t literalIndex,
+                            const std::string& literalProof,
+                            LiteralResult& literalResult) {
+      const RenderedKernelAvatarSplitSourceNode* node = sourceNode(literalIndex);
+      if (node == nullptr || literalIndex >= request.sourceLiterals.size()) {
+        return false;
+      }
+      if (node->action == RenderedKernelAvatarSplitSourceAction::Focus) {
+        if (focusComponent == nullptr) {
+          return false;
+        }
+        literalResult.proof = injectClause(
+          terminalLiterals, node->componentLiteral, terminalBindings, literalProof);
+        return !literalResult.proof.empty();
+      }
+      if (node->action == RenderedKernelAvatarSplitSourceAction::PreviousSplit) {
+        if (node->caseIndex >= request.cases.size()) {
+          return false;
+        }
+        const RenderedKernelAvatarSplitCase& item = request.cases[node->caseIndex];
+        const Assignment* assigned = assignment(item.splitVar);
+        if (assigned == nullptr) {
+          return false;
+        }
+        if (item.positive && !assigned->positive) {
+          literalResult.contradiction = true;
+          literalResult.proof = proofApply(assigned->proof, literalProof);
+          return true;
+        }
+        if (!item.positive && assigned->positive) {
+          literalResult.contradiction = true;
+          literalResult.proof = proofApply(literalProof, assigned->proof);
+          return true;
+        }
+        return false;
+      }
+
+      const RenderedKernelAvatarLiteralClass* literalClass =
+        classByIndex(node->literalClass);
+      const RenderedKernelAvatarComponentParent* component =
+        componentBySplit(node->splitVar);
+      const Assignment* assigned = assignment(node->splitVar);
+      if (literalClass == nullptr || component == nullptr || assigned == nullptr) {
+        return false;
+      }
+      std::vector<std::string> arguments;
+      if (!componentArguments(*component, arguments)) {
+        return false;
+      }
+      const auto bindings = componentBindings(*component, arguments);
+      Relation componentRelation;
+      if (!relation(*component, componentRelation)) {
+        return false;
+      }
+      if (literalClass->positive && !assigned->positive) {
+        std::string clauseProof = injectClause(
+          component->literals, node->componentLiteral, bindings, literalProof);
+        std::string notComponent;
+        if (clauseProof.empty()
+            || !negativeComponent(
+                 *component, componentRelation, assigned->proof, notComponent)) {
+          return false;
+        }
+        literalResult.contradiction = true;
+        literalResult.proof = proofApply(notComponent, clauseProof);
+        return true;
+      }
+      if (!literalClass->positive && assigned->positive) {
+        if (node->componentLiteral >= component->literals.size()) {
+          return false;
+        }
+        std::string componentProof = proofApply(
+          componentRelation.splitToComponent, assigned->proof);
+        for (const std::string& argument : arguments) {
+          componentProof = termApply(componentProof, formula(argument));
+        }
+        const std::string& componentLiteral =
+          component->literals[node->componentLiteral];
+        const bool componentPositive =
+          componentLiteral.compare(0, 5, "(pos ") == 0;
+        const bool componentNegative =
+          componentLiteral.compare(0, 5, "(neg ") == 0;
+        if (!componentPositive && !componentNegative) {
+          return false;
+        }
+        literalResult.contradiction = true;
+        literalResult.proof = componentPositive
+          ? proofApply(literalProof, componentProof)
+          : proofApply(componentProof, literalProof);
+        return true;
+      }
+      return false;
+    };
+
+    std::function<std::string(std::size_t, const std::string&)> project;
+    project = [&](std::size_t literalIndex,
+                  const std::string& proof) -> std::string {
+      if (literalIndex >= request.sourceLiterals.size()) {
+        return std::string();
+      }
+      if (literalIndex + 1 == request.sourceLiterals.size()) {
+        LiteralResult literalResult;
+        if (!proveLiteral(literalIndex, proof, literalResult)) {
+          return std::string();
+        }
+        return literalResult.contradiction
+          ? falseElim(literalResult.proof)
+          : literalResult.proof;
+      }
+      const std::string leftName = freshName("source");
+      const std::string restName = freshName("rest");
+      LiteralResult leftResult;
+      if (!proveLiteral(literalIndex, hypothesis(leftName), leftResult)) {
+        return std::string();
+      }
+      const std::vector<std::string> rest(
+        request.sourceLiterals.begin() + literalIndex + 1,
+        request.sourceLiterals.end());
+      const std::string rightBody = project(literalIndex + 1, hypothesis(restName));
+      if (rightBody.empty()) {
+        return std::string();
+      }
+      const std::string leftBody = leftResult.contradiction
+        ? falseElim(leftResult.proof)
+        : leftResult.proof;
+      return proofApply(
+        proofApply(
+          termApply(proof, terminalTerm),
+          proofLambda(
+            leftName,
+            substitutedTerm(
+              sourceBindings, literalTerm(request.sourceLiterals[literalIndex])),
+            leftBody)),
+        proofLambda(
+          restName,
+          substitutedTerm(sourceBindings, clauseTerm(rest)),
+          rightBody));
+    };
+
+    terminal = project(0, sourceProof);
+    if (terminal.empty()) {
+      return false;
+    }
+    if (focusComponent == nullptr) {
+      return true;
+    }
+    for (std::size_t index = focusVariables.size(); index > 0; --index) {
+      const RenderedKernelTypedVariable& variable = focusVariables[index - 1];
+      terminal = termLambda(variable.variable, variable.type.sexpr, terminal);
+    }
+    Relation focusRelation;
+    if (!relation(*focusComponent, focusRelation)) {
+      return false;
+    }
+    const Assignment* focusAssignment = assignment(request.focusSplitVar);
+    if (focusAssignment == nullptr || focusAssignment->positive) {
+      return false;
+    }
+    const std::string splitProof = proofApply(
+      focusRelation.componentToSplit, terminal);
+    terminal = termApply(
+      proofApply(focusAssignment->proof, splitProof),
+      formula(targetFormula));
+    return true;
+  };
+
+  proveCases = [&](std::size_t caseIndex,
+                   const Assignments& assignments) -> std::string {
+    if (caseIndex == request.cases.size()) {
+      std::string terminal;
+      return proveTerminal(assignments, terminal) ? terminal : std::string();
+    }
+    const RenderedKernelAvatarSplitCase& item = request.cases[caseIndex];
+    const std::string splitFormula =
+      "(TMH " + quote("split_" + std::to_string(item.splitVar)) + ")";
+    const std::string trueName = freshName("case_true");
+    const std::string falseName = freshName("case_false");
+    Assignments trueAssignments = assignments;
+    trueAssignments[item.splitVar] = {true, hypothesis(trueName)};
+    Assignments falseAssignments = assignments;
+    falseAssignments[item.splitVar] = {false, hypothesis(falseName)};
+    const std::string trueBody = item.positive
+      ? injectTarget(item, hypothesis(trueName))
+      : proveCases(caseIndex + 1, trueAssignments);
+    const std::string falseBody = item.positive
+      ? proveCases(caseIndex + 1, falseAssignments)
+      : injectTarget(item, hypothesis(falseName));
+    if (trueBody.empty() || falseBody.empty()) {
+      return std::string();
+    }
+    return proofApply(
+      proofApply(
+        termApply(xmProof(splitFormula), formula(targetFormula)),
+        proofLambda(trueName, formula(splitFormula), trueBody)),
+      proofLambda(
+        falseName,
+        formula(formulaImp(splitFormula, "(TMH \"vampire_false\")")),
+        falseBody));
+  };
+
+  result = proveCases(0, Assignments());
+  if (result.empty()) {
+    error = "AVATAR split producer could not expand its explicit case program";
+    return false;
+  }
+  return true;
+}
+
 }
 }

@@ -166,6 +166,13 @@ struct GoalReplayStep {
   MegalodonKernelSyntax::RenderedKernelFormula formula;
 };
 
+struct AvatarContradictionProofRequest {
+  std::string parentId;
+  std::vector<std::string> parentArguments;
+  std::vector<std::string> sourceLiterals;
+  std::vector<std::string> resultLiterals;
+};
+
 bool expandGroundProof(
   const std::vector<Step>& steps,
   const std::string& finalStep,
@@ -189,6 +196,16 @@ bool expandGoalReplay(
   const std::vector<GoalReplayStep>& steps,
   const std::string& finalStep,
   MegalodonKernelSyntax::RenderedKernelGoalReplay& result,
+  std::string& error);
+
+bool expandAvatarContradictionProof(
+  const AvatarContradictionProofRequest& request,
+  std::string& result,
+  std::string& error);
+
+bool expandAvatarSplitProof(
+  const MegalodonKernelSyntax::RenderedKernelAvatarSplitStep& request,
+  std::string& result,
   std::string& error);
 
 }

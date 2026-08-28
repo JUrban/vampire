@@ -264,7 +264,8 @@ MegalodonKernelSyntax::PrimitiveStep avatarContradictionIvyStep(
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
   const MegalodonKernelSyntax::RenderedKernelClause& result,
   const std::vector<std::string>& sourceLiterals,
-  const std::vector<std::string>& resultLiterals);
+  const std::vector<std::string>& resultLiterals,
+  const std::vector<std::string>& parentArguments);
 
 bool collectAvatarSatProof(
   SAT::SATClause* root,

@@ -1784,6 +1784,30 @@ bool MegalodonChecker::certificateAvatarSplitStepSexpr(Kernel::Unit* unit, std::
       }
       componentLiterals.push_back(std::move(renderedLiteral));
     }
+    parent.literals = componentLiterals;
+    Lib::DHMap<unsigned, Kernel::TermList> componentSorts;
+    Kernel::SortHelper::collectVariableSorts(
+      splitExtra->component, componentSorts);
+    std::vector<std::pair<unsigned, Kernel::TermList>> componentVariables;
+    Lib::DHMap<unsigned, Kernel::TermList>::Iterator componentSortIterator(
+      componentSorts);
+    while (componentSortIterator.hasNext()) {
+      unsigned variable;
+      Kernel::TermList sort;
+      componentSortIterator.next(variable, sort);
+      componentVariables.push_back({variable, sort});
+    }
+    std::sort(componentVariables.begin(), componentVariables.end());
+    for (const auto& [variable, sort] : componentVariables) {
+      std::string type;
+      if (!certificateTypeSexpr(sort, type)) {
+        return false;
+      }
+      MegalodonKernelSyntax::RenderedKernelTypedVariable rendered;
+      rendered.variable = variableName(variable);
+      rendered.type = MegalodonKernelSyntax::type(type);
+      parent.variables.push_back(std::move(rendered));
+    }
     const std::string componentClause =
       certificateClauseSexprFromRenderedLiterals(componentLiterals);
     parent.hasClauseSexpr = true;
@@ -2102,6 +2126,21 @@ bool MegalodonChecker::certificateAvatarSplitStepSexpr(Kernel::Unit* unit, std::
       stage.predicate = MegalodonKernelSyntax::formula(predicate);
       stage.witness = MegalodonKernelSyntax::term(witness);
       stage.target = MegalodonKernelSyntax::formula(target);
+      const std::string positivePredicate =
+        "(LAMV " + sexprQuote(variable) + " " + binderTypes[binder]
+        + " " + targetOpen + ")";
+      const std::string negativePredicate =
+        "(LAMV " + sexprQuote(variable) + " " + binderTypes[binder]
+        + " (IMP " + targetOpen + " (TMH \"vampire_false\")))";
+      stage.openBody = MegalodonKernelSyntax::formula(targetOpen);
+      stage.positivePredicate =
+        MegalodonKernelSyntax::term(positivePredicate);
+      stage.negativePredicate =
+        MegalodonKernelSyntax::term(negativePredicate);
+      stage.directWitness = MegalodonKernelSyntax::term(
+        "(AP (TMH "
+        + sexprQuote(choiceOperatorForType(binderTypes[binder]))
+        + ") " + negativePredicate + ")");
       counterexample.stages.push_back(std::move(stage));
       index.stageByVariable[binders[binder].first] = binder;
       current = target;
@@ -2132,6 +2171,10 @@ bool MegalodonChecker::certificateAvatarSplitStepSexpr(Kernel::Unit* unit, std::
     if (!certificateTypeSexpr(sort, type)) {
       return false;
     }
+    MegalodonKernelSyntax::RenderedKernelTypedVariable sourceVariable;
+    sourceVariable.variable = variableName(variable);
+    sourceVariable.type = MegalodonKernelSyntax::type(type);
+    program.sourceVariables.push_back(std::move(sourceVariable));
     MegalodonKernelSyntax::RenderedKernelAvatarParentVarBinding binding;
     binding.index = program.parentVarBindings.size();
     binding.parentVar = variableName(variable);
@@ -2224,6 +2267,7 @@ bool MegalodonChecker::certificateAvatarSplitStepSexpr(Kernel::Unit* unit, std::
       || program.sourceNodes.size() != sourceLiterals.size()) {
     return false;
   }
+  program.sourceLiterals = std::move(sourceLiterals);
   program.hasIvyProgram = true;
 
   if (std::getenv("MEGALODON_CERT_DEBUG")) {
@@ -2287,12 +2331,95 @@ bool MegalodonChecker::certificateAvatarContradictionStepSexpr(Kernel::Unit* uni
           parentUnits[0]->asClause(), sourceLiterals)) {
       return false;
     }
-    step = MegalodonKernelBuilder::avatarContradictionIvyStep(
-      "u" + std::to_string(unit->number()),
-      parents[0],
-      MegalodonKernelSyntax::clause(renderedClause),
-      sourceLiterals,
-      renderedResultLiterals);
+    std::vector<MegalodonKernelSyntax::RenderedKernelSatLiteral>
+      contradictionOriginLiterals;
+    for (auto literal = sourceLiterals.rbegin();
+         literal != sourceLiterals.rend();
+         ++literal) {
+      const bool positive = literal->compare(0, 17, "(pos (TMH \"split_") == 0;
+      const bool negative = literal->compare(0, 17, "(neg (TMH \"split_") == 0;
+      if (!positive && !negative) {
+        contradictionOriginLiterals.clear();
+        break;
+      }
+      const std::size_t begin = 17;
+      const std::size_t end = literal->find('"', begin);
+      if (end == std::string::npos || end == begin) {
+        contradictionOriginLiterals.clear();
+        break;
+      }
+      unsigned variable = 0;
+      try {
+        variable = static_cast<unsigned>(
+          std::stoul(literal->substr(begin, end - begin)));
+      } catch (const std::exception&) {
+        contradictionOriginLiterals.clear();
+        break;
+      }
+      MegalodonKernelSyntax::RenderedKernelSatLiteral rendered;
+      rendered.variable = variable;
+      rendered.positive = positive;
+      contradictionOriginLiterals.push_back(rendered);
+    }
+    if (contradictionOriginLiterals.size() == sourceLiterals.size()) {
+      _certificateAvatarSatOriginLiteralsByUnit[unit->number()] =
+        std::move(contradictionOriginLiterals);
+    }
+    auto freeVariableSorts = [](Kernel::Unit* source) {
+      Lib::DHMap<unsigned, Kernel::TermList> collected;
+      Kernel::SortHelper::collectVariableSorts(source, collected);
+      std::set<unsigned> freeVariables;
+      if (source->isClause()) {
+        for (Kernel::Literal* literal : source->asClause()->iterLits()) {
+          Kernel::FormulaVarIterator variables(
+            static_cast<const Kernel::Term*>(literal));
+          while (variables.hasNext()) {
+            freeVariables.insert(variables.next());
+          }
+        }
+      } else {
+        Kernel::FormulaVarIterator variables(source->getFormula());
+        while (variables.hasNext()) {
+          freeVariables.insert(variables.next());
+        }
+      }
+      std::vector<std::pair<unsigned, Kernel::TermList>> result;
+      Lib::DHMap<unsigned, Kernel::TermList>::Iterator iterator(collected);
+      while (iterator.hasNext()) {
+        unsigned variable;
+        Kernel::TermList sort;
+        iterator.next(variable, sort);
+        if (freeVariables.find(variable) != freeVariables.end()) {
+          result.push_back({variable, sort});
+        }
+      }
+      std::sort(
+        result.begin(), result.end(),
+        [](const auto& left, const auto& right) {
+          return left.first < right.first;
+        });
+      return result;
+    };
+    const auto parentVariables = freeVariableSorts(parentUnits[0]);
+    const auto resultVariables = freeVariableSorts(unit);
+    if (parentVariables == resultVariables) {
+      std::vector<std::string> parentArguments;
+      for (const auto& variable : resultVariables) {
+        parentArguments.push_back(variableName(variable.first));
+      }
+      step = MegalodonKernelBuilder::avatarContradictionIvyStep(
+        "u" + std::to_string(unit->number()),
+        parents[0],
+        MegalodonKernelSyntax::clause(renderedClause),
+        sourceLiterals,
+        renderedResultLiterals,
+        parentArguments);
+    } else {
+      step = MegalodonKernelBuilder::avatarContradictionStep(
+        "u" + std::to_string(unit->number()),
+        parents,
+        MegalodonKernelSyntax::clause(renderedClause));
+    }
   } else {
     step = MegalodonKernelBuilder::avatarContradictionStep(
       "u" + std::to_string(unit->number()),

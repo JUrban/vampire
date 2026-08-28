@@ -304,6 +304,11 @@ struct RenderedKernelAvatarSatLiteral {
   bool positive = false;
 };
 
+struct RenderedKernelTypedVariable {
+  std::string variable;
+  RenderedKernelType type;
+};
+
 struct RenderedKernelAvatarComponentParent {
   std::size_t parentIndex = 0;
   std::size_t refIndex = 0;
@@ -313,6 +318,8 @@ struct RenderedKernelAvatarComponentParent {
   std::string clause;
   bool hasClauseSexpr = false;
   RenderedKernelClause clauseSexpr;
+  std::vector<std::string> literals;
+  std::vector<RenderedKernelTypedVariable> variables;
 };
 
 struct RenderedKernelAvatarLiteralClass {
@@ -349,6 +356,10 @@ struct RenderedKernelAvatarCounterexampleStage {
   RenderedKernelFormula predicate;
   RenderedKernelTerm witness;
   RenderedKernelFormula target;
+  RenderedKernelFormula openBody;
+  RenderedKernelTerm positivePredicate;
+  RenderedKernelTerm negativePredicate;
+  RenderedKernelTerm directWitness;
 };
 
 struct RenderedKernelAvatarCounterexampleProgram {
@@ -390,6 +401,8 @@ struct RenderedKernelAvatarSplitStep {
   RenderedKernelUnitRef sourceUnit;
   bool hasSourceClause = false;
   RenderedKernelClause sourceClause;
+  std::vector<std::string> sourceLiterals;
+  std::vector<RenderedKernelTypedVariable> sourceVariables;
   bool hasResultClause = false;
   RenderedKernelClause resultClause;
   bool hasResultFormula = false;
@@ -531,11 +544,6 @@ struct RenderedKernelSkolemIntroducedSymbol {
 
 struct RenderedKernelQuantifiedVariable {
   std::string kind;
-  std::string variable;
-  RenderedKernelType type;
-};
-
-struct RenderedKernelTypedVariable {
   std::string variable;
   RenderedKernelType type;
 };
