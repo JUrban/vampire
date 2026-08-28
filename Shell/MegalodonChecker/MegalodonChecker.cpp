@@ -12139,6 +12139,9 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
   const auto* rewrite = extra == nullptr
     ? nullptr
     : static_cast<const Inferences::TwoLiteralRewriteInferenceExtra*>(extra);
+  if (rewrite == nullptr) {
+    return fail("missing producer equality-factoring side data");
+  }
 
   std::vector<Kernel::Clause*> parents;
   for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
@@ -12317,27 +12320,26 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
     return true;
   };
 
-  std::vector<std::string> expected;
+  std::vector<std::string> substitutedParent;
   std::vector<std::pair<std::string, std::string>> symmetryCandidates;
   for (unsigned i = 0; i < parent->length(); ++i) {
-    if ((*parent)[i] == selected) {
-      continue;
-    }
     std::string rendered;
     if (!substitutedLiteralSexpr((*parent)[i], rendered)) {
       return fail("render substituted parent literal");
     }
-    expected.push_back(rendered);
-    if ((*parent)[i]->isEquality()) {
+    substitutedParent.push_back(rendered);
+    if ((*parent)[i] != selected && (*parent)[i]->isEquality()) {
       std::string swapped;
       if (swappedEqualityLiteral(rendered, swapped) && rendered != swapped) {
         symmetryCandidates.push_back({rendered, swapped});
       }
     }
   }
-  if (!appendCertificateSplitLiteralsSexpr(parent, expected)) {
+  if (!appendCertificateSplitLiteralsSexpr(parent, substitutedParent)) {
     return fail("render split literals");
   }
+  std::vector<std::string> expected = substitutedParent;
+  expected.erase(expected.begin() + selectedIndex);
   const std::vector<std::string> baseExpected = expected;
 
   Kernel::TermList selectedLeft = Kernel::SubstHelper::apply(*selected->nthArgument(0), substitution);
@@ -12460,6 +12462,42 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
   if (!substitutionSexpr(subst)) {
     return fail("render substitution");
   }
+	  const std::string parentId = "u" + std::to_string(parent->number());
+	  const auto parentProducerSorts =
+	    _certificateProducerFreeVariableSorts.find(parentId);
+	  if (parentProducerSorts == _certificateProducerFreeVariableSorts.end()) {
+	    return fail("missing producer parent variable contract");
+	  }
+	  std::vector<std::string> parentArgumentTerms;
+	  for (const auto& binding : parentProducerSorts->second) {
+	    std::string argument;
+	    if (!certificateTermSexpr(
+	          Kernel::SubstHelper::apply(
+	            Kernel::TermList(binding.first, false), substitution),
+	          argument)) {
+	      return fail("render producer parent argument");
+	    }
+	    parentArgumentTerms.push_back(std::move(argument));
+	  }
+	  std::string producerProof;
+	  std::string producerProofError;
+	  if (!MegalodonProofExpander::expandClauseEqualityFactoringProof(
+	        parentId,
+	        parentArgumentTerms,
+	        substitutedParent,
+	        selectedIndex,
+	        otherIndex,
+	        selectedLhsSexpr,
+	        otherRhsSexpr,
+	        actual,
+	        producerProof,
+	        producerProofError)) {
+	    return fail(producerProofError.c_str());
+	  }
+	  const std::string producerProgram =
+	    " (program \"ivy_equality_factoring_v2\""
+	    " (producer_proof (program \"ivy_nd_v1\" (proof "
+	    + producerProof + "))))";
 	  const std::string stepBase = "u" + std::to_string(unit->number());
 	  std::vector<std::string> steps;
 	  std::vector<std::string> residualConstraints;
@@ -12480,7 +12518,8 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
 	      + "(other_rhs " + otherRhsSexpr + ") "
 	      + subst
 	      + " " + constraintsSexprFromLiterals(residualConstraints)
-	      + " (result " + clauseSexprFromLiterals(actual) + "))");
+	      + " (result " + clauseSexprFromLiterals(actual) + ")"
+	      + producerProgram + ")");
 	  } else if (simpleFactoringMatches) {
 	    steps.push_back(
 	      "(equality_factoring " + sexprQuote(stepBase)
@@ -12490,7 +12529,8 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
       + "(selected_lhs " + selectedLhsSexpr + ") "
       + "(other_rhs " + otherRhsSexpr + ") "
       + subst
-      + " (result " + clauseSexprFromLiterals(actual) + "))");
+      + " (result " + clauseSexprFromLiterals(actual) + ")"
+      + producerProgram + ")");
 	  } else {
 	    std::vector<std::string> constraints;
 	    if (!subtractMultiset(actual, baseExpected, constraints) || constraints.empty()) {
@@ -12508,7 +12548,8 @@ bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
       + "(other_rhs " + otherRhsSexpr + ") "
       + subst
       + " " + constraintsSexprFromLiterals(constraints)
-      + " (result " + clauseSexprFromLiterals(actual) + "))");
+      + " (result " + clauseSexprFromLiterals(actual) + ")"
+      + producerProgram + ")");
   }
 
   std::ostringstream out;

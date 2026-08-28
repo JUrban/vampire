@@ -285,6 +285,18 @@ bool expandClauseEqualityResolutionProof(
   std::string& result,
   std::string& error);
 
+bool expandClauseEqualityFactoringProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArgumentTerms,
+  const std::vector<std::string>& sourceLiterals,
+  std::size_t selectedLiteral,
+  std::size_t otherLiteral,
+  const std::string& selectedSharedTerm,
+  const std::string& otherOtherTerm,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error);
+
 bool expandClauseParamodulationProof(
   const std::string& equalityParentId,
   const std::vector<std::string>& equalityParentArguments,

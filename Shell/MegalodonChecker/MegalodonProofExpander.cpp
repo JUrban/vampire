@@ -1924,6 +1924,124 @@ public:
     return !result.empty();
   }
 
+  bool equalityFactoring(
+    const std::string& parentId,
+    const std::vector<std::string>& parentArgumentTerms,
+    const std::vector<std::string>& source,
+    std::size_t selected,
+    std::size_t other,
+    const std::string& selectedSharedTerm,
+    const std::string& otherOtherTerm,
+    const std::vector<std::string>& target,
+    std::string& result)
+  {
+    if (selected >= source.size() || other >= source.size()
+        || selected == other || target.empty()) {
+      return false;
+    }
+    PreservedSexprParser parser;
+    PreservedSexpr selectedLiteral;
+    PreservedSexpr otherLiteral;
+    PreservedSexpr selectedType;
+    PreservedSexpr selectedLeft;
+    PreservedSexpr selectedRight;
+    PreservedSexpr otherType;
+    PreservedSexpr otherLeft;
+    PreservedSexpr otherRight;
+    PreservedSexpr shared;
+    PreservedSexpr otherOther;
+    if (!parser.parse(source[selected], selectedLiteral)
+        || !parser.parse(source[other], otherLiteral)
+        || !parser.parse(selectedSharedTerm, shared)
+        || !parser.parse(otherOtherTerm, otherOther)
+        || !sexprHead(selectedLiteral, "pos")
+        || !sexprHead(otherLiteral, "pos")
+        || selectedLiteral.items.size() != 2
+        || otherLiteral.items.size() != 2
+        || !typedEqualitySexpr(
+             selectedLiteral.items[1], selectedType,
+             selectedLeft, selectedRight)
+        || !typedEqualitySexpr(
+             otherLiteral.items[1], otherType,
+             otherLeft, otherRight)
+        || !(selectedType == otherType)) {
+      return false;
+    }
+
+    PreservedSexpr selectedOther;
+    if (selectedLeft == shared) {
+      selectedOther = selectedRight;
+    } else if (selectedRight == shared) {
+      selectedOther = selectedLeft;
+    } else {
+      return false;
+    }
+    PreservedSexpr otherShared;
+    if (otherLeft == otherOther) {
+      otherShared = otherRight;
+    } else if (otherRight == otherOther) {
+      otherShared = otherLeft;
+    } else {
+      return false;
+    }
+    if (!(shared == otherShared)) return false;
+
+    const PreservedSexpr selectedOriented = literalSexpr(
+      true, equalityAtomSexpr(selectedType, shared, selectedOther));
+    const PreservedSexpr otherOriented = literalSexpr(
+      true, equalityAtomSexpr(selectedType, shared, otherOther));
+    const PreservedSexpr introducedAtom = equalityAtomSexpr(
+      selectedType, selectedOther, otherOther);
+    const PreservedSexpr introducedNegative = literalSexpr(
+      false, introducedAtom);
+    if (injectLiteralOrSymmetry(
+          target, otherOriented.render(), "proof_probe").empty()
+        || injectLiteralOrSymmetry(
+          target, introducedNegative.render(), "proof_probe").empty()) {
+      return false;
+    }
+
+    std::string targetFormula;
+    if (!clauseFormula(target, targetFormula)) return false;
+    const std::string targetTerm = clauseTerm(target);
+    result = eliminate(
+      source,
+      0,
+      instantiateTerms(parent(parentId), parentArgumentTerms),
+      targetTerm,
+      [&](std::size_t index, const std::string& proof) {
+        if (index != selected) {
+          return injectLiteralOrSymmetry(target, source[index], proof);
+        }
+        const std::string selectedProof = orientEqualityProof(
+          selectedLiteral, selectedOriented, proof);
+        if (selectedProof.empty()) return std::string();
+
+        const std::string positiveName = fresh("factoring_positive");
+        const std::string negativeName = fresh("factoring_negative");
+        std::string positiveProof = equalityFactoringOtherProof(
+          selectedType,
+          otherOther,
+          selectedProof,
+          hypothesis(positiveName));
+        positiveProof = injectLiteralOrSymmetry(
+          target, otherOriented.render(), positiveProof);
+        std::string negativeProof = injectLiteralOrSymmetry(
+          target, introducedNegative.render(), hypothesis(negativeName));
+        if (positiveProof.empty() || negativeProof.empty()) {
+          return std::string();
+        }
+        return excludedMiddle(
+          introducedAtom.render(),
+          targetFormula,
+          positiveName,
+          positiveProof,
+          negativeName,
+          negativeProof);
+      });
+    return !result.empty();
+  }
+
   bool paramodulation(
     const std::string& equalityParent,
     const std::vector<std::string>& equalityParentArguments,
@@ -2126,6 +2244,16 @@ private:
     return proof;
   }
 
+  static std::string instantiateTerms(
+    std::string proof,
+    const std::vector<std::string>& arguments)
+  {
+    for (const std::string& argument : arguments) {
+      proof = termApply(proof, "(term " + argument + ")");
+    }
+    return proof;
+  }
+
   static std::string proofApply(
     const std::string& left,
     const std::string& right)
@@ -2159,6 +2287,141 @@ private:
   std::string fresh(const char* stem)
   {
     return std::string("ivy_sat_") + stem + std::to_string(_fresh++);
+  }
+
+  std::string expandedEqualityProposition(
+    const PreservedSexpr& type,
+    const PreservedSexpr& left,
+    const PreservedSexpr& right)
+  {
+    const std::string relationName = fresh("factoring_relation");
+    const std::string relation = "(TMH " + quote(relationName) + ")";
+    return
+      "(ALLV " + quote(relationName)
+      + " (AR " + type.render() + " (AR " + type.render() + " (PROP)))"
+      + " (IMP (AP (AP " + relation + " " + left.render() + ") "
+      + right.render() + ")"
+      + " (AP (AP " + relation + " " + right.render() + ") "
+      + left.render() + ")))";
+  }
+
+  std::string orientEqualityProof(
+    const PreservedSexpr& sourceLiteral,
+    const PreservedSexpr& targetLiteral,
+    const std::string& proof)
+  {
+    if (sourceLiteral == targetLiteral) return proof;
+    if ((!sexprHead(sourceLiteral, "pos")
+         && !sexprHead(sourceLiteral, "neg"))
+        || sourceLiteral.items.size() != 2) {
+      return std::string();
+    }
+    PreservedSexpr type;
+    PreservedSexpr left;
+    PreservedSexpr right;
+    if (!typedEqualitySexpr(sourceLiteral.items[1], type, left, right)
+        || !(literalSexpr(
+               sexprHead(sourceLiteral, "pos"),
+               equalityAtomSexpr(type, right, left)) == targetLiteral)) {
+      return std::string();
+    }
+    return equalitySymmetry(sourceLiteral, proof);
+  }
+
+  std::string injectLiteralOrSymmetry(
+    const std::vector<std::string>& target,
+    const std::string& sourceLiteral,
+    const std::string& proof)
+  {
+    const std::string direct = injectLiteral(target, sourceLiteral, proof);
+    if (!direct.empty()) return direct;
+    PreservedSexprParser parser;
+    PreservedSexpr source;
+    PreservedSexpr type;
+    PreservedSexpr left;
+    PreservedSexpr right;
+    if (!parser.parse(sourceLiteral, source)
+        || (!sexprHead(source, "pos") && !sexprHead(source, "neg"))
+        || source.items.size() != 2
+        || !typedEqualitySexpr(source.items[1], type, left, right)) {
+      return std::string();
+    }
+    const PreservedSexpr swapped = literalSexpr(
+      sexprHead(source, "pos"), equalityAtomSexpr(type, right, left));
+    const std::string swappedProof = equalitySymmetry(source, proof);
+    return swappedProof.empty()
+      ? std::string()
+      : injectLiteral(target, swapped.render(), swappedProof);
+  }
+
+  std::string equalityFactoringOtherProof(
+    const PreservedSexpr& type,
+    const PreservedSexpr& otherOther,
+    const std::string& selectedProof,
+    const std::string& introducedProof)
+  {
+    const std::string leftName = fresh("factoring_left");
+    const std::string rightName = fresh("factoring_right");
+    const PreservedSexpr right = quotedTmh(quote(rightName));
+    const std::string motive =
+      "(term (LAMV " + quote(leftName) + " " + type.render()
+      + " (LAMV " + quote(rightName) + " " + type.render() + " "
+      + expandedEqualityProposition(type, right, otherOther) + ")))";
+    return proofApply(termApply(selectedProof, motive), introducedProof);
+  }
+
+  std::string excludedMiddle(
+    const std::string& proposition,
+    const std::string& target,
+    const std::string& positiveName,
+    const std::string& positiveProof,
+    const std::string& negativeName,
+    const std::string& negativeProof)
+  {
+    static const char* dnegHash =
+      "e4b03c310442ae760be9945e176494db51515dfb952ee60fbd42e05527752af0";
+    const std::string qName = fresh("xm_q");
+    const std::string leftName = fresh("xm_left");
+    const std::string rightName = fresh("xm_right");
+    const std::string notQName = fresh("xm_not_q");
+    const std::string propositionName = fresh("xm_prop");
+    const std::string q = "(TMH " + quote(qName) + ")";
+    const std::string falseFormula = "(TMH \"vampire_false\")";
+    const std::string leftResult = proofApply(
+      hypothesis(leftName), hypothesis(propositionName));
+    const std::string notProposition = proofLambda(
+      propositionName,
+      formula(proposition),
+      proofApply(hypothesis(notQName), leftResult));
+    const std::string rightResult = proofApply(
+      hypothesis(rightName), notProposition);
+    const std::string contradiction = proofApply(
+      hypothesis(notQName), rightResult);
+    const std::string dneg = proofApply(
+      termApply("(known " + quote(dnegHash) + ")", formula(q)),
+      proofLambda(
+        notQName,
+        formula(formulaImp(q, falseFormula)),
+        contradiction));
+    const std::string xm = termLambda(
+      qName,
+      "(PROP)",
+      proofLambda(
+        leftName,
+        formula(formulaImp(proposition, q)),
+        proofLambda(
+          rightName,
+          formula(formulaImp(
+            formulaImp(proposition, falseFormula), q)),
+          dneg)));
+    return proofApply(
+      proofApply(
+        termApply(xm, formula(target)),
+        proofLambda(positiveName, formula(proposition), positiveProof)),
+      proofLambda(
+        negativeName,
+        formula(formulaImp(proposition, falseFormula)),
+        negativeProof));
   }
 
   std::string equalityTransport(
@@ -2466,6 +2729,36 @@ bool expandClauseEqualityResolutionProof(
            resultLiterals,
            result)) {
     error = "equality resolution is not a reflexive producer disequality step";
+    return false;
+  }
+  return true;
+}
+
+bool expandClauseEqualityFactoringProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArgumentTerms,
+  const std::vector<std::string>& sourceLiterals,
+  std::size_t selectedLiteral,
+  std::size_t otherLiteral,
+  const std::string& selectedSharedTerm,
+  const std::string& otherOtherTerm,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error)
+{
+  IvyClauseProofBuilder builder;
+  if (parentId.empty()
+      || !builder.equalityFactoring(
+           parentId,
+           parentArgumentTerms,
+           sourceLiterals,
+           selectedLiteral,
+           otherLiteral,
+           selectedSharedTerm,
+           otherOtherTerm,
+           resultLiterals,
+           result)) {
+    error = "equality factoring is not the declared producer factoring step";
     return false;
   }
   return true;

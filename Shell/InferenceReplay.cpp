@@ -16,6 +16,20 @@
 #include "Shell/Rectify.hpp"
 
 namespace Shell {
+
+namespace {
+
+class MainProblemRestorer {
+public:
+  MainProblemRestorer() : _problem(env.getMainProblem()) {}
+  ~MainProblemRestorer() { env.setMainProblem(_problem); }
+
+private:
+  Kernel::Problem* _problem;
+};
+
+}
+
 void InferenceReplayer::replayInference(Kernel::Unit *u)
 {
   auto it = u->getParents();
@@ -57,6 +71,7 @@ void InferenceReplayer::replayInference(Kernel::Unit *u)
     auto ul = UnitList::empty();
     UnitList::pushFromIterator(ClauseStack::Iterator(stack), ul);
     p.addUnits(ul);
+    MainProblemRestorer restoreProblem;
     env.setMainProblem(&p);
     eq.apply(p);
   }
@@ -97,6 +112,7 @@ Clause *InferenceReplayer::runGenerating(GeneratingInferenceEngine *rule,
   UnitList::pushFromIterator(ClauseStack::Iterator(context), ul);
   p.addUnits(ul);
 
+  MainProblemRestorer restoreProblem;
   env.setMainProblem(&p);
 
   auto activeContainer = alg->getActiveClauseContainer();

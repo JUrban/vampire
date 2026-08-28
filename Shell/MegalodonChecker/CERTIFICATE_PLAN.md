@@ -145,6 +145,20 @@ parent boundary and elaborates that proof. Higher-order
 `equality_resolution_constraints` and compound trivial-inequality cleanup are
 not covered by this direct object yet and must not be relabeled as v2.
 
+Direct ordinary and constrained equality factoring use
+`ivy_equality_factoring_v2`. Vampire applies the parent substitution in the
+authoritative producer variable order, checks the two selected positive typed
+equalities and their explicitly recorded sides, and emits the complete
+`ivy_nd_v1` proof. The proof eliminates the parent clause, orients equalities
+when necessary, performs a classical case split on the introduced equality,
+uses explicit Leibniz transport in the positive branch, and injects the
+introduced disequality in the negative branch. Constraint literals are extra
+declared result disjuncts, so the same producer proof establishes the stronger
+ordinary factoring conclusion and weakens it into the constrained result.
+Megalodon validates the parent/known-theorem boundary and generically
+elaborates this tree; it does not recover the substitution, equality
+orientation, transport motive, case split, or result mapping.
+
 ### AVATAR
 
 AVATAR remains a separate layer. A qualifying refutation has explicit split
