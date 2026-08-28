@@ -254,6 +254,15 @@ bool expandClauseProjectionProof(
   std::string& result,
   std::string& error);
 
+bool expandCnfFormulaClauseProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const std::string& sourceFormula,
+  const MegalodonKernelSyntax::RenderedKernelCnfProjection& projection,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error);
+
 bool expandAvatarSatResolutionProof(
   const std::string& leftParentId,
   const std::vector<std::string>& leftLiterals,

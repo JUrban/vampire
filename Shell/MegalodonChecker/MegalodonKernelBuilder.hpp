@@ -227,7 +227,8 @@ MegalodonKernelSyntax::PrimitiveStep cnfFormulaClauseStep(
   std::size_t index,
   std::size_t count,
   const MegalodonKernelSyntax::RenderedKernelCnfProjection& projection,
-  const MegalodonKernelSyntax::RenderedKernelClause& result);
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::string& producerProof);
 
 MegalodonKernelSyntax::PrimitiveStep predicateDefinitionStep(
   const std::string& id,

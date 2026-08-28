@@ -1812,11 +1812,12 @@ MegalodonKernelSyntax::PrimitiveStep cnfFormulaClauseStep(
   std::size_t index,
   std::size_t count,
   const MegalodonKernelSyntax::RenderedKernelCnfProjection& projection,
-  const MegalodonKernelSyntax::RenderedKernelClause& result)
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::string& producerProof)
 {
   const std::string renderedProjection =
     MegalodonKernelSyntax::renderCnfProjection(projection);
-  return primitiveClauseStep(
+  MegalodonKernelSyntax::PrimitiveStep step = primitiveClauseStep(
     "cnf_formula_clause",
     id,
     {parent.value},
@@ -1833,8 +1834,12 @@ MegalodonKernelSyntax::PrimitiveStep cnfFormulaClauseStep(
       + " (index " + std::to_string(index) + ")"
       + " (count " + std::to_string(count) + ")"
       + " (projection " + renderedProjection + ")"
+      + " (producer_proof (program \"ivy_nd_v1\" (proof "
+      + producerProof + ")))"
       + " (result " + result.sexpr + ")"
-      + " (builder \"typed_v2\"))");
+      + " (builder \"typed_v3\"))");
+  step.producerProof = producerProof;
+  return step;
 }
 
 MegalodonKernelSyntax::PrimitiveStep predicateDefinitionStep(

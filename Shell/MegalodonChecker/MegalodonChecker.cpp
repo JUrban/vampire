@@ -7192,9 +7192,39 @@ bool MegalodonChecker::certificateCnfFormulaClauseStepSexpr(
   if (!certificateClauseSexpr(unit->asClause(), clause)) {
     return false;
   }
+  std::vector<std::string> resultLiterals;
+  std::vector<std::string> parentArguments;
+  std::string producerProof;
+  std::string producerProofError;
   MegalodonKernelSyntax::RenderedKernelCnfProjection projection;
   if (!certificateCnfProjection(
-        clauseExtra->projection, unit->asClause(), projection)) {
+        clauseExtra->projection, unit->asClause(), projection)
+      || !appendCertificateClauseLiteralsSexpr(
+           unit->asClause(), resultLiterals)
+      || !producerParentArguments(
+           _certificateProducerFreeVariableSorts,
+           "u" + std::to_string(parent->number()),
+           parentArguments,
+           producerProofError)
+      || !MegalodonProofExpander::expandCnfFormulaClauseProof(
+           "u" + std::to_string(parent->number()),
+           parentArguments,
+           source,
+           projection,
+           resultLiterals,
+           producerProof,
+           producerProofError)
+      || !closeProducerProofOverEliminatedVariables(
+           _certificateProducerFreeVariableSorts,
+           {"u" + std::to_string(parent->number())},
+           "u" + std::to_string(unit->number()),
+           producerProof,
+           producerProofError)) {
+    if (std::getenv("MEGALODON_CERT_DEBUG")
+        && !producerProofError.empty()) {
+      std::cerr << "megalodon CNF proof u" << unit->number()
+                << ": " << producerProofError << std::endl;
+    }
     return false;
   }
   auto built = MegalodonKernelBuilder::cnfFormulaClauseStep(
@@ -7204,7 +7234,8 @@ bool MegalodonChecker::certificateCnfFormulaClauseStepSexpr(
     clauseExtra->index,
     clauseExtra->count,
     projection,
-    MegalodonKernelSyntax::clause(clause));
+    MegalodonKernelSyntax::clause(clause),
+    producerProof);
   result = built.rendered;
   if (primitiveStep != nullptr) {
     *primitiveStep = std::move(built);

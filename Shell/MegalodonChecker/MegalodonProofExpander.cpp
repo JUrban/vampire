@@ -1775,6 +1775,94 @@ PreservedSexpr literalSexpr(
   return result;
 }
 
+std::string quotePreservedName(const std::string& value)
+{
+  std::string rendered = "\"";
+  for (char ch : value) {
+    if (ch == '\\' || ch == '"') rendered += '\\';
+    rendered += ch;
+  }
+  return rendered + '"';
+}
+
+bool namedTermSexpr(
+  const PreservedSexpr& value,
+  const std::string& name)
+{
+  return sexprHead(value, "TMH") && value.items.size() == 2
+    && value.items[1].atom
+    && value.items[1].token == quotePreservedName(name);
+}
+
+bool binaryNamedApplicationSexpr(
+  const PreservedSexpr& value,
+  const std::string& name,
+  PreservedSexpr& left,
+  PreservedSexpr& right)
+{
+  if (!sexprHead(value, "AP") || value.items.size() != 3
+      || !sexprHead(value.items[1], "AP")
+      || value.items[1].items.size() != 3
+      || !namedTermSexpr(value.items[1].items[1], name)) {
+    return false;
+  }
+  left = value.items[1].items[2];
+  right = value.items[2];
+  return true;
+}
+
+PreservedSexpr substituteNamedVariableSexpr(
+  const PreservedSexpr& source,
+  const std::string& variable,
+  const PreservedSexpr& replacement)
+{
+  if (namedTermSexpr(source, variable)) return replacement;
+  PreservedSexpr result = source;
+  if (result.atom) return result;
+  if ((sexprHead(result, "ALLV")
+       || sexprHead(result, "LAMV")
+       || sexprHead(result, "VLAMV"))
+      && result.items.size() == 4
+      && result.items[1].atom
+      && result.items[1].token == quotePreservedName(variable)) {
+    return result;
+  }
+  for (std::size_t index = 1; index < result.items.size(); ++index) {
+    result.items[index] = substituteNamedVariableSexpr(
+      result.items[index], variable, replacement);
+  }
+  return result;
+}
+
+bool canonicalInhabitantSexpr(
+  const PreservedSexpr& type,
+  const std::string& stem,
+  std::size_t depth,
+  PreservedSexpr& result)
+{
+  PreservedSexprParser parser;
+  std::string rendered;
+  if (sexprHead(type, "PROP") && type.items.size() == 1) {
+    rendered = "(TMH \"vampire_true\")";
+  } else if (sexprHead(type, "SET") && type.items.size() == 1) {
+    rendered = "(AP (TMH \"Eps_i\") (LAMV "
+      + quotePreservedName(stem + "_set")
+      + " (SET) (TMH \"vampire_true\")))";
+  } else if (sexprHead(type, "AR") && type.items.size() == 3) {
+    PreservedSexpr body;
+    if (!canonicalInhabitantSexpr(
+          type.items[2], stem, depth + 1, body)) {
+      return false;
+    }
+    rendered = "(LAMV "
+      + quotePreservedName(stem + "_arg" + std::to_string(depth))
+      + " " + type.items[1].render() + " " + body.render() + ")";
+  } else {
+    return false;
+  }
+  return parser.parse(rendered, result);
+}
+
 class IvyClauseProofBuilder {
 public:
   std::string parent(const std::string& name) const
@@ -1821,6 +1909,152 @@ public:
               static_cast<std::size_t>(found - target.begin()),
               proof);
       });
+    return !result.empty();
+  }
+
+  bool cnfFormulaClause(
+    const std::string& parentId,
+    const std::vector<std::string>& parentArguments,
+    const std::string& sourceFormula,
+    const MegalodonKernelSyntax::RenderedKernelCnfProjection& projection,
+    const std::vector<std::string>& target,
+    std::string& result)
+  {
+    PreservedSexprParser parser;
+    PreservedSexpr source;
+    if (parentId.empty() || !parser.parse(sourceFormula, source)) {
+      return false;
+    }
+    const std::string targetTerm = clauseTerm(target);
+    std::function<std::string(
+      const PreservedSexpr&,
+      const MegalodonKernelSyntax::RenderedKernelCnfProjection&,
+      const std::string&)> project =
+      [&](const PreservedSexpr& current,
+          const MegalodonKernelSyntax::RenderedKernelCnfProjection& node,
+          const std::string& proof) -> std::string {
+        if (node.kind == "false") {
+          return node.children.empty() && target.empty()
+              && (namedTermSexpr(current, "vampire_false")
+                  || namedTermSexpr(current, "f__false"))
+            ? proof
+            : std::string();
+        }
+        if (node.kind == "literal") {
+          if (!node.children.empty() || !node.hasSourceLiteral
+              || node.resultLiteralIndex >= target.size()) {
+            return std::string();
+          }
+          PreservedSexpr declared;
+          if (!parser.parse(node.sourceLiteral.sexpr, declared)) {
+            return std::string();
+          }
+          PreservedSexpr expected;
+          if (sexprHead(current, "IMP") && current.items.size() == 3
+              && (namedTermSexpr(current.items[2], "vampire_false")
+                  || namedTermSexpr(current.items[2], "f__false"))) {
+            expected = literalSexpr(false, current.items[1]);
+          } else {
+            expected = literalSexpr(true, current);
+          }
+          return expected == declared
+              && target[node.resultLiteralIndex] == declared.render()
+            ? inject(target, node.resultLiteralIndex, proof)
+            : std::string();
+        }
+        if (node.kind == "forall") {
+          if (!node.hasVariable || !node.hasVariableType
+              || node.children.size() != 1
+              || !sexprHead(current, "ALLV")
+              || current.items.size() != 4
+              || !current.items[1].atom
+              || current.items[1].token != quote(node.variable)) {
+            return std::string();
+          }
+          PreservedSexpr type;
+          PreservedSexpr witness;
+          if (!parser.parse(node.variableType.sexpr, type)
+              || !(current.items[2] == type)) {
+            return std::string();
+          }
+          if (node.hasWitnessTerm) {
+            if (!parser.parse(node.witnessTerm.sexpr, witness)) {
+              return std::string();
+            }
+          } else if (!canonicalInhabitantSexpr(
+                       type,
+                       "ivy_cnf_inhabitant_" + node.variable,
+                       0,
+                       witness)) {
+            return std::string();
+          }
+          const PreservedSexpr body = substituteNamedVariableSexpr(
+            current.items[3], node.variable, witness);
+          return project(
+            body,
+            node.children[0],
+            termApply(proof, "(term " + witness.render() + ")"));
+        }
+
+        PreservedSexpr left;
+        PreservedSexpr right;
+        if (node.kind == "and_left" || node.kind == "and_right") {
+          if (node.children.size() != 1
+              || !binaryNamedApplicationSexpr(
+                   current, "vampire_and", left, right)) {
+            return std::string();
+          }
+          const std::string leftName = fresh("cnf_and_left");
+          const std::string rightName = fresh("cnf_and_right");
+          const bool selectLeft = node.kind == "and_left";
+          const std::string selected = selectLeft
+            ? hypothesis(leftName)
+            : hypothesis(rightName);
+          const std::string selectedProof = proofApply(
+            termApply(proof, formula(selectLeft
+              ? left.render() : right.render())),
+            proofLambda(
+              leftName,
+              formula(left.render()),
+              proofLambda(
+                rightName,
+                formula(right.render()),
+                selected)));
+          return project(
+            selectLeft ? left : right,
+            node.children[0],
+            selectedProof);
+        }
+        if (node.kind == "or") {
+          if (node.children.size() != 2
+              || !binaryNamedApplicationSexpr(
+                   current, "vampire_or", left, right)) {
+            return std::string();
+          }
+          const std::string leftName = fresh("cnf_or_left");
+          const std::string rightName = fresh("cnf_or_right");
+          const std::string leftProof = project(
+            left, node.children[0], hypothesis(leftName));
+          const std::string rightProof = project(
+            right, node.children[1], hypothesis(rightName));
+          if (leftProof.empty() || rightProof.empty()) {
+            return std::string();
+          }
+          return proofApply(
+            proofApply(
+              termApply(proof, targetTerm),
+              proofLambda(
+                leftName, formula(left.render()), leftProof)),
+            proofLambda(
+              rightName, formula(right.render()), rightProof));
+        }
+        return std::string();
+      };
+
+    result = project(
+      source,
+      projection,
+      instantiate(parent(parentId), parentArguments));
     return !result.empty();
   }
 
@@ -2809,6 +3043,29 @@ bool expandClauseProjectionProof(
            parentId, parentArguments,
            sourceLiterals, resultLiterals, result)) {
     error = "AVATAR SAT projection is not a producer-explicit clause projection";
+    return false;
+  }
+  return true;
+}
+
+bool expandCnfFormulaClauseProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const std::string& sourceFormula,
+  const MegalodonKernelSyntax::RenderedKernelCnfProjection& projection,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error)
+{
+  IvyClauseProofBuilder builder;
+  if (!builder.cnfFormulaClause(
+        parentId,
+        parentArguments,
+        sourceFormula,
+        projection,
+        resultLiterals,
+        result)) {
+    error = "CNF projection does not match the producer source and result";
     return false;
   }
   return true;
