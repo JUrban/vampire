@@ -250,6 +250,13 @@ MegalodonKernelSyntax::PrimitiveStep avatarContradictionStep(
   const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef>& parents,
   const MegalodonKernelSyntax::RenderedKernelClause& result);
 
+MegalodonKernelSyntax::PrimitiveStep avatarContradictionIvyStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::vector<std::string>& sourceLiterals,
+  const std::vector<std::string>& resultLiterals);
+
 bool collectAvatarSatProof(
   SAT::SATClause* root,
   MegalodonKernelSyntax::RenderedKernelAvatarRefutation* refutation);

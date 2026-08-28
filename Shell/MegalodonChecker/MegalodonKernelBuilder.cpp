@@ -1930,6 +1930,73 @@ MegalodonKernelSyntax::PrimitiveStep avatarContradictionStep(
       + " (result " + result.sexpr + "))");
 }
 
+MegalodonKernelSyntax::PrimitiveStep avatarContradictionIvyStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::vector<std::string>& sourceLiterals,
+  const std::vector<std::string>& resultLiterals)
+{
+  auto literalFormula = [](const std::string& literal, std::string& formula) {
+    if (literal.size() < 7 || literal.back() != ')') {
+      return false;
+    }
+    const bool positive = literal.compare(0, 5, "(pos ") == 0;
+    const bool negative = literal.compare(0, 5, "(neg ") == 0;
+    if (!positive && !negative) {
+      return false;
+    }
+    const std::string atom = literal.substr(5, literal.size() - 6);
+    formula = positive
+      ? atom
+      : "(IMP " + atom + " (TMH \"vampire_false\"))";
+    return true;
+  };
+
+  const std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef> parents{parent};
+  if (sourceLiterals.empty() || resultLiterals.size() != 1) {
+    return avatarContradictionStep(id, parents, result);
+  }
+
+  std::string folded;
+  for (std::size_t offset = 0; offset < sourceLiterals.size(); ++offset) {
+    const std::size_t sourceIndex = sourceLiterals.size() - offset - 1;
+    std::string formula;
+    if (!literalFormula(sourceLiterals[sourceIndex], formula)) {
+      return avatarContradictionStep(id, parents, result);
+    }
+    folded = folded.empty()
+      ? formula
+      : "(AP (AP (TMH \"vampire_or\") " + folded + ") " + formula + ")";
+  }
+  if (resultLiterals[0] != "(pos " + folded + ")") {
+    return avatarContradictionStep(id, parents, result);
+  }
+
+  std::string sourceClause = "(clause";
+  for (const std::string& literal : sourceLiterals) {
+    sourceClause += " " + literal;
+  }
+  sourceClause += ")";
+
+  std::string program =
+    "(program \"ivy_avatar_contradiction_v1\" (source "
+    + sourceClause + ") (nodes";
+  for (std::size_t offset = 0; offset < sourceLiterals.size(); ++offset) {
+    const std::size_t sourceIndex = sourceLiterals.size() - offset - 1;
+    program += " (node (index " + std::to_string(offset)
+      + ") (literal " + std::to_string(sourceIndex) + ") (action \""
+      + (offset == 0 ? "start" : "or") + "\"))";
+  }
+  program += "))";
+
+  MegalodonKernelSyntax::PrimitiveStep step =
+    avatarContradictionStep(id, parents, result);
+  step.rendered.pop_back();
+  step.rendered += " " + program + ")";
+  return step;
+}
+
 namespace {
 
 using SatLiteral = MegalodonKernelSyntax::RenderedKernelSatLiteral;

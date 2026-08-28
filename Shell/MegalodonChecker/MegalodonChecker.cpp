@@ -1610,8 +1610,11 @@ bool MegalodonChecker::certificateAvatarContradictionStepSexpr(Kernel::Unit* uni
     return false;
   }
   std::string renderedClause;
+  std::vector<std::string> renderedResultLiterals;
   if (unit->isClause()) {
-    if (!certificateClauseSexpr(unit->asClause(), renderedClause)) {
+    if (!certificateClauseSexpr(unit->asClause(), renderedClause)
+      || !appendCertificateClauseLiteralsSexpr(
+           unit->asClause(), renderedResultLiterals)) {
       return false;
     }
   } else {
@@ -1621,19 +1624,37 @@ bool MegalodonChecker::certificateAvatarContradictionStepSexpr(Kernel::Unit* uni
       return false;
     }
     renderedClause = "(clause (pos " + formula + "))";
+    renderedResultLiterals.push_back("(pos " + formula + ")");
   }
   if (renderedClause.empty()) {
     return false;
   }
   std::vector<MegalodonKernelSyntax::RenderedKernelUnitRef> parents;
+  std::vector<Kernel::Unit*> parentUnits;
   for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+    parentUnits.push_back(parent);
     parents.push_back(
       MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number())));
   }
-  const auto step = MegalodonKernelBuilder::avatarContradictionStep(
-    "u" + std::to_string(unit->number()),
-    parents,
-    MegalodonKernelSyntax::clause(renderedClause));
+  MegalodonKernelSyntax::PrimitiveStep step;
+  if (parentUnits.size() == 1 && parentUnits[0]->isClause()) {
+    std::vector<std::string> sourceLiterals;
+    if (!appendCertificateClauseLiteralsSexpr(
+          parentUnits[0]->asClause(), sourceLiterals)) {
+      return false;
+    }
+    step = MegalodonKernelBuilder::avatarContradictionIvyStep(
+      "u" + std::to_string(unit->number()),
+      parents[0],
+      MegalodonKernelSyntax::clause(renderedClause),
+      sourceLiterals,
+      renderedResultLiterals);
+  } else {
+    step = MegalodonKernelBuilder::avatarContradictionStep(
+      "u" + std::to_string(unit->number()),
+      parents,
+      MegalodonKernelSyntax::clause(renderedClause));
+  }
   _certificateNativePrimitiveStepsByUnit[unit->number()] = {step};
   result = MegalodonKernelBuilder::avatarPrimitiveWithMetadata(step);
   return true;
