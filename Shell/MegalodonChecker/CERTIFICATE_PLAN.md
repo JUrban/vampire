@@ -1,6 +1,6 @@
 # Vampire to Megalodon Certificate Plan
 
-Date: 2026-08-27
+Date: 2026-08-28
 
 Branch: `vampire/megalodon6`
 
@@ -116,9 +116,19 @@ replace the primitive chain.
 
 ### AVATAR
 
-AVATAR remains a separate layer. A qualifying refutation needs explicit split
-definitions, scope, clause dependencies, and SAT evidence such as resolution
-or RUP. Megalodon must not trust an `avatar_refutation` label.
+AVATAR remains a separate layer. A qualifying refutation has explicit split
+definitions, scope, clause dependencies, and an exact SAT trace. In addition,
+Vampire emits one ordinary `ivy_nd_v1` program for every SAT input, permutation,
+factor, and resolution node. Input programs refer to the originating AVATAR
+clause; derived programs refer only to earlier `sat_<id>` proof nodes. The final
+program proves the empty clause.
+
+The exact SAT trace is audit and dependency information, not a request for the
+consumer to synthesize a clause proof. Megalodon checks that node ids and parent
+references agree with the trace, then sends every program through the same
+generic Ivy checker and elaborator used elsewhere. It must not run RUP search,
+recover a clause ordering, synthesize assignment cases, or contain a separate
+SAT proof-term generator. Megalodon must not trust an `avatar_refutation` label.
 
 ## Scoped Skolem Contract
 
@@ -210,7 +220,12 @@ Implemented and retained:
 - typed scoped Skolem branch traces;
 - proof-order `skolem_scope_block` emission and typed `skolem_use_block`
   application inventory;
-- explicit AVATAR scope and SAT/RUP records for the current migrated path;
+- explicit AVATAR scope and exact SAT records, with producer-expanded
+  `ivy_nd_v1` programs for component definitions, split results,
+  contradictions, and every SAT refutation node;
+- generic Megalodon replay of those AVATAR programs, with the displaced
+  consumer-side assignment-case, RUP, resolution, factor, permutation, and
+  clause-order proof synthesis deleted;
 - ten-second Vampire and cached parallel corpus workflow.
 
 Still incomplete:
@@ -262,6 +277,22 @@ The corresponding cached semantic-discharge subset reports 41 pass, 0 fail,
 and 3 wall-limit timeouts with 10 workers. This validates the current contract;
 it is not a 100-theorem completion claim.
 
+The direct AVATAR Ivy batch is:
+
+```text
+/project/tmp/avatar-sat-direct-frozen100-export.g9ogAf
+100 certificates exported with 20 workers
+27 AVATAR refutations, each with a direct producer proof block
+
+/project/tmp/avatar-sat-direct-frozen100-replay.aej885
+100 strict cached source-emission and Megalodon checks passed
+```
+
+Focused mutations reject altered local SAT proof references. The representative
+split test includes a 19-node factor/resolution refutation. This closes the
+already-started AVATAR consumer-synthesis migration; it does not change the
+priority of producer-expanded instantiation and Skolem discharge below.
+
 ## Immediate Producer Work
 
 1. Add a proof-expansion pass analogous to Prover9's `expand_proof_ivy`.
@@ -274,7 +305,8 @@ it is not a 100-theorem completion claim.
    source existentials without introducing a global choice axiom. Reject every
    final term containing a certificate-local symbol.
 4. Prove this path first on the known 12-case dependent-Skolem class, then run
-   the cached 100 gate. Do not broaden AVATAR or `UnionI` work meanwhile.
+   the cached 100 gate. Do not broaden AVATAR beyond its now-direct Ivy replay
+   or do `UnionI` work meanwhile.
 5. Delete the corresponding old CPS/search route after the producer-expanded
    path passes. Continue migrating other macro families only through the same
    expansion pass.

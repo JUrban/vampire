@@ -1789,6 +1789,18 @@ bool MegalodonChecker::certificateAvatarSplitStepSexpr(Kernel::Unit* unit, std::
   if (targetLeaves.empty() || targetFormula.empty()) {
     return false;
   }
+  {
+    std::vector<std::string> normalizedResultLiterals;
+    normalizedResultLiterals.reserve(targetLeaves.size());
+    for (const auto& leaf : targetLeaves) {
+      normalizedResultLiterals.push_back(
+        std::string(leaf.positive ? "(pos " : "(neg ")
+        + "(TMH " + sexprQuote("split_" + std::to_string(leaf.splitVar))
+        + "))");
+    }
+    renderedClause =
+      certificateClauseSexprFromRenderedLiterals(normalizedResultLiterals);
+  }
   program.resultFormula = MegalodonKernelSyntax::formula(targetFormula);
   for (std::size_t index = 0; index < targetLeaves.size(); ++index) {
     MegalodonKernelSyntax::RenderedKernelAvatarSplitCase item;
@@ -2436,6 +2448,10 @@ bool MegalodonChecker::certificateAvatarContradictionStepSexpr(Kernel::Unit* uni
       contradictionOriginLiterals.push_back(rendered);
     }
     if (contradictionOriginLiterals.size() == sourceLiterals.size()) {
+      renderedResultLiterals.assign(
+        sourceLiterals.rbegin(), sourceLiterals.rend());
+      renderedClause =
+        certificateClauseSexprFromRenderedLiterals(renderedResultLiterals);
       _certificateAvatarSatOriginLiteralsByUnit[unit->number()] =
         std::move(contradictionOriginLiterals);
     }

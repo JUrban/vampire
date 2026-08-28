@@ -1546,6 +1546,343 @@ bool expandGoalReplay(
   return true;
 }
 
+namespace {
+
+class IvyClauseProofBuilder {
+public:
+  std::string parent(const std::string& name) const
+  {
+    return "(parent " + quote(name) + ")";
+  }
+
+  bool projection(
+    const std::string& parentId,
+    const std::vector<std::string>& source,
+    const std::vector<std::string>& target,
+    std::string& result)
+  {
+    return projectionFromProof(parent(parentId), source, target, result);
+  }
+
+  bool projectionFromProof(
+    const std::string& sourceProof,
+    const std::vector<std::string>& source,
+    const std::vector<std::string>& target,
+    std::string& result)
+  {
+    if (source == target) {
+      result = sourceProof;
+      return true;
+    }
+    if (source.empty() || target.empty()) {
+      return false;
+    }
+    result = eliminate(
+      source,
+      0,
+      sourceProof,
+      clauseTerm(target),
+      [&](std::size_t index, const std::string& proof) {
+        const auto found = std::find(
+          target.begin(), target.end(), source[index]);
+        return found == target.end()
+          ? std::string()
+          : inject(
+              target,
+              static_cast<std::size_t>(found - target.begin()),
+              proof);
+      });
+    return !result.empty();
+  }
+
+  bool resolution(
+    const std::string& leftParent,
+    const std::vector<std::string>& left,
+    std::size_t leftPivot,
+    const std::string& rightParent,
+    const std::vector<std::string>& right,
+    std::size_t rightPivot,
+    const std::vector<std::string>& target,
+    std::string& result)
+  {
+    if (leftPivot >= left.size() || rightPivot >= right.size()
+        || complement(left[leftPivot]) != right[rightPivot]) {
+      return false;
+    }
+    const std::string targetTerm = clauseTerm(target);
+    result = eliminate(
+      left,
+      0,
+      parent(leftParent),
+      targetTerm,
+      [&](std::size_t leftIndex, const std::string& leftProof) {
+        if (leftIndex != leftPivot) {
+          return injectLiteral(target, left[leftIndex], leftProof);
+        }
+        return eliminate(
+          right,
+          0,
+          parent(rightParent),
+          targetTerm,
+          [&](std::size_t rightIndex, const std::string& rightProof) {
+            if (rightIndex != rightPivot) {
+              return injectLiteral(target, right[rightIndex], rightProof);
+            }
+            const bool leftPositive = left[leftPivot].compare(0, 5, "(pos ") == 0;
+            const std::string contradiction = leftPositive
+              ? proofApply(rightProof, leftProof)
+              : proofApply(leftProof, rightProof);
+            return target.empty()
+              ? contradiction
+              : termApply(contradiction, targetTerm);
+          });
+      });
+    return !result.empty();
+  }
+
+private:
+  std::size_t _fresh = 0;
+
+  static std::string quote(const std::string& value)
+  {
+    std::string rendered = "\"";
+    for (char ch : value) {
+      if (ch == '\\' || ch == '"') rendered += '\\';
+      rendered += ch;
+    }
+    return rendered + '"';
+  }
+
+  static std::string complement(const std::string& literal)
+  {
+    if (literal.compare(0, 5, "(pos ") == 0) {
+      return "(neg " + literal.substr(5);
+    }
+    if (literal.compare(0, 5, "(neg ") == 0) {
+      return "(pos " + literal.substr(5);
+    }
+    return std::string();
+  }
+
+  static bool literalFormula(const std::string& literal, std::string& formula)
+  {
+    if (literal.size() < 7 || literal.back() != ')') return false;
+    const bool positive = literal.compare(0, 5, "(pos ") == 0;
+    const bool negative = literal.compare(0, 5, "(neg ") == 0;
+    if (!positive && !negative) return false;
+    const std::string atom = literal.substr(5, literal.size() - 6);
+    formula = positive
+      ? atom
+      : "(IMP " + atom + " (TMH \"vampire_false\"))";
+    return true;
+  }
+
+  static std::string formula(const std::string& value)
+  {
+    return "(formula " + value + ")";
+  }
+
+  static std::string literalTerm(const std::string& value)
+  {
+    return "(literal " + value + ")";
+  }
+
+  static std::string clauseTerm(const std::vector<std::string>& literals)
+  {
+    std::string value = "(clause (clause";
+    for (const std::string& literal : literals) value += " " + literal;
+    return value + "))";
+  }
+
+  static std::string formulaImp(
+    const std::string& left,
+    const std::string& right)
+  {
+    return "(IMP " + left + " " + right + ")";
+  }
+
+  static std::string termApply(
+    const std::string& proof,
+    const std::string& term)
+  {
+    return "(term_apply " + proof + " " + term + ")";
+  }
+
+  static std::string proofApply(
+    const std::string& left,
+    const std::string& right)
+  {
+    return "(proof_apply " + left + " " + right + ")";
+  }
+
+  std::string hypothesis(const std::string& name) const
+  {
+    return "(hyp " + quote(name) + ")";
+  }
+
+  std::string proofLambda(
+    const std::string& name,
+    const std::string& proposition,
+    const std::string& body) const
+  {
+    return "(proof_lambda " + quote(name) + " " + proposition
+      + " " + body + ")";
+  }
+
+  std::string termLambda(
+    const std::string& name,
+    const std::string& type,
+    const std::string& body) const
+  {
+    return "(term_lambda " + quote(name) + " " + type
+      + " " + body + ")";
+  }
+
+  std::string fresh(const char* stem)
+  {
+    return std::string("ivy_sat_") + stem + std::to_string(_fresh++);
+  }
+
+  bool clauseFormula(
+    const std::vector<std::string>& literals,
+    std::string& result) const
+  {
+    if (literals.empty()) {
+      result = "(TMH \"vampire_false\")";
+      return true;
+    }
+    std::vector<std::string> formulas(literals.size());
+    for (std::size_t index = 0; index < literals.size(); ++index) {
+      if (!literalFormula(literals[index], formulas[index])) return false;
+    }
+    result = formulas.back();
+    for (std::size_t index = formulas.size() - 1; index > 0; --index) {
+      result = "(AP (AP (TMH \"vampire_or\") "
+        + formulas[index - 1] + ") " + result + ")";
+    }
+    return true;
+  }
+
+  std::string inject(
+    const std::vector<std::string>& target,
+    std::size_t targetIndex,
+    const std::string& proof)
+  {
+    if (target.empty() || targetIndex >= target.size()) return std::string();
+    if (target.size() == 1) return targetIndex == 0 ? proof : std::string();
+    std::string leftFormula;
+    std::string rightFormula;
+    const std::vector<std::string> rest(target.begin() + 1, target.end());
+    if (!literalFormula(target.front(), leftFormula)
+        || !clauseFormula(rest, rightFormula)) {
+      return std::string();
+    }
+    const std::string qName = fresh("q");
+    const std::string leftName = fresh("left");
+    const std::string rightName = fresh("right");
+    const std::string q = "(TMH " + quote(qName) + ")";
+    const std::string selected = targetIndex == 0
+      ? proofApply(hypothesis(leftName), proof)
+      : proofApply(
+          hypothesis(rightName),
+          inject(rest, targetIndex - 1, proof));
+    return termLambda(
+      qName,
+      "(PROP)",
+      proofLambda(
+        leftName,
+        formula(formulaImp(leftFormula, q)),
+        proofLambda(
+          rightName,
+          formula(formulaImp(rightFormula, q)),
+          selected)));
+  }
+
+  std::string injectLiteral(
+    const std::vector<std::string>& target,
+    const std::string& literal,
+    const std::string& proof)
+  {
+    const auto found = std::find(target.begin(), target.end(), literal);
+    return found == target.end()
+      ? std::string()
+      : inject(
+          target,
+          static_cast<std::size_t>(found - target.begin()),
+          proof);
+  }
+
+  template<class Branch>
+  std::string eliminate(
+    const std::vector<std::string>& source,
+    std::size_t offset,
+    const std::string& proof,
+    const std::string& target,
+    const Branch& branch)
+  {
+    if (source.empty()) return std::string();
+    if (source.size() == 1) return branch(offset, proof);
+    const std::string leftName = fresh("source");
+    const std::string restName = fresh("rest");
+    const std::vector<std::string> rest(source.begin() + 1, source.end());
+    const std::string leftBody = branch(offset, hypothesis(leftName));
+    const std::string rightBody = eliminate(
+      rest,
+      offset + 1,
+      hypothesis(restName),
+      target,
+      branch);
+    if (leftBody.empty() || rightBody.empty()) return std::string();
+    return proofApply(
+      proofApply(
+        termApply(proof, target),
+        proofLambda(leftName, literalTerm(source.front()), leftBody)),
+      proofLambda(restName, clauseTerm(rest), rightBody));
+  }
+};
+
+}
+
+bool expandAvatarSatProjectionProof(
+  const std::string& parentId,
+  const std::vector<std::string>& sourceLiterals,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error)
+{
+  IvyClauseProofBuilder builder;
+  if (parentId.empty()
+      || !builder.projection(
+           parentId, sourceLiterals, resultLiterals, result)) {
+    error = "AVATAR SAT projection is not a producer-explicit clause projection";
+    return false;
+  }
+  return true;
+}
+
+bool expandAvatarSatResolutionProof(
+  const std::string& leftParentId,
+  const std::vector<std::string>& leftLiterals,
+  std::size_t leftPivot,
+  const std::string& rightParentId,
+  const std::vector<std::string>& rightLiterals,
+  std::size_t rightPivot,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error)
+{
+  IvyClauseProofBuilder builder;
+  if (leftParentId.empty() || rightParentId.empty()
+      || !builder.resolution(
+           leftParentId, leftLiterals, leftPivot,
+           rightParentId, rightLiterals, rightPivot,
+           resultLiterals, result)) {
+    error = "AVATAR SAT resolution is not the declared producer pivot step";
+    return false;
+  }
+  return true;
+}
+
 bool expandAvatarContradictionProof(
   const AvatarContradictionProofRequest& request,
   std::string& result,
@@ -1583,10 +1920,8 @@ bool expandAvatarContradictionProof(
   auto formulaOr = [](const std::string& left, const std::string& right) {
     return "(AP (AP (TMH \"vampire_or\") " + left + ") " + right + ")";
   };
-  if (request.parentId.empty()
-      || request.sourceLiterals.empty()
-      || request.resultLiterals.size() != 1) {
-    error = "AVATAR contradiction direct proof has an empty parent/source or non-unit result";
+  if (request.parentId.empty() || request.sourceLiterals.empty()) {
+    error = "AVATAR contradiction direct proof has an empty parent or source";
     return false;
   }
 
@@ -1597,17 +1932,40 @@ bool expandAvatarContradictionProof(
       return false;
     }
   }
-  std::string targetFormula;
+  std::string foldedTargetFormula;
   for (std::size_t offset = 0; offset < literalFormulas.size(); ++offset) {
     const std::size_t index = literalFormulas.size() - offset - 1;
-    targetFormula = targetFormula.empty()
+    foldedTargetFormula = foldedTargetFormula.empty()
       ? literalFormulas[index]
-      : formulaOr(targetFormula, literalFormulas[index]);
+      : formulaOr(foldedTargetFormula, literalFormulas[index]);
   }
-  if (request.resultLiterals.front() != "(pos " + targetFormula + ")") {
-    error = "AVATAR contradiction direct proof result is not the producer literal fold";
+  std::vector<std::string> normalizedResult(
+    request.sourceLiterals.rbegin(), request.sourceLiterals.rend());
+  const bool legacyFold =
+    request.resultLiterals.size() == 1
+    && request.resultLiterals.front() == "(pos " + foldedTargetFormula + ")";
+  if (!legacyFold && request.resultLiterals != normalizedResult) {
+    error = "AVATAR contradiction direct proof result is not the producer split-clause normalization";
     return false;
   }
+  if (!legacyFold) {
+    std::string sourceProof = "(parent " + quote(request.parentId) + ")";
+    for (const std::string& argument : request.parentArguments) {
+      sourceProof = "(term_apply " + sourceProof
+        + " (term (TMH " + quote(argument) + ")))";
+    }
+    IvyClauseProofBuilder builder;
+    if (!builder.projectionFromProof(
+          sourceProof,
+          request.sourceLiterals,
+          request.resultLiterals,
+          result)) {
+      error = "AVATAR contradiction direct proof could not normalize its split clause";
+      return false;
+    }
+    return true;
+  }
+  std::string targetFormula = foldedTargetFormula;
 
   auto formula = [](const std::string& value) {
     return "(formula " + value + ")";
@@ -2969,9 +3327,56 @@ bool expandAvatarSplitProof(
         falseBody));
   };
 
-  result = proveCases(0, Assignments());
-  if (result.empty()) {
+  const std::string targetProof = proveCases(0, Assignments());
+  if (targetProof.empty()) {
     error = "AVATAR split producer could not expand its explicit case program";
+    return false;
+  }
+  std::vector<std::string> normalizedTarget;
+  normalizedTarget.reserve(request.cases.size());
+  for (const RenderedKernelAvatarSplitCase& item : request.cases) {
+    const std::string atom =
+      "(TMH " + quote("split_" + std::to_string(item.splitVar)) + ")";
+    normalizedTarget.push_back(
+      std::string(item.positive ? "(pos " : "(neg ") + atom + ")");
+  }
+  const std::string normalizedTargetTerm = clauseTerm(normalizedTarget);
+  std::function<std::string(const std::string&, const std::string&)> normalizeTarget;
+  normalizeTarget = [&](const std::string& path,
+                        const std::string& proof) -> std::string {
+    const auto leaf = std::find_if(
+      request.cases.begin(), request.cases.end(),
+      [&](const RenderedKernelAvatarSplitCase& item) {
+        return item.path == path;
+      });
+    if (leaf != request.cases.end()) {
+      return injectClause(
+        normalizedTarget,
+        static_cast<std::size_t>(leaf - request.cases.begin()),
+        {},
+        proof);
+    }
+    std::string left;
+    std::string right;
+    if (!targetAt(path + "L", left) || !targetAt(path + "R", right)) {
+      return std::string();
+    }
+    const std::string leftName = freshName("normalize_left");
+    const std::string rightName = freshName("normalize_right");
+    const std::string leftBody =
+      normalizeTarget(path + "L", hypothesis(leftName));
+    const std::string rightBody =
+      normalizeTarget(path + "R", hypothesis(rightName));
+    if (leftBody.empty() || rightBody.empty()) return std::string();
+    return proofApply(
+      proofApply(
+        termApply(proof, normalizedTargetTerm),
+        proofLambda(leftName, formula(left), leftBody)),
+      proofLambda(rightName, formula(right), rightBody));
+  };
+  result = normalizeTarget("", targetProof);
+  if (result.empty()) {
+    error = "AVATAR split producer could not normalize its target to a split clause";
     return false;
   }
   return true;

@@ -234,6 +234,24 @@ bool expandAvatarSplitProof(
   std::string& result,
   std::string& error);
 
+bool expandAvatarSatProjectionProof(
+  const std::string& parentId,
+  const std::vector<std::string>& sourceLiterals,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error);
+
+bool expandAvatarSatResolutionProof(
+  const std::string& leftParentId,
+  const std::vector<std::string>& leftLiterals,
+  std::size_t leftPivot,
+  const std::string& rightParentId,
+  const std::vector<std::string>& rightLiterals,
+  std::size_t rightPivot,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error);
+
 }
 }
 

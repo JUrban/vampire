@@ -2214,6 +2214,23 @@ std::string renderSatClause(const SatClause& clause)
   return rendered + ")";
 }
 
+std::vector<std::string> renderSatClauseLiterals(const SatClause& clause)
+{
+  std::vector<std::string> result;
+  result.reserve(clause.size());
+  for (const SatLiteral& literal : clause) {
+    result.push_back(
+      std::string(literal.positive ? "(pos " : "(neg ")
+      + "(TMH \"split_" + std::to_string(literal.variable) + "\"))");
+  }
+  return result;
+}
+
+std::string satProofNodeId(unsigned id)
+{
+  return "sat_" + std::to_string(id);
+}
+
 bool satLiteralLess(const SatLiteral& left, const SatLiteral& right)
 {
   if (left.variable != right.variable) {
@@ -2349,6 +2366,7 @@ bool lowerOrderedSatResolution(
 bool lowerAvatarSatProof(
   const std::vector<MegalodonKernelSyntax::RenderedKernelSatProofStep>& sourceSteps,
   std::string& rendered,
+  std::string& renderedProofs,
   std::size_t& exactStepCount,
   std::size_t& rupStepCount)
 {
@@ -2362,6 +2380,12 @@ bool lowerAvatarSatProof(
   unsigned nextSyntheticId = maximumSourceId + 1;
   std::map<unsigned, SatClause> checked;
   rendered = "(sat_proof";
+  renderedProofs = "(producer_proofs";
+  auto appendProof = [&](unsigned id, const std::string& proof) {
+    renderedProofs +=
+      " (node " + std::to_string(id)
+      + " (program \"ivy_nd_v1\" (proof " + proof + ")))";
+  };
   exactStepCount = 0;
   rupStepCount = 0;
   for (const auto& step : sourceSteps) {
@@ -2379,6 +2403,17 @@ bool lowerAvatarSatProof(
           " (sat_input " + std::to_string(step.id)
           + " (origin " + quote(step.originUnit.value) + ")"
           + " " + renderSatClause(step.literals) + ")";
+        std::string proof;
+        std::string error;
+        if (!MegalodonProofExpander::expandAvatarSatProjectionProof(
+              step.originUnit.value,
+              renderSatClauseLiterals(step.originLiterals),
+              renderSatClauseLiterals(step.literals),
+              proof,
+              error)) {
+          return false;
+        }
+        appendProof(step.id, proof);
         ++exactStepCount;
       } else {
         if (nextSyntheticId == std::numeric_limits<unsigned>::max()) {
@@ -2395,11 +2430,33 @@ bool lowerAvatarSatProof(
           " (sat_input " + std::to_string(originInputId)
           + " (origin " + quote(step.originUnit.value) + ")"
           + " " + renderSatClause(step.originLiterals) + ")";
+        std::string originProof;
+        std::string originError;
+        if (!MegalodonProofExpander::expandAvatarSatProjectionProof(
+              step.originUnit.value,
+              renderSatClauseLiterals(step.originLiterals),
+              renderSatClauseLiterals(step.originLiterals),
+              originProof,
+              originError)) {
+          return false;
+        }
+        appendProof(originInputId, originProof);
         rendered +=
           " (sat_permute " + std::to_string(step.id)
           + " (parent " + std::to_string(originInputId) + ")"
           + " " + renderSatPermutation(permutation)
           + " (result " + renderSatClause(step.literals) + "))";
+        std::string permutationProof;
+        std::string permutationError;
+        if (!MegalodonProofExpander::expandAvatarSatProjectionProof(
+              satProofNodeId(originInputId),
+              renderSatClauseLiterals(step.originLiterals),
+              renderSatClauseLiterals(step.literals),
+              permutationProof,
+              permutationError)) {
+          return false;
+        }
+        appendProof(step.id, permutationProof);
         checked.emplace(step.id, step.literals);
         exactStepCount += 2;
       }
@@ -2440,6 +2497,12 @@ bool lowerAvatarSatProof(
       }
       const unsigned operationId =
         finalOperation ? step.id : nextSyntheticId++;
+      const auto current = checked.find(currentId);
+      if (current == checked.end()) {
+        return false;
+      }
+      std::string directProof;
+      std::string directProofError;
       switch (operation.kind) {
         case ExactSatOperationKind::Resolve:
           rendered +=
@@ -2449,6 +2512,22 @@ bool lowerAvatarSatProof(
             + " (right " + std::to_string(operation.rightParent)
             + " " + std::to_string(operation.rightIndex) + ")"
             + " (result " + renderSatClause(operation.result) + "))";
+          {
+            const auto right = checked.find(operation.rightParent);
+            if (right == checked.end()
+                || !MegalodonProofExpander::expandAvatarSatResolutionProof(
+                     satProofNodeId(currentId),
+                     renderSatClauseLiterals(current->second),
+                     operation.leftIndex,
+                     satProofNodeId(operation.rightParent),
+                     renderSatClauseLiterals(right->second),
+                     operation.rightIndex,
+                     renderSatClauseLiterals(operation.result),
+                     directProof,
+                     directProofError)) {
+              return false;
+            }
+          }
           break;
         case ExactSatOperationKind::Factor:
           rendered +=
@@ -2457,13 +2536,17 @@ bool lowerAvatarSatProof(
             + " (literals " + std::to_string(operation.leftIndex)
             + " " + std::to_string(operation.rightIndex) + ")"
             + " (result " + renderSatClause(operation.result) + "))";
+          if (!MegalodonProofExpander::expandAvatarSatProjectionProof(
+                satProofNodeId(currentId),
+                renderSatClauseLiterals(current->second),
+                renderSatClauseLiterals(operation.result),
+                directProof,
+                directProofError)) {
+            return false;
+          }
           break;
         case ExactSatOperationKind::Permute:
           {
-          const auto current = checked.find(currentId);
-          if (current == checked.end()) {
-            return false;
-          }
           std::vector<std::size_t> permutation;
           if (!exactSatPermutation(
                 current->second, operation.result, permutation)) {
@@ -2474,9 +2557,18 @@ bool lowerAvatarSatProof(
             + " (parent " + std::to_string(currentId) + ")"
             + " " + renderSatPermutation(permutation)
             + " (result " + renderSatClause(operation.result) + "))";
+          if (!MegalodonProofExpander::expandAvatarSatProjectionProof(
+                satProofNodeId(currentId),
+                renderSatClauseLiterals(current->second),
+                renderSatClauseLiterals(operation.result),
+                directProof,
+                directProofError)) {
+            return false;
+          }
           break;
           }
       }
+      appendProof(operationId, directProof);
       checked.emplace(operationId, operation.result);
       currentId = operationId;
       ++exactStepCount;
@@ -2486,6 +2578,7 @@ bool lowerAvatarSatProof(
     }
   }
   rendered += ")";
+  renderedProofs += ")";
   return !sourceSteps.empty();
 }
 
@@ -2599,10 +2692,15 @@ bool avatarRefutationStep(
     return false;
   }
   std::string satProof;
+  std::string producerProofs;
   std::size_t exactStepCount = 0;
   std::size_t rupStepCount = 0;
   if (!lowerAvatarSatProof(
-        refutation.proofSteps, satProof, exactStepCount, rupStepCount)) {
+        refutation.proofSteps,
+        satProof,
+        producerProofs,
+        exactStepCount,
+        rupStepCount)) {
     return false;
   }
   std::vector<std::string> parentIds;
@@ -2635,6 +2733,7 @@ bool avatarRefutationStep(
     },
     "(avatar_refutation " + quote(id) + " " + renderedParents
       + " " + renderedSatClauses + " " + satProof
+      + " " + producerProofs
       + " (result " + refutation.resultClause.sexpr + "))");
   return true;
 }
