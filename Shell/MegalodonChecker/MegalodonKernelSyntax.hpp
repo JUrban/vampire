@@ -706,6 +706,7 @@ struct RenderedKernelRectifyRenamings {
 };
 
 struct RenderedKernelCnfProjection {
+  std::size_t index = 0;
   std::string kind;
   bool hasVariable = false;
   std::string variable;

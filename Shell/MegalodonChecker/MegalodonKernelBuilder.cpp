@@ -1423,7 +1423,8 @@ MegalodonKernelSyntax::PrimitiveStep cnfFormulaClauseStep(
       + " (index " + std::to_string(index) + ")"
       + " (count " + std::to_string(count) + ")"
       + " (projection " + renderedProjection + ")"
-      + " (result " + result.sexpr + "))");
+      + " (result " + result.sexpr + ")"
+      + " (builder \"typed_v2\"))");
 }
 
 MegalodonKernelSyntax::PrimitiveStep avatarComponentStep(

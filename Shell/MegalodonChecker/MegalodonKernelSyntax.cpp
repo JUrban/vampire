@@ -116,10 +116,11 @@ std::vector<std::string> requiredPrimitivesForRule(const std::string& rule)
 std::string renderCnfProjection(const RenderedKernelCnfProjection& projection)
 {
   if (projection.kind == "false") {
-    return "(false)";
+    return "(false (index " + std::to_string(projection.index) + "))";
   }
   if (projection.kind == "literal") {
-    return "(literal (source " + projection.sourceLiteral.sexpr + ")"
+    return "(literal (index " + std::to_string(projection.index) + ")"
+      + " (source " + projection.sourceLiteral.sexpr + ")"
       + " (result_index "
       + std::to_string(projection.resultLiteralIndex) + "))";
   }
@@ -127,16 +128,19 @@ std::string renderCnfProjection(const RenderedKernelCnfProjection& projection)
     const std::string witness = projection.hasWitnessTerm
       ? "(witness (term " + projection.witnessTerm.sexpr + "))"
       : "(witness canonical)";
-    return "(forall (variable " + quoteCnfAtom(projection.variable) + ")"
+    return "(forall (index " + std::to_string(projection.index) + ")"
+      + " (variable " + quoteCnfAtom(projection.variable) + ")"
       + " (type " + projection.variableType.sexpr + ") "
       + witness + " " + renderCnfProjection(projection.children.at(0)) + ")";
   }
   if (projection.kind == "and_left" || projection.kind == "and_right") {
-    return "(" + projection.kind + " "
+    return "(" + projection.kind + " (index "
+      + std::to_string(projection.index) + ") "
       + renderCnfProjection(projection.children.at(0)) + ")";
   }
   if (projection.kind == "or") {
-    return "(or " + renderCnfProjection(projection.children.at(0))
+    return "(or (index " + std::to_string(projection.index) + ") "
+      + renderCnfProjection(projection.children.at(0))
       + " " + renderCnfProjection(projection.children.at(1)) + ")";
   }
   return "(invalid_cnf_projection)";

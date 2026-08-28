@@ -4634,12 +4634,14 @@ bool MegalodonChecker::certificateCnfProjection(
   MegalodonKernelSyntax::RenderedKernelCnfProjection& result)
 {
   std::set<unsigned> usedResultLiterals;
+  std::size_t nextIndex = 0;
   std::function<bool(
     const Inferences::CNFProjection&,
     MegalodonKernelSyntax::RenderedKernelCnfProjection&)> render =
     [&](const Inferences::CNFProjection& source,
         MegalodonKernelSyntax::RenderedKernelCnfProjection& target) -> bool {
       target = {};
+      target.index = nextIndex++;
       switch (source.kind) {
       case Inferences::CNFProjectionKind::FALSE_FORMULA:
         target.kind = "false";
