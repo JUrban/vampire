@@ -280,6 +280,8 @@ struct RenderedKernelAvatarDefinition {
   std::vector<std::pair<std::string, RenderedKernelType>> componentVariables;
   bool hasProducerProof = false;
   std::string producerProof;
+  bool hasResultProducerProof = false;
+  std::string resultProducerProof;
   bool hasResultClause = false;
   RenderedKernelClause resultClause;
 };

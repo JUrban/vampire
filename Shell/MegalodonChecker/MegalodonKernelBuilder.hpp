@@ -237,7 +237,8 @@ MegalodonKernelSyntax::PrimitiveStep avatarDefinitionStep(
   unsigned splitVariable,
   bool splitPositive,
   const MegalodonKernelSyntax::RenderedKernelClause& result,
-  const std::string& producerProof);
+  const std::string& producerProof,
+  const std::string& resultProof);
 
 MegalodonKernelSyntax::PrimitiveStep splitDependencyStep(
   const std::string& id,

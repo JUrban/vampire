@@ -17109,6 +17109,31 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         }
         avatarDefinition.hasProducerProof = true;
         avatarDefinition.producerProof = producerProof;
+        MegalodonProofExpander::AvatarComponentProofRequest resultProofRequest;
+        if (!appendCertificateClauseLiteralsSexpr(
+              splitExtra->component, resultProofRequest.resultLiterals)) {
+          INVALID_OPERATION("cannot render an AVATAR definition result proof clause");
+        }
+        resultProofRequest.resultVariables = avatarDefinition.componentVariables;
+        MegalodonProofExpander::AvatarComponentDefinition resultDefinition;
+        resultDefinition.id = "u" + std::to_string(u->number());
+        resultDefinition.splitVariable = componentLiteral.var();
+        resultDefinition.splitPositive = componentLiteral.positive();
+        resultDefinition.componentLiterals = avatarDefinition.componentLiterals;
+        resultDefinition.componentVariables = avatarDefinition.componentVariables;
+        resultProofRequest.definitions.push_back(std::move(resultDefinition));
+        std::string resultProducerProof;
+        std::string resultProducerProofError;
+        if (!MegalodonProofExpander::expandAvatarComponentProof(
+              resultProofRequest,
+              resultProducerProof,
+              resultProducerProofError)) {
+          INVALID_OPERATION(
+            "cannot lower AVATAR definition result to a direct Ivy proof: "
+            + resultProducerProofError);
+        }
+        avatarDefinition.hasResultProducerProof = true;
+        avatarDefinition.resultProducerProof = resultProducerProof;
         avatarDefinition.componentClauseVariableSorts = collectClauseVariableSorts(splitExtra->component);
         avatarDefinition.componentClauseDbSorts = collectClauseDbIndexSorts(splitExtra->component);
         addClauseVariableSortFields(fields, "component_clause", splitExtra->component);
@@ -17121,7 +17146,8 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
               componentLiteral.var(),
               componentLiteral.positive(),
               MegalodonKernelSyntax::clause(componentClause),
-              producerProof);
+              producerProof,
+              resultProducerProof);
           _certificateNativeSteps.push_back(
             MegalodonKernelBuilder::avatarPrimitiveWithMetadata(nativeStep));
           _certificateEmittedNativeStepIds.insert(u->number());
