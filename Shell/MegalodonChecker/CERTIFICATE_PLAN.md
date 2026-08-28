@@ -312,7 +312,8 @@ Implemented and retained:
   records for migrated clausal families;
 - direct `ivy_substitute_v2`, `ivy_resolve_v2`, `ivy_factor_v2`,
   `ivy_paramodulate_v2`, `ivy_equality_resolution_v2`,
-  `ivy_equality_factoring_v2`, and `ivy_equality_symmetry_v2` proof trees
+  `ivy_equality_factoring_v2`, `ivy_equality_symmetry_v2`, and
+  `ivy_truth_conflict_v2` proof trees
   emitted by Vampire and replayed by the generic Megalodon Ivy elaborator;
 - exact recursive ENNF producer trace;
 - exact CNF projection records;
@@ -433,16 +434,41 @@ equality-factoring, paramodulation/equality-resolution, and resolution mutation
 tests also pass concurrently. This is focused clausal evidence, not a new
 100-theorem completion claim.
 
+The direct truth-conflict gate adds producer-expanded elimination of a positive
+typed `True = False` or `False = True` literal. Compound trivial-inequality
+cleanup now uses that object for truth conflict and the existing direct
+equality-resolution object for reflexive disequalities. Megalodon receives an
+ordinary closed `ivy_nd_v1` term and performs no truth-specific proof search.
+
+The fixed `hammer.1081.36` gate covers two paramodulation steps whose result
+drops a parent variable. Vampire closes each direct proof explicitly by
+lambda-abstracting the eliminated variable and applying that lambda to a typed
+canonical inhabitant. For `set`, the emitted inhabitant is an explicit
+`Eps_i` term over the always-true predicate. The focused mutation replaces the
+witness by an ill-typed term and Megalodon rejects it through ordinary term
+checking; the consumer neither discovers the dropped variable nor synthesizes
+its witness.
+
+This case also exposed ambiguity in Vampire's SAT subsumption-resolution API:
+a satisfying model need not be the substitution that yields the recorded
+conclusion. The producer now deterministically matches the selected side pivot
+and every side remainder literal to the actual conclusion, emits that complete
+substitution, and retains the SAT result only as a fallback. The resulting
+certificate still consists solely of explicit substitute, resolve, factor,
+and substitute Ivy objects. No model selection or clause matching moved to
+Megalodon.
+
 ## Immediate Producer Work
 
 1. Extend the producer proof-expansion pass analogous to Prover9's
    `expand_proof_ivy` beyond the now-direct AVATAR, local Skolem, substitution,
    resolution, factor, single-site paramodulation, reflexive equality
-   resolution, equality factoring, and equality symmetry objects.
-   Equality-resolution constraints and compound trivial-inequality cleanup are
-   the next clausal macros; their
+   resolution, equality factoring, equality symmetry, and truth-conflict
+   objects. Equality-resolution constraints are the next clausal macro; their
    parents must become explicit `instantiate` nodes before small primitive
-   proofs, with no consumer unification or case synthesis.
+   proofs, with no consumer unification or case synthesis. Compound
+   trivial-inequality cleanup is already lowered to direct truth-conflict and
+   equality-resolution objects.
 2. Run Skolem-use collection over those expanded nodes and emit a finite,
    dependency-ordered unherbrandization plan linked to each typed Skolem
    branch and source formula.

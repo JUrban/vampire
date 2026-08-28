@@ -1180,9 +1180,10 @@ MegalodonKernelSyntax::PrimitiveStep truthConflictStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
   std::size_t literal,
-  const MegalodonKernelSyntax::RenderedKernelClause& result)
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::string& producerProof)
 {
-  return primitiveClauseStep(
+  MegalodonKernelSyntax::PrimitiveStep step = primitiveClauseStep(
     "truth_conflict",
     id,
     {parent.value},
@@ -1192,6 +1193,15 @@ MegalodonKernelSyntax::PrimitiveStep truthConflictStep(
       + " (parent " + quote(parent.value) + ")"
       + " (literal " + std::to_string(literal) + ")"
       + " (result " + result.sexpr + "))");
+  if (!producerProof.empty()) {
+    step.rendered.pop_back();
+    step.rendered +=
+      " (program \"ivy_truth_conflict_v2\""
+      " (producer_proof (program \"ivy_nd_v1\" (proof "
+      + producerProof + ")))))";
+    step.producerProof = producerProof;
+  }
+  return step;
 }
 
 MegalodonKernelSyntax::PrimitiveStep paramodulateStep(

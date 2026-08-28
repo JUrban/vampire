@@ -55,6 +55,325 @@ using ProducerVariableSortMap = std::map<
   std::string,
   MegalodonProofExpander::VariableSorts>;
 
+bool producerTypeSexpr(Kernel::TermList sort, std::string& result)
+{
+  if (sort.isArrowSort()) {
+    std::string domain;
+    std::string range;
+    if (!producerTypeSexpr(sort.domain(), domain)
+        || !producerTypeSexpr(sort.result(), range)) {
+      return false;
+    }
+    result = "(AR " + domain + " " + range + ")";
+    return true;
+  }
+  if (sort.isTerm() && sort.term()->isSort()) {
+    Kernel::AtomicSort* atomic =
+      static_cast<Kernel::AtomicSort*>(sort.term());
+    if (atomic->isBoolSort()) {
+      result = "(PROP)";
+      return true;
+    }
+    if (sort == Kernel::AtomicSort::defaultSort()) {
+      result = "(SET)";
+      return true;
+    }
+  }
+  const std::string printed = sort.toString();
+  if (printed == "$o") {
+    result = "(PROP)";
+    return true;
+  }
+  if (printed == "$i") {
+    result = "(SET)";
+    return true;
+  }
+  return false;
+}
+
+bool producerCanonicalInhabitant(
+  Kernel::TermList sort,
+  const std::string& stem,
+  std::size_t depth,
+  std::string& result)
+{
+  if (sort.isArrowSort()) {
+    std::string domain;
+    std::string body;
+    if (!producerTypeSexpr(sort.domain(), domain)
+        || !producerCanonicalInhabitant(
+             sort.result(), stem, depth + 1, body)) {
+      return false;
+    }
+    result = "(LAMV \"" + stem + "_arg" + std::to_string(depth)
+      + "\" " + domain + " " + body + ")";
+    return true;
+  }
+
+  std::string renderedType;
+  if (!producerTypeSexpr(sort, renderedType)) {
+    return false;
+  }
+  if (renderedType == "(PROP)") {
+    result = "(TMH \"vampire_true\")";
+    return true;
+  }
+  if (renderedType == "(SET)") {
+    result = "(AP (TMH \"Eps_i\") (LAMV \"" + stem
+      + "_set\" (SET) (TMH \"vampire_true\")))";
+    return true;
+  }
+  return false;
+}
+
+bool closeProducerProofOverEliminatedVariables(
+  const ProducerVariableSortMap& producerVariableSorts,
+  const std::vector<std::string>& parentIds,
+  const std::string& childId,
+  std::string& proof,
+  std::string& error)
+{
+  const auto child = producerVariableSorts.find(childId);
+  if (child == producerVariableSorts.end()) {
+    error = "missing producer variable contract for result " + childId;
+    return false;
+  }
+
+  MegalodonProofExpander::VariableSorts eliminated;
+  for (const std::string& parentId : parentIds) {
+    const auto parent = producerVariableSorts.find(parentId);
+    if (parent == producerVariableSorts.end()) {
+      error = "missing producer variable contract for parent " + parentId;
+      return false;
+    }
+    for (const auto& binding : parent->second) {
+      const auto retained = std::find_if(
+        child->second.begin(),
+        child->second.end(),
+        [&](const auto& candidate) {
+          return candidate.first == binding.first
+            && candidate.second == binding.second;
+        });
+      if (retained != child->second.end()) {
+        continue;
+      }
+      const auto conflictingChild = std::find_if(
+        child->second.begin(),
+        child->second.end(),
+        [&](const auto& candidate) {
+          return candidate.first == binding.first;
+        });
+      if (conflictingChild != child->second.end()) {
+        error = "producer variable X" + std::to_string(binding.first)
+          + " changes sort between parent " + parentId
+          + " and result " + childId;
+        return false;
+      }
+      const auto existing = std::find_if(
+        eliminated.begin(),
+        eliminated.end(),
+        [&](const auto& candidate) {
+          return candidate.first == binding.first;
+        });
+      if (existing != eliminated.end()) {
+        if (existing->second != binding.second) {
+          error = "producer parents disagree on the sort of eliminated X"
+            + std::to_string(binding.first);
+          return false;
+        }
+        continue;
+      }
+      eliminated.push_back(binding);
+    }
+  }
+  std::sort(
+    eliminated.begin(),
+    eliminated.end(),
+    [](const auto& left, const auto& right) {
+      return left.first < right.first;
+    });
+
+  for (const auto& binding : eliminated) {
+    const std::string variable = "X" + std::to_string(binding.first);
+    std::string type;
+    std::string witness;
+    if (!producerTypeSexpr(binding.second, type)
+        || !producerCanonicalInhabitant(
+             binding.second, "ivy_inhabitant_" + variable, 0, witness)) {
+      error = "cannot construct an explicit producer inhabitant for eliminated "
+        + variable;
+      return false;
+    }
+    proof = "(term_apply (term_lambda \"" + variable + "\" " + type
+      + " " + proof + ") (term " + witness + "))";
+  }
+  return true;
+}
+
+bool producerMatchTerm(
+  Kernel::TermList pattern,
+  Kernel::TermList target,
+  std::map<unsigned, Kernel::TermList>& bindings)
+{
+  if (pattern.isVar()) {
+    const auto existing = bindings.find(pattern.var());
+    if (existing == bindings.end()) {
+      bindings.emplace(pattern.var(), target);
+      return true;
+    }
+    return existing->second == target;
+  }
+  if (pattern.isApplication() || target.isApplication()) {
+    return pattern.isApplication()
+      && target.isApplication()
+      && producerMatchTerm(pattern.lhs(), target.lhs(), bindings)
+      && producerMatchTerm(pattern.rhs(), target.rhs(), bindings);
+  }
+  if (!pattern.isTerm() || !target.isTerm()) {
+    return pattern == target;
+  }
+  Kernel::Term* patternTerm = pattern.term();
+  Kernel::Term* targetTerm = target.term();
+  if (patternTerm->functor() != targetTerm->functor()
+      || patternTerm->arity() != targetTerm->arity()) {
+    return false;
+  }
+  for (unsigned index = 0; index < patternTerm->arity(); ++index) {
+    if (!producerMatchTerm(
+          *patternTerm->nthArgument(index),
+          *targetTerm->nthArgument(index),
+          bindings)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool producerMatchLiteralOriented(
+  Kernel::Literal* pattern,
+  Kernel::Literal* target,
+  bool samePolarity,
+  bool reverseEquality,
+  std::map<unsigned, Kernel::TermList>& bindings)
+{
+  if ((pattern->polarity() == target->polarity()) != samePolarity
+      || pattern->isEquality() != target->isEquality()) {
+    return false;
+  }
+  if (pattern->isEquality()) {
+    if (!producerMatchTerm(
+          Kernel::SortHelper::getEqualityArgumentSort(pattern),
+          Kernel::SortHelper::getEqualityArgumentSort(target),
+          bindings)) {
+      return false;
+    }
+    return producerMatchTerm(
+             *pattern->nthArgument(0),
+             *target->nthArgument(reverseEquality ? 1 : 0),
+             bindings)
+      && producerMatchTerm(
+             *pattern->nthArgument(1),
+             *target->nthArgument(reverseEquality ? 0 : 1),
+             bindings);
+  }
+  if (pattern->functor() != target->functor()
+      || pattern->arity() != target->arity()) {
+    return false;
+  }
+  for (unsigned index = 0; index < pattern->arity(); ++index) {
+    if (!producerMatchTerm(
+          *pattern->nthArgument(index),
+          *target->nthArgument(index),
+          bindings)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool producerMatchLiteral(
+  Kernel::Literal* pattern,
+  Kernel::Literal* target,
+  bool samePolarity,
+  std::map<unsigned, Kernel::TermList>& bindings)
+{
+  std::map<unsigned, Kernel::TermList> trial = bindings;
+  if (producerMatchLiteralOriented(
+        pattern, target, samePolarity, false, trial)) {
+    bindings = std::move(trial);
+    return true;
+  }
+  if (!pattern->isEquality()) {
+    return false;
+  }
+  trial = bindings;
+  if (producerMatchLiteralOriented(
+        pattern, target, samePolarity, true, trial)) {
+    bindings = std::move(trial);
+    return true;
+  }
+  return false;
+}
+
+bool producerSubsumptionResolutionSubstitution(
+  Kernel::Clause* sideParent,
+  Kernel::Literal* selectedLiteral,
+  Kernel::Clause* conclusion,
+  Kernel::Substitution& result)
+{
+  for (unsigned pivotIndex = 0;
+       pivotIndex < sideParent->length();
+       ++pivotIndex) {
+    std::map<unsigned, Kernel::TermList> pivotBindings;
+    if (!producerMatchLiteral(
+          (*sideParent)[pivotIndex],
+          selectedLiteral,
+          false,
+          pivotBindings)) {
+      continue;
+    }
+
+    std::function<bool(
+      unsigned,
+      std::map<unsigned, Kernel::TermList>&)> matchRemainder =
+      [&](unsigned sideIndex,
+          std::map<unsigned, Kernel::TermList>& bindings) {
+        if (sideIndex == sideParent->length()) {
+          return true;
+        }
+        if (sideIndex == pivotIndex) {
+          return matchRemainder(sideIndex + 1, bindings);
+        }
+        Kernel::Literal* sideLiteral = (*sideParent)[sideIndex];
+        for (Kernel::Literal* conclusionLiteral : conclusion->iterLits()) {
+          std::map<unsigned, Kernel::TermList> trial = bindings;
+          if (producerMatchLiteral(
+                sideLiteral,
+                conclusionLiteral,
+                true,
+                trial)
+              && matchRemainder(sideIndex + 1, trial)) {
+            bindings = std::move(trial);
+            return true;
+          }
+        }
+        return false;
+      };
+
+    std::map<unsigned, Kernel::TermList> bindings =
+      std::move(pivotBindings);
+    if (!matchRemainder(0, bindings)) {
+      continue;
+    }
+    result = Kernel::Substitution();
+    for (const auto& binding : bindings) {
+      result.rebind(binding.first, binding.second);
+    }
+    return true;
+  }
+  return false;
+}
+
 bool producerParentArguments(
   const ProducerVariableSortMap& producerVariableSorts,
   const std::string& parentId,
@@ -115,6 +434,12 @@ bool attachIvyInstantiationProof(
          step.parent.value,
          parentArguments,
          step.producerProof,
+         error)
+    && closeProducerProofOverEliminatedVariables(
+         producerVariableSorts,
+         {step.parent.value},
+         step.id,
+         step.producerProof,
          error);
 }
 
@@ -136,6 +461,12 @@ bool attachIvySubstitutionProjectionProof(
          parentArguments,
          sourceLiterals,
          resultLiterals,
+         step.producerProof,
+         error)
+    && closeProducerProofOverEliminatedVariables(
+         producerVariableSorts,
+         {step.parent.value},
+         step.id,
          step.producerProof,
          error);
 }
@@ -170,6 +501,12 @@ MegalodonProofExpander::FactorClauseStep ivyFactorClauseStep(
       sourceLiterals,
       resultLiterals,
       step.producerProof,
+      proofError)
+    && closeProducerProofOverEliminatedVariables(
+      producerVariableSorts,
+      {parentId},
+      id,
+      step.producerProof,
       proofError);
   return step;
 }
@@ -197,14 +534,21 @@ ivyEqualitySymmetryClauseStep(
         parentId,
         parentArguments,
         proofError)) {
-    MegalodonProofExpander::expandClauseEqualitySymmetryProof(
-      parentId,
-      parentArguments,
-      sourceLiterals,
-      literal,
-      resultLiterals,
-      step.producerProof,
-      proofError);
+    if (MegalodonProofExpander::expandClauseEqualitySymmetryProof(
+          parentId,
+          parentArguments,
+          sourceLiterals,
+          literal,
+          resultLiterals,
+          step.producerProof,
+          proofError)) {
+      closeProducerProofOverEliminatedVariables(
+        producerVariableSorts,
+        {parentId},
+        id,
+        step.producerProof,
+        proofError);
+    }
   }
   return step;
 }
@@ -273,6 +617,12 @@ MegalodonProofExpander::ParamodulateClauseStep ivyParamodulateClauseStep(
       resultLiterals,
       rewriteSymmetry,
       step.producerProof,
+      proofError)
+    && closeProducerProofOverEliminatedVariables(
+      producerVariableSorts,
+      {equalityParentId, targetParentId},
+      id,
+      step.producerProof,
       proofError);
   return step;
 }
@@ -296,19 +646,26 @@ bool attachIvyResolutionProof(
         error)) {
     return false;
   }
-  step.hasIvyProgram = true;
-  return MegalodonProofExpander::expandClauseResolutionProof(
-    step.leftParent.value,
-    leftParentArguments,
-    step.leftLiterals,
-    step.leftPivot,
-    step.rightParent.value,
-    rightParentArguments,
-    step.rightLiterals,
-    step.rightPivot,
-    step.resultLiterals,
-    step.producerProof,
-    error);
+  step.hasIvyProgram =
+    MegalodonProofExpander::expandClauseResolutionProof(
+      step.leftParent.value,
+      leftParentArguments,
+      step.leftLiterals,
+      step.leftPivot,
+      step.rightParent.value,
+      rightParentArguments,
+      step.rightLiterals,
+      step.rightPivot,
+      step.resultLiterals,
+      step.producerProof,
+      error)
+    && closeProducerProofOverEliminatedVariables(
+      producerVariableSorts,
+      {step.leftParent.value, step.rightParent.value},
+      step.id,
+      step.producerProof,
+      error);
+  return step.hasIvyProgram;
 }
 
 bool emitLegacyMegalodonJsonDiagnostics()
@@ -11290,11 +11647,20 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
         continue;
       }
 
-      SATSubsumption::SATSubsumptionAndResolution satSR;
-      if (!satSR.checkSubsumptionResolutionWithLiteral(sideParent, mainParent, selectedIndex)) {
-        continue;
+      Kernel::Substitution sideSubstitution;
+      if (!producerSubsumptionResolutionSubstitution(
+            sideParent,
+            selectedLiteral,
+            unit->asClause(),
+            sideSubstitution)) {
+        SATSubsumption::SATSubsumptionAndResolution satSR;
+        if (!satSR.checkSubsumptionResolutionWithLiteral(
+              sideParent, mainParent, selectedIndex)) {
+          continue;
+        }
+        sideSubstitution =
+          satSR.getBindingsForSubsumptionResolutionWithLiteral();
       }
-      Kernel::Substitution sideSubstitution = satSR.getBindingsForSubsumptionResolutionWithLiteral();
 
       for (unsigned sideLiteralIndex = 0; sideLiteralIndex < sideParent->length(); ++sideLiteralIndex) {
         Kernel::Literal* sideLiteral = (*sideParent)[sideLiteralIndex];
@@ -11490,7 +11856,8 @@ bool MegalodonChecker::certificateSatSubsumptionResolutionStepSexpr(
               std::cerr << "    " << literal << std::endl;
             }
           }
-          return debugFailure("resolved and actual literals differ");
+          debugFailure("resolved and actual literals differ");
+          continue;
         }
         const std::string resolveId = stepBase + "_resolve_0";
         std::string resolveMetadata = syntheticVariableSortsMetadata(resolveId, resolveLiterals);
@@ -11865,21 +12232,59 @@ bool MegalodonChecker::certificateTrivialInequalityRemovalStepsSexpr(Kernel::Uni
       : stepBase + "_trivial" + std::to_string(i);
     const auto resultClause = MegalodonKernelSyntax::clause(
       clauseSexprFromLiterals(resultLiterals));
+    std::vector<std::string> parentArguments;
+    std::string producerProof;
+    std::string producerProofError;
+    if (!producerParentArguments(
+          _certificateProducerFreeVariableSorts,
+          currentParentId,
+          parentArguments,
+          producerProofError)) {
+      return false;
+    }
+    const bool hasProducerProof = removal.rule == "truth_conflict"
+      ? MegalodonProofExpander::expandClauseTruthConflictProof(
+          currentParentId,
+          parentArguments,
+          current,
+          literalIndex,
+          resultLiterals,
+          producerProof,
+          producerProofError)
+      : MegalodonProofExpander::expandClauseEqualityResolutionProof(
+          currentParentId,
+          parentArguments,
+          current,
+          literalIndex,
+          resultLiterals,
+          producerProof,
+          producerProofError);
+    if (!hasProducerProof) {
+      return false;
+    }
     MegalodonKernelSyntax::PrimitiveStep primitive =
       removal.rule == "truth_conflict"
       ? MegalodonKernelBuilder::truthConflictStep(
           stepId,
           MegalodonKernelSyntax::unitRef(currentParentId),
           literalIndex,
-          resultClause)
+          resultClause,
+          producerProof)
       : MegalodonKernelBuilder::equalityResolutionStep(
           stepId,
           MegalodonKernelSyntax::unitRef(currentParentId),
           literalIndex,
           resultClause,
-          {});
+          {},
+          producerProof);
     steps.push_back(primitive.rendered);
     primitives.push_back(std::move(primitive));
+    if (!inheritProducerVariableContract(
+          _certificateProducerFreeVariableSorts,
+          currentParentId,
+          stepId)) {
+      return false;
+    }
     current = resultLiterals;
     currentParentId = stepId;
   }
@@ -12374,6 +12779,10 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
 	    }
     const bool directResult = sameMultiset(expected, actual);
     const std::string equalityResolutionId = directResult ? unitId : unitId + "_eqres";
+    if (equalityResolutionId != unitId) {
+      _certificateProducerFreeVariableSorts[equalityResolutionId] =
+        primitiveScope;
+    }
     const std::vector<std::string>& equalityResolutionResultLiterals =
       directResult ? actual : expected;
     const std::string equalityResolutionResultClause =
@@ -12392,6 +12801,12 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
           substitutedParent,
           literalIndex,
           equalityResolutionResultLiterals,
+          producerProof,
+          producerProofError)
+        || !closeProducerProofOverEliminatedVariables(
+          _certificateProducerFreeVariableSorts,
+          {activeParentId},
+          equalityResolutionId,
           producerProof,
           producerProofError)) {
       return false;
@@ -12413,10 +12828,6 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
       *equalityResolutionPrimitive = equalityPrimitive;
     }
     builtPrimitives.push_back(equalityPrimitive);
-    if (equalityResolutionId != unitId) {
-      _certificateProducerFreeVariableSorts[equalityResolutionId] =
-        primitiveScope;
-    }
     if (!directResult) {
       std::vector<std::string> current = expected;
       std::string currentParentId = equalityResolutionId;
@@ -13019,13 +13430,17 @@ bool MegalodonChecker::certificateTruthConflictStepSexpr(
       return false;
     }
 
+    std::vector<std::string> source;
     std::vector<std::string> actual;
-    if (!appendCertificateClauseLiteralsSexpr(unit->asClause(), actual)) {
+    if (!appendCertificateClauseLiteralsSexpr(parent, source)
+      || !appendCertificateClauseLiteralsSexpr(unit->asClause(), actual)) {
       return false;
     }
-    std::sort(expected.begin(), expected.end());
-    std::sort(actual.begin(), actual.end());
-    if (expected != actual) {
+    std::vector<std::string> expectedSorted = expected;
+    std::vector<std::string> actualSorted = actual;
+    std::sort(expectedSorted.begin(), expectedSorted.end());
+    std::sort(actualSorted.begin(), actualSorted.end());
+    if (expectedSorted != actualSorted) {
       return false;
     }
 
@@ -13033,12 +13448,38 @@ bool MegalodonChecker::certificateTruthConflictStepSexpr(
     if (!certificateClauseSexpr(unit->asClause(), clause)) {
       return false;
     }
+    const std::string parentId =
+      "u" + std::to_string(parent->number());
+    std::vector<std::string> parentArguments;
+    std::string producerProof;
+    std::string producerProofError;
+    if (!producerParentArguments(
+          _certificateProducerFreeVariableSorts,
+          parentId,
+          parentArguments,
+          producerProofError)
+      || !MegalodonProofExpander::expandClauseTruthConflictProof(
+          parentId,
+          parentArguments,
+          source,
+          literalIndex,
+          actual,
+          producerProof,
+          producerProofError)
+      || !closeProducerProofOverEliminatedVariables(
+          _certificateProducerFreeVariableSorts,
+          {parentId},
+          "u" + std::to_string(unit->number()),
+          producerProof,
+          producerProofError)) {
+      return false;
+    }
     auto built = MegalodonKernelBuilder::truthConflictStep(
       "u" + std::to_string(unit->number()),
-      MegalodonKernelSyntax::unitRef(
-        "u" + std::to_string(parent->number())),
+      MegalodonKernelSyntax::unitRef(parentId),
       literalIndex,
-      MegalodonKernelSyntax::clause(clause));
+      MegalodonKernelSyntax::clause(clause),
+      producerProof);
     step = built.rendered;
     if (primitiveStep != nullptr) {
       *primitiveStep = std::move(built);

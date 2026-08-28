@@ -1931,6 +1931,85 @@ public:
     return !result.empty();
   }
 
+  bool truthConflict(
+    const std::string& parentId,
+    const std::vector<std::string>& parentArguments,
+    const std::vector<std::string>& source,
+    std::size_t selected,
+    const std::vector<std::string>& target,
+    std::string& result)
+  {
+    if (selected >= source.size()) return false;
+    std::vector<std::string> expected = source;
+    expected.erase(expected.begin() + selected);
+    std::vector<std::string> expectedSorted = expected;
+    std::vector<std::string> targetSorted = target;
+    std::sort(expectedSorted.begin(), expectedSorted.end());
+    std::sort(targetSorted.begin(), targetSorted.end());
+    if (expectedSorted != targetSorted) return false;
+
+    PreservedSexprParser parser;
+    PreservedSexpr literal;
+    PreservedSexpr type;
+    PreservedSexpr left;
+    PreservedSexpr right;
+    if (!parser.parse(source[selected], literal)
+        || !sexprHead(literal, "pos") || literal.items.size() != 2
+        || !typedEqualitySexpr(literal.items[1], type, left, right)
+        || !sexprHead(type, "PROP") || type.items.size() != 1) {
+      return false;
+    }
+    auto isNamedTerm = [](const PreservedSexpr& term,
+                          const std::string& name) {
+      return sexprHead(term, "TMH") && term.items.size() == 2
+        && term.items[1].atom && term.items[1].token == quote(name);
+    };
+    const bool leftTrue =
+      isNamedTerm(left, "f__true") || isNamedTerm(left, "vampire_true");
+    const bool leftFalse =
+      isNamedTerm(left, "f__false") || isNamedTerm(left, "vampire_false");
+    const bool rightTrue =
+      isNamedTerm(right, "f__true") || isNamedTerm(right, "vampire_true");
+    const bool rightFalse =
+      isNamedTerm(right, "f__false") || isNamedTerm(right, "vampire_false");
+    if (!((leftTrue && rightFalse) || (leftFalse && rightTrue))) {
+      return false;
+    }
+
+    const std::string targetTerm = clauseTerm(target);
+    result = eliminate(
+      source,
+      0,
+      instantiate(parent(parentId), parentArguments),
+      targetTerm,
+      [&](std::size_t index, const std::string& proof) {
+        if (index != selected) {
+          return injectLiteral(target, source[index], proof);
+        }
+        const std::string leftName = fresh("truth_left");
+        const std::string rightName = fresh("truth_right");
+        const std::string propositionName = fresh("truth_proposition");
+        const std::string premiseName = fresh("truth_premise");
+        const std::string motive =
+          "(term (LAMV " + quote(leftName) + " (PROP)"
+          + " (LAMV " + quote(rightName) + " (PROP) (TMH "
+          + quote(leftTrue ? leftName : rightName) + "))))";
+        const std::string trueProof = termLambda(
+          propositionName,
+          "(PROP)",
+          proofLambda(
+            premiseName,
+            formula("(TMH " + quote(propositionName) + ")"),
+            hypothesis(premiseName)));
+        const std::string contradiction = proofApply(
+          termApply(proof, motive), trueProof);
+        return target.empty()
+          ? contradiction
+          : termApply(contradiction, targetTerm);
+      });
+    return !result.empty();
+  }
+
   bool equalitySymmetry(
     const std::string& parentId,
     const std::vector<std::string>& parentArguments,
@@ -2820,6 +2899,30 @@ bool expandClauseEqualitySymmetryProof(
            resultLiterals,
            result)) {
     error = "equality symmetry is not the declared producer equality swap";
+    return false;
+  }
+  return true;
+}
+
+bool expandClauseTruthConflictProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const std::vector<std::string>& sourceLiterals,
+  std::size_t selectedLiteral,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error)
+{
+  IvyClauseProofBuilder builder;
+  if (parentId.empty()
+      || !builder.truthConflict(
+           parentId,
+           parentArguments,
+           sourceLiterals,
+           selectedLiteral,
+           resultLiterals,
+           result)) {
+    error = "truth conflict is not a declared producer true/false equality";
     return false;
   }
   return true;
