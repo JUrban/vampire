@@ -1864,6 +1864,66 @@ public:
     return !result.empty();
   }
 
+  bool equalityResolution(
+    const std::string& parentId,
+    const std::vector<std::string>& parentArguments,
+    const std::vector<std::string>& source,
+    std::size_t selected,
+    const std::vector<std::string>& target,
+    std::string& result)
+  {
+    if (selected >= source.size()) return false;
+    std::vector<std::string> expected = source;
+    expected.erase(expected.begin() + selected);
+    std::vector<std::string> expectedSorted = expected;
+    std::vector<std::string> targetSorted = target;
+    std::sort(expectedSorted.begin(), expectedSorted.end());
+    std::sort(targetSorted.begin(), targetSorted.end());
+    if (expectedSorted != targetSorted) return false;
+
+    PreservedSexprParser parser;
+    PreservedSexpr literal;
+    PreservedSexpr type;
+    PreservedSexpr left;
+    PreservedSexpr right;
+    if (!parser.parse(source[selected], literal)
+        || !sexprHead(literal, "neg") || literal.items.size() != 2
+        || !typedEqualitySexpr(literal.items[1], type, left, right)
+        || !(left == right)) {
+      return false;
+    }
+
+    const std::string targetTerm = clauseTerm(target);
+    result = eliminate(
+      source,
+      0,
+      instantiate(parent(parentId), parentArguments),
+      targetTerm,
+      [&](std::size_t index, const std::string& proof) {
+        if (index != selected) {
+          return injectLiteral(target, source[index], proof);
+        }
+        const std::string relationName = fresh("eq_relation");
+        const std::string premiseName = fresh("eq_premise");
+        const std::string relation = "(TMH " + quote(relationName) + ")";
+        const std::string premise =
+          "(AP (AP " + relation + " " + left.render() + ") "
+          + right.render() + ")";
+        const std::string reflexivity = termLambda(
+          relationName,
+          "(AR " + type.render() + " (AR " + type.render() + " (PROP)))",
+          proofLambda(
+            premiseName,
+            formula(premise),
+            hypothesis(premiseName)));
+        const std::string contradiction = proofApply(proof, reflexivity);
+        return target.empty()
+          ? contradiction
+          : termApply(contradiction, targetTerm);
+      });
+    return !result.empty();
+  }
+
   bool paramodulation(
     const std::string& equalityParent,
     const std::vector<std::string>& equalityParentArguments,
@@ -2382,6 +2442,30 @@ bool expandClauseResolutionProof(
            rightParentId, rightParentArguments, rightLiterals, rightPivot,
            resultLiterals, result)) {
     error = "AVATAR SAT resolution is not the declared producer pivot step";
+    return false;
+  }
+  return true;
+}
+
+bool expandClauseEqualityResolutionProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const std::vector<std::string>& sourceLiterals,
+  std::size_t selectedLiteral,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error)
+{
+  IvyClauseProofBuilder builder;
+  if (parentId.empty()
+      || !builder.equalityResolution(
+           parentId,
+           parentArguments,
+           sourceLiterals,
+           selectedLiteral,
+           resultLiterals,
+           result)) {
+    error = "equality resolution is not a reflexive producer disequality step";
     return false;
   }
   return true;

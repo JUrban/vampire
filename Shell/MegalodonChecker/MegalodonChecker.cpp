@@ -11852,6 +11852,13 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
       nonIdentitySubstitution ? Kernel::SubstHelper::apply(literal, *selectedSubstitution) : literal);
   }
 	  const std::string unitId = "u" + std::to_string(unit->number());
+	  const auto unitProducerSorts =
+	    _certificateProducerFreeVariableSorts.find(unitId);
+	  if (unitProducerSorts
+	      == _certificateProducerFreeVariableSorts.end()) {
+	    return false;
+	  }
+	  const auto primitiveScope = unitProducerSorts->second;
 	  std::string activeParentId = "u" + std::to_string(parent->number());
   const bool parentHasSplitDependencies =
     parent->isClause()
@@ -12007,6 +12014,24 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
       directResult ? actual : expected;
     const std::string equalityResolutionResultClause =
       clauseSexprFromLiterals(equalityResolutionResultLiterals);
+    std::vector<std::string> parentArguments;
+    std::string producerProof;
+    std::string producerProofError;
+    if (!producerParentArguments(
+          _certificateProducerFreeVariableSorts,
+          activeParentId,
+          parentArguments,
+          producerProofError)
+        || !MegalodonProofExpander::expandClauseEqualityResolutionProof(
+          activeParentId,
+          parentArguments,
+          substitutedParent,
+          literalIndex,
+          equalityResolutionResultLiterals,
+          producerProof,
+          producerProofError)) {
+      return false;
+    }
     auto equalityPrimitive = MegalodonKernelBuilder::equalityResolutionStep(
       equalityResolutionId,
       MegalodonKernelSyntax::unitRef(activeParentId),
@@ -12017,12 +12042,17 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
         metadataParentLiterals,
         equalityResolutionResultLiterals,
         metadataParentSubstitution,
-        metadataParentSubstitutedLiterals));
+        metadataParentSubstitutedLiterals),
+      producerProof);
     steps.push_back(equalityPrimitive.rendered);
     if (equalityResolutionPrimitive != nullptr) {
       *equalityResolutionPrimitive = equalityPrimitive;
     }
     builtPrimitives.push_back(equalityPrimitive);
+    if (equalityResolutionId != unitId) {
+      _certificateProducerFreeVariableSorts[equalityResolutionId] =
+        primitiveScope;
+    }
     if (!directResult) {
       std::vector<std::string> current = expected;
       std::string currentParentId = equalityResolutionId;

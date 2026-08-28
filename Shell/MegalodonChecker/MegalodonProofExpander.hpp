@@ -276,6 +276,15 @@ bool expandClauseResolutionProof(
   std::string& result,
   std::string& error);
 
+bool expandClauseEqualityResolutionProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const std::vector<std::string>& sourceLiterals,
+  std::size_t selectedLiteral,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error);
+
 bool expandClauseParamodulationProof(
   const std::string& equalityParentId,
   const std::vector<std::string>& equalityParentArguments,

@@ -1108,10 +1108,11 @@ MegalodonKernelSyntax::PrimitiveStep equalityResolutionStep(
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
   std::size_t literal,
   const MegalodonKernelSyntax::RenderedKernelClause& result,
-  const std::vector<std::pair<std::string, std::string>>& metadataFields)
+  const std::vector<std::pair<std::string, std::string>>& metadataFields,
+  const std::string& producerProof)
 {
   const std::string literalText = std::to_string(literal);
-  return primitiveClauseStep(
+  MegalodonKernelSyntax::PrimitiveStep step = primitiveClauseStep(
     "equality_resolution",
     id,
     {parent.value},
@@ -1121,6 +1122,14 @@ MegalodonKernelSyntax::PrimitiveStep equalityResolutionStep(
       + " (parent " + quote(parent.value) + ")"
       + " (literal " + literalText + ")"
       + " (result " + result.sexpr + "))");
+  if (!producerProof.empty()) {
+    step.rendered.pop_back();
+    step.rendered +=
+      " (program \"ivy_equality_resolution_v2\""
+      " (producer_proof (program \"ivy_nd_v1\" (proof "
+      + producerProof + ")))))";
+  }
+  return step;
 }
 
 MegalodonKernelSyntax::PrimitiveStep equalityResolutionConstraintsStep(

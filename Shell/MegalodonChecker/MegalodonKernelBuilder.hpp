@@ -108,7 +108,8 @@ MegalodonKernelSyntax::PrimitiveStep equalityResolutionStep(
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
   std::size_t literal,
   const MegalodonKernelSyntax::RenderedKernelClause& result,
-  const std::vector<std::pair<std::string, std::string>>& metadataFields);
+  const std::vector<std::pair<std::string, std::string>>& metadataFields,
+  const std::string& producerProof = {});
 
 MegalodonKernelSyntax::PrimitiveStep equalityResolutionConstraintsStep(
   const std::string& id,

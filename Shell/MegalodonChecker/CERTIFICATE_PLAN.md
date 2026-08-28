@@ -135,6 +135,16 @@ instantiated in producer contract order. Megalodon may check the structural
 action list and replay the attached proof tree, but it must not reconstruct the
 transport or synthesize helper claims on this v2 path.
 
+Direct reflexive `equality_resolution` records carry the same proof contract in
+`ivy_equality_resolution_v2`. After applying the explicit producer substitution,
+Vampire checks that the selected literal is a negative typed equality whose two
+sides are identical. It instantiates the parent, eliminates the selected
+disequality with an explicit Leibniz-reflexivity term, and copies the remaining
+literals into the declared result clause. Megalodon only checks the declared
+parent boundary and elaborates that proof. Higher-order
+`equality_resolution_constraints` and compound trivial-inequality cleanup are
+not covered by this direct object yet and must not be relabeled as v2.
+
 ### AVATAR
 
 AVATAR remains a separate layer. A qualifying refutation has explicit split
@@ -366,10 +376,11 @@ objects present.
 
 1. Extend the producer proof-expansion pass analogous to Prover9's
    `expand_proof_ivy` beyond the now-direct AVATAR, local Skolem, resolution,
-   factor, and single-site paramodulation objects. Equality resolution and
-   equality factoring are the next clausal macros; their parents must become
-   explicit `instantiate` nodes before small primitive proofs, with no consumer
-   unification or case synthesis.
+   factor, single-site paramodulation, and reflexive equality-resolution
+   objects. Equality-resolution constraints, compound trivial-inequality
+   cleanup, and equality factoring are the next clausal macros; their parents
+   must become explicit `instantiate` nodes before small primitive proofs, with
+   no consumer unification or case synthesis.
 2. Run Skolem-use collection over those expanded nodes and emit a finite,
    dependency-ordered unherbrandization plan linked to each typed Skolem
    branch and source formula.
