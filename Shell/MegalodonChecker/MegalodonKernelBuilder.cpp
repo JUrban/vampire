@@ -2336,9 +2336,13 @@ bool lowerAvatarSatProof(
       return false;
     }
     if (step.kind == "input") {
+      if (!step.hasOriginUnit) {
+        return false;
+      }
       checked.emplace(step.id, step.literals);
       rendered +=
         " (sat_input " + std::to_string(step.id)
+        + " (origin " + quote(step.originUnit.value) + ")"
         + " " + renderSatClause(step.literals) + ")";
       ++exactStepCount;
       continue;
