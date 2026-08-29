@@ -958,10 +958,25 @@ std::string skolemChoiceProofBlock(
         if (node.ivyJustification.parents.size() != 2
             || node.ivyJustification.indices.size() != 2
             || !node.ivyJustification.terms.empty()
-            || !noParamodulatePayload) {
+            || node.ivyJustification.parentArguments.size() != 2
+            || !node.ivyJustification.position.empty()
+            || !node.ivyJustification.from.empty()
+            || !node.ivyJustification.to.empty()) {
           return "";
         }
-        result += " (pivots "
+        result += " (arguments (left";
+        for (const std::string& term
+             : node.ivyJustification.parentArguments[0]) {
+          if (term.empty()) return "";
+          result += " " + term;
+        }
+        result += ") (right";
+        for (const std::string& term
+             : node.ivyJustification.parentArguments[1]) {
+          if (term.empty()) return "";
+          result += " " + term;
+        }
+        result += ")) (pivots "
           + std::to_string(node.ivyJustification.indices[0]) + " "
           + std::to_string(node.ivyJustification.indices[1]) + ")";
       } else if (ivyRule

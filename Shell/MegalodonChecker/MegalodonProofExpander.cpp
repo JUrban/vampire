@@ -4689,10 +4689,6 @@ bool expandChoiceNormalizedProof(
       return support != supportClaims.end()
         ? support->second : normalizedId(parent);
     };
-    const auto parameterFreeParent = [&](const std::string& parent) {
-      auto found = byId.find(parent);
-      return found != byId.end() && found->second->parameters.empty();
-    };
     const auto indexField = [&](const std::string& name,
                                 std::size_t& value) {
       auto found = std::find_if(
@@ -4775,7 +4771,6 @@ bool expandChoiceNormalizedProof(
       node.ivyJustification.terms = std::move(instantiationArguments);
     } else if (step.rule == "resolve"
                && step.hasResultClause
-               && wrapped->parameters.empty()
                && step.parentIds.size() == 2) {
       const std::vector<std::string> parents{
         normalizedParent(step.parentIds[0]),
@@ -4783,17 +4778,22 @@ bool expandChoiceNormalizedProof(
       };
       std::size_t leftPivot = 0;
       std::size_t rightPivot = 0;
+      std::vector<std::string> leftArguments;
+      std::vector<std::string> rightArguments;
       std::set<std::string> expectedParents(parents.begin(), parents.end());
-      if (parameterFreeParent(step.parentIds[0])
-          && parameterFreeParent(step.parentIds[1])
-          && parentClauseNormalizationStable(step.parentIds[0])
+      if (parentClauseNormalizationStable(step.parentIds[0])
           && parentClauseNormalizationStable(step.parentIds[1])
+          && identityArguments(step.parentIds[0], leftArguments)
+          && identityArguments(step.parentIds[1], rightArguments)
           && expectedParents == referencedParents
           && indexField("pivot_left", leftPivot)
           && indexField("pivot_right", rightPivot)) {
         node.ivyJustification.rule = IvyRule::Resolve;
         node.ivyJustification.parents = parents;
         node.ivyJustification.indices = {leftPivot, rightPivot};
+        node.ivyJustification.parentArguments = {
+          std::move(leftArguments), std::move(rightArguments),
+        };
       } else {
         node.producerProof = proof.render();
       }
@@ -5308,10 +5308,45 @@ bool expandGroundChoiceProof(
       }
     } else if (node.ivyJustification.rule == IvyRule::Resolve) {
       if (node.ivyJustification.parents.size() != 2
-          || node.ivyJustification.indices.size() != 2) {
+          || node.ivyJustification.indices.size() != 2
+          || node.ivyJustification.parentArguments.size() != 2) {
         error = "ground choice prooftrans received malformed compact resolution at "
           + node.step;
         return false;
+      }
+      for (std::size_t side = 0; side < 2; ++side) {
+        PreservedSexpr application;
+        if (!parser.parse(
+              "(parent "
+                + quotePreservedName(node.ivyJustification.parents[side])
+                + ")",
+              application)) {
+          return false;
+        }
+        for (const std::string& argumentText
+             : node.ivyJustification.parentArguments[side]) {
+          PreservedSexpr argument;
+          PreservedSexpr applied;
+          if (!parser.parse(argumentText, argument)
+              || !parser.parse(
+                   "(term_apply " + application.render() + " "
+                     + argument.render() + ")",
+                   applied)) {
+            error = "ground choice prooftrans cannot parse compact resolution argument at "
+              + node.step;
+            return false;
+          }
+          application = std::move(applied);
+        }
+        PreservedSexpr rewritten;
+        if (!rewrite(application, rewritten)) {
+          if (error.empty()) {
+            error = "ground choice prooftrans cannot specialize compact resolution at "
+              + node.step;
+          }
+          return false;
+        }
+        rewrittenParentApplications.push_back(std::move(rewritten));
       }
     } else if (node.ivyJustification.rule == IvyRule::Factor
                || node.ivyJustification.rule == IvyRule::EqualityResolution
@@ -5440,6 +5475,34 @@ bool expandGroundChoiceProof(
         if (rendered.ivyJustification.terms.empty()) {
           rendered.ivyJustification.rule = IvyRule::Copy;
         }
+      } else if (node.ivyJustification.rule == IvyRule::Resolve) {
+        std::set<std::string> parents;
+        rendered.ivyJustification.parents.clear();
+        rendered.ivyJustification.parentArguments.clear();
+        for (const PreservedSexpr& application
+             : rewrittenParentApplications) {
+          const PreservedSexpr* current = &application;
+          std::vector<std::string> arguments;
+          while (sexprHead(*current, "term_apply")
+                 && current->items.size() == 3) {
+            arguments.push_back(current->items[2].render());
+            current = &current->items[1];
+          }
+          std::string parent;
+          if (!sexprHead(*current, "parent")
+              || current->items.size() != 2
+              || !preservedName(current->items[1], parent)) {
+            error = "ground choice prooftrans cannot normalize compact resolution at "
+              + node.step;
+            return false;
+          }
+          std::reverse(arguments.begin(), arguments.end());
+          rendered.ivyJustification.parents.push_back(parent);
+          rendered.ivyJustification.parentArguments.push_back(
+            std::move(arguments));
+          parents.insert(parent);
+        }
+        rendered.parents.assign(parents.begin(), parents.end());
       } else if (node.ivyJustification.rule == IvyRule::Factor
                  || node.ivyJustification.rule == IvyRule::EqualityResolution
                  || node.ivyJustification.rule == IvyRule::EqualitySymmetry
