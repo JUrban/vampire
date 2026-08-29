@@ -17882,6 +17882,9 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
                 "u" + std::to_string(parent->number()));
             }
           }
+          if (rule == Kernel::InferenceRule::AVATAR_SPLIT_CLAUSE) {
+            sourceStep.parametricParentIds = sourceStep.parentIds;
+          }
         } else if (rule == Kernel::InferenceRule::DEFINITION_FOLDING_PRED) {
           Kernel::Unit* sourceParent = nullptr;
           std::vector<Kernel::Unit*> definitionParents;
@@ -17931,7 +17934,8 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
         MegalodonProofExpander::Step step;
         step.id = primitive.id;
         step.parentIds = primitive.parentIds;
-        if (primitive.rule == "cnf_formula_clause"
+        if (primitive.rule == "avatar_split"
+            || primitive.rule == "cnf_formula_clause"
             || primitive.rule == "skolem_formula") {
           step.parametricParentIds = primitive.parentIds;
         }
@@ -18209,6 +18213,19 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       groundedSkolemInventoryUses);
   if (!skolemUseBlock.empty()) {
     out << "  " << skolemUseBlock << "\n";
+    std::string unherbrandizationError;
+    const std::string unherbrandizationBlock =
+      MegalodonKernelBuilder::skolemFiniteUnherbrandizationBlock(
+        "u" + std::to_string((*proof.rbegin())->number()),
+        groundedSkolemUses,
+        renderedGrounding,
+        unherbrandizationError);
+    if (unherbrandizationBlock.empty()) {
+      INVALID_OPERATION(
+        "typed finite Skolem unherbrandization serialization failed: "
+        + unherbrandizationError);
+    }
+    out << "  " << unherbrandizationBlock << "\n";
   }
   if (!groundedSkolemSteps.empty() || !choiceTermDefinitions.empty()) {
     std::vector<MegalodonProofExpander::ChoiceProofStep> choiceSteps;
@@ -18299,8 +18316,17 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       INVALID_OPERATION(
         "choice-normalized Ivy DAG expansion failed: " + choiceProofError);
     }
+    MegalodonKernelSyntax::RenderedKernelChoiceProof groundChoiceProof;
+    if (!MegalodonProofExpander::expandGroundChoiceProof(
+          choiceProof,
+          renderedGrounding,
+          groundChoiceProof,
+          choiceProofError)) {
+      INVALID_OPERATION(
+        "ground choice Ivy prooftrans failed: " + choiceProofError);
+    }
     const std::string choiceProofBlock =
-      MegalodonKernelBuilder::skolemChoiceProofBlock(choiceProof);
+      MegalodonKernelBuilder::skolemChoiceProofBlock(groundChoiceProof);
     if (choiceProofBlock.empty()) {
       INVALID_OPERATION("choice-normalized Ivy DAG serialization failed");
     }

@@ -200,6 +200,8 @@ struct RenderedKernelChoiceProof {
   std::string finalStep;
   std::vector<std::string> eliminatedSymbols;
   std::vector<RenderedKernelChoiceProofNode> nodes;
+  // Producer-only normal forms used by the subsequent ground prooftrans pass.
+  std::vector<std::pair<std::string, std::string>> producerGroundSubstitutions;
 };
 
 struct RenderedKernelPosition {

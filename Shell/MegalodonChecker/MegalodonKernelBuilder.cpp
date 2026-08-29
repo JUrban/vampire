@@ -843,7 +843,9 @@ std::string skolemChoiceProofBlock(
   const MegalodonKernelSyntax::RenderedKernelChoiceProof& proof)
 {
   if ((proof.version != "ivy_choice_dag_v1"
-       && proof.version != "ivy_choice_dag_v2")
+       && proof.version != "ivy_choice_dag_v2"
+       && proof.version != "ivy_ground_choice_dag_v1"
+       && proof.version != "ivy_ground_choice_dag_v2")
       || proof.finalStep.empty()
       || proof.eliminatedSymbols.empty()
       || proof.nodes.empty()) {
@@ -888,7 +890,8 @@ std::string skolemChoiceProofBlock(
     result +=
       ") (program \"ivy_nd_v1\" (proof " + node.producerProof + "))";
     if (node.hasRootExistsScope) {
-      if (proof.version != "ivy_choice_dag_v2"
+      if ((proof.version != "ivy_choice_dag_v2"
+           && proof.version != "ivy_ground_choice_dag_v2")
           || node.hasResultClause
           || node.rootExistsScopeParent.empty()
           || node.rootExistsScopeWitnessType.empty()

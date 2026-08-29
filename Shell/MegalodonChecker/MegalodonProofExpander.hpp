@@ -225,6 +225,12 @@ bool expandChoiceNormalizedProof(
   MegalodonKernelSyntax::RenderedKernelChoiceProof& result,
   std::string& error);
 
+bool expandGroundChoiceProof(
+  const MegalodonKernelSyntax::RenderedKernelChoiceProof& source,
+  const MegalodonKernelSyntax::RenderedKernelGroundProof& groundProof,
+  MegalodonKernelSyntax::RenderedKernelChoiceProof& result,
+  std::string& error);
+
 bool expandClauseProof(
   const std::vector<ClauseStepRequest>& requests,
   const std::string& finalStep,

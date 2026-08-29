@@ -211,7 +211,7 @@ bool groundEnvironment(
     return true;
   }
 
-  VariableSorts needed = step.freeVariableSorts;
+  VariableSorts needed;
   for (const auto& binding : result) {
     auto bindingSort = std::find_if(
       step.freeVariableSorts.begin(),
@@ -525,34 +525,6 @@ bool expandGroundProof(
       }
       const Step& step = *found->second;
       bool instanceParametric = parametric;
-      if (instanceParametric
-          && std::any_of(
-            step.applications.begin(),
-            step.applications.end(),
-            [](const Application& application) {
-              return application.requiresGrounding;
-            })) {
-        Environment probeEnvironment;
-        if (!groundEnvironment(
-              step,
-              environment,
-              true,
-              groundTerms,
-              probeEnvironment,
-              error)) {
-          return false;
-        }
-        const bool requiredApplicationsAreGround = std::all_of(
-          step.applications.begin(),
-          step.applications.end(),
-          [&](const Application& application) {
-            return !application.requiresGrounding
-              || applyEnvironment(application.term, probeEnvironment).ground();
-          });
-        if (requiredApplicationsAreGround) {
-          instanceParametric = false;
-        }
-      }
       Environment groundedEnvironment;
       if (!groundEnvironment(
             step,
@@ -562,6 +534,19 @@ bool expandGroundProof(
             groundedEnvironment,
             error)) {
         return false;
+      }
+      if (std::any_of(
+            step.freeVariableSorts.begin(),
+            step.freeVariableSorts.end(),
+            [&](const auto& variable) {
+              return std::none_of(
+                groundedEnvironment.begin(),
+                groundedEnvironment.end(),
+                [&](const auto& binding) {
+                  return binding.first == variable.first;
+                });
+            })) {
+        instanceParametric = true;
       }
       for (const auto& instance : result.instances) {
         if (instance.stepId == stepId
@@ -1866,7 +1851,8 @@ PreservedSexpr substituteNamedVariableSexpr(
   if (result.atom) return result;
   if ((sexprHead(result, "ALLV")
        || sexprHead(result, "LAMV")
-       || sexprHead(result, "VLAMV"))
+       || sexprHead(result, "VLAMV")
+       || sexprHead(result, "term_lambda"))
       && result.items.size() == 4
       && result.items[1].atom
       && result.items[1].token == quotePreservedName(variable)) {
@@ -4625,7 +4611,421 @@ bool expandChoiceNormalizedProof(
     ? "ivy_choice_dag_v2"
     : "ivy_choice_dag_v1";
   result.finalStep = normalizedId(finalStep);
+  for (const auto& replacement : replacements) {
+    result.producerGroundSubstitutions.push_back({
+      replacement.first,
+      replacement.second.render(),
+    });
+  }
   result.eliminatedSymbols = std::move(eliminated);
+  return true;
+}
+
+bool expandGroundChoiceProof(
+  const MegalodonKernelSyntax::RenderedKernelChoiceProof& source,
+  const MegalodonKernelSyntax::RenderedKernelGroundProof& groundProof,
+  MegalodonKernelSyntax::RenderedKernelChoiceProof& result,
+  std::string& error)
+{
+  using ChoiceNode = MegalodonKernelSyntax::RenderedKernelChoiceProofNode;
+  using GroundInstance = MegalodonKernelSyntax::RenderedKernelGroundInstance;
+  PreservedSexprParser parser;
+  result = {};
+  if ((source.version != "ivy_choice_dag_v1"
+       && source.version != "ivy_choice_dag_v2")
+      || source.nodes.empty() || source.finalStep.empty()
+      || groundProof.version != "ivy_instance_v3"
+      || groundProof.instances.empty()
+      || groundProof.finalStep.value.empty()) {
+    error = "ground choice prooftrans received an incomplete source DAG or instance graph";
+    return false;
+  }
+  for (std::size_t index = 0; index < groundProof.instances.size(); ++index) {
+    if (groundProof.instances[index].index != index) {
+      error = "ground choice prooftrans requires contiguous instance indices";
+      return false;
+    }
+  }
+
+  std::map<std::string, const ChoiceNode*> nodeById;
+  for (const ChoiceNode& node : source.nodes) {
+    if (node.step.empty() || !nodeById.emplace(node.step, &node).second) {
+      error = "ground choice prooftrans source has duplicate nodes";
+      return false;
+    }
+  }
+  const std::string prefix = "ivy_choice_";
+  const auto mainNodeId = [&](const std::string& unit) {
+    const std::string normalized = prefix + unit;
+    return nodeById.find(normalized) == nodeById.end() ? unit : normalized;
+  };
+  if (mainNodeId(groundProof.finalStep.value) != source.finalStep) {
+    error = "ground choice prooftrans roots disagree";
+    return false;
+  }
+
+  std::map<std::string, PreservedSexpr> producerSubstitutions;
+  for (const auto& binding : source.producerGroundSubstitutions) {
+    PreservedSexpr term;
+    if (binding.first.empty() || !parser.parse(binding.second, term)
+        || !producerSubstitutions.emplace(
+             binding.first, std::move(term)).second) {
+      error = "ground choice prooftrans cannot parse the producer normalization map";
+      return false;
+    }
+  }
+  const auto normalizeProducerTerms = [&](const PreservedSexpr& value,
+                                          const auto& self) -> PreservedSexpr {
+    for (const auto& binding : producerSubstitutions) {
+      if (namedTermSexpr(value, binding.first)) return binding.second;
+    }
+    PreservedSexpr result = value;
+    if (result.atom) return result;
+    for (std::size_t index = 1; index < result.items.size(); ++index) {
+      result.items[index] = self(result.items[index], self);
+    }
+    return result;
+  };
+
+  const auto groundId = [](std::size_t instance, const std::string& node) {
+    return "ivy_ground_" + std::to_string(instance) + "_" + node;
+  };
+  const auto environment = [&](const GroundInstance& instance) {
+    std::map<std::string, PreservedSexpr> result;
+    for (const auto& binding : instance.environment) {
+      PreservedSexpr term;
+      if (!parser.parse(binding.term.sexpr, term)
+          || !result.emplace(binding.variable, std::move(term)).second) {
+        result.clear();
+        return result;
+      }
+      result.at(binding.variable) = normalizeProducerTerms(
+        result.at(binding.variable), normalizeProducerTerms);
+    }
+    return result;
+  };
+  std::vector<std::map<std::string, PreservedSexpr>> environments;
+  environments.reserve(groundProof.instances.size());
+  for (const GroundInstance& instance : groundProof.instances) {
+    auto parsed = environment(instance);
+    if (parsed.size() != instance.environment.size()) {
+      error = "ground choice prooftrans cannot parse an instance environment";
+      return false;
+    }
+    environments.push_back(std::move(parsed));
+  }
+  const auto specialize = [&](PreservedSexpr value,
+                              std::size_t instance) {
+    for (const auto& binding : environments[instance]) {
+      value = substituteNamedVariableSexpr(
+        value, binding.first, binding.second);
+    }
+    return value;
+  };
+  const auto specializeLeadingBinders = [&](
+      PreservedSexpr value,
+      std::size_t instance,
+      const std::string& binderHead) {
+    const auto& bindings = environments[instance];
+    std::function<PreservedSexpr(PreservedSexpr)> descend;
+    descend = [&](PreservedSexpr current) -> PreservedSexpr {
+      if (!sexprHead(current, binderHead.c_str())
+          || current.items.size() != 4) {
+        return specialize(std::move(current), instance);
+      }
+      std::string variable;
+      if (!preservedName(current.items[1], variable)) {
+        return specialize(std::move(current), instance);
+      }
+      auto binding = bindings.find(variable);
+      if (binding != bindings.end()) {
+        return descend(substituteNamedVariableSexpr(
+          current.items[3], variable, binding->second));
+      }
+      current.items[3] = descend(std::move(current.items[3]));
+      return current;
+    };
+    return descend(std::move(value));
+  };
+  const auto retainedParameters = [&](const ChoiceNode& node,
+                                      std::size_t instance) {
+    std::vector<std::pair<std::string, std::string>> retained;
+    for (const auto& parameter : node.parameters) {
+      if (environments[instance].find(parameter.first)
+          == environments[instance].end()) {
+        retained.push_back(parameter);
+      }
+    }
+    return retained;
+  };
+  const auto formulaBinderSpecializations = [&](const ChoiceNode& node,
+                                                std::size_t instance) {
+    std::vector<bool> result;
+    if (!node.hasResultFormula) return result;
+    PreservedSexpr formula;
+    if (!parser.parse(node.resultFormula, formula)) return result;
+    while (sexprHead(formula, "ALLV") && formula.items.size() == 4) {
+      std::string variable;
+      if (!preservedName(formula.items[1], variable)) break;
+      result.push_back(
+        environments[instance].find(variable) != environments[instance].end());
+      formula = formula.items[3];
+    }
+    return result;
+  };
+  const auto mainUnit = [&](const std::string& nodeId,
+                            std::string& unit) {
+    if (nodeId.compare(0, prefix.size(), prefix) != 0) return false;
+    unit = nodeId.substr(prefix.size());
+    return std::any_of(
+      groundProof.instances.begin(), groundProof.instances.end(),
+      [&](const GroundInstance& instance) {
+        return instance.unit.value == unit;
+      });
+  };
+  const auto parentInstance = [&](std::size_t child,
+                                  const std::string& unit,
+                                  std::size_t& parent) {
+    const GroundInstance& instance = groundProof.instances[child];
+    std::vector<std::size_t> matches;
+    for (std::size_t candidate : instance.parentInstances) {
+      if (candidate < groundProof.instances.size()
+          && groundProof.instances[candidate].unit.value == unit) {
+        matches.push_back(candidate);
+      }
+    }
+    if (matches.size() != 1) return false;
+    parent = matches.front();
+    return true;
+  };
+  const auto collectProofParents = [&](const PreservedSexpr& source,
+                                       std::set<std::string>& parents,
+                                       const auto& self) -> void {
+    if (sexprHead(source, "parent") && source.items.size() == 2) {
+      std::string parent;
+      if (preservedName(source.items[1], parent)) parents.insert(parent);
+      return;
+    }
+    if (source.atom) return;
+    for (const auto& item : source.items) self(item, parents, self);
+  };
+
+  struct Key {
+    std::string node;
+    std::size_t instance = 0;
+    bool operator<(const Key& other) const {
+      return std::tie(instance, node) < std::tie(other.instance, other.node);
+    }
+  };
+  std::map<Key, unsigned> state;
+  std::map<Key, std::size_t> emittedIndex;
+  std::function<bool(const Key&)> emit;
+  emit = [&](const Key& key) {
+    const unsigned currentState = state[key];
+    if (currentState == 2) return true;
+    if (currentState == 1) {
+      error = "ground choice prooftrans found a cyclic support DAG";
+      return false;
+    }
+    auto foundNode = nodeById.find(key.node);
+    if (foundNode == nodeById.end()
+        || key.instance >= groundProof.instances.size()) {
+      error = "ground choice prooftrans references an unknown node or instance";
+      return false;
+    }
+    state[key] = 1;
+    const ChoiceNode& node = *foundNode->second;
+
+    struct ParentTarget {
+      bool generated = false;
+      Key key;
+      std::string rendered;
+    };
+    const auto resolveParent = [&](const std::string& parent,
+                                   ParentTarget& target) {
+      auto generic = nodeById.find(parent);
+      if (generic == nodeById.end()) {
+        target.rendered = parent;
+        return true;
+      }
+      std::string unit;
+      std::size_t instance = key.instance;
+      if (mainUnit(parent, unit)) {
+        if (unit != groundProof.instances[key.instance].unit.value
+            && !parentInstance(key.instance, unit, instance)) {
+          error = "ground choice prooftrans cannot identify the exact parent instance for "
+            + parent + " from instance " + std::to_string(key.instance);
+          return false;
+        }
+      }
+      target.generated = true;
+      target.key = {parent, instance};
+      target.rendered = groundId(instance, parent);
+      return true;
+    };
+
+    std::function<bool(const PreservedSexpr&, PreservedSexpr&)> rewrite;
+    rewrite = [&](const PreservedSexpr& input, PreservedSexpr& output) {
+      std::vector<PreservedSexpr> arguments;
+      const PreservedSexpr* base = &input;
+      while (sexprHead(*base, "term_apply") && base->items.size() == 3) {
+        arguments.push_back(base->items[2]);
+        base = &base->items[1];
+      }
+      if (sexprHead(*base, "parent") && base->items.size() == 2) {
+        std::string parent;
+        if (!preservedName(base->items[1], parent)) return false;
+        ParentTarget target;
+        if (!resolveParent(parent, target)) return false;
+        if (target.generated && !emit(target.key)) return false;
+        std::reverse(arguments.begin(), arguments.end());
+        std::vector<PreservedSexpr> retainedArguments;
+        if (target.generated) {
+          const ChoiceNode& parentNode = *nodeById.at(target.key.node);
+          const std::vector<bool> formulaBinders =
+            formulaBinderSpecializations(parentNode, target.key.instance);
+          const std::size_t theoremArguments =
+            parentNode.parameters.size() + formulaBinders.size();
+          if (arguments.size() < theoremArguments) {
+            error = "ground choice prooftrans parent theorem application has too few arguments at "
+              + node.step + " -> " + parent;
+            return false;
+          }
+          for (std::size_t index = 0;
+               index < parentNode.parameters.size();
+               ++index) {
+            PreservedSexpr argument = specialize(
+              arguments[index], target.key.instance);
+            const std::string& parameter = parentNode.parameters[index].first;
+            auto binding = environments[target.key.instance].find(parameter);
+            if (binding == environments[target.key.instance].end()) {
+              retainedArguments.push_back(std::move(argument));
+            }
+          }
+          for (std::size_t index = 0; index < formulaBinders.size(); ++index) {
+            PreservedSexpr argument = specialize(
+              arguments[parentNode.parameters.size() + index],
+              target.key.instance);
+            if (!formulaBinders[index]) {
+              retainedArguments.push_back(std::move(argument));
+            }
+          }
+          for (std::size_t index = theoremArguments;
+               index < arguments.size();
+               ++index) {
+            PreservedSexpr argument = specialize(
+              arguments[index], target.key.instance);
+            retainedArguments.push_back(std::move(argument));
+          }
+        } else {
+          for (const PreservedSexpr& argument : arguments) {
+            retainedArguments.push_back(specialize(argument, key.instance));
+          }
+        }
+        if (!parser.parse(
+              "(parent " + quotePreservedName(target.rendered) + ")",
+              output)) {
+          return false;
+        }
+        for (const PreservedSexpr& argument : retainedArguments) {
+          PreservedSexpr applied;
+          if (!parser.parse(
+                "(term_apply " + output.render() + " "
+                + argument.render() + ")", applied)) {
+            return false;
+          }
+          output = std::move(applied);
+        }
+        return true;
+      }
+      output = input;
+      if (output.atom) return true;
+      for (std::size_t index = 1; index < output.items.size(); ++index) {
+        if (!rewrite(output.items[index], output.items[index])) return false;
+      }
+      return true;
+    };
+
+    PreservedSexpr conclusion;
+    PreservedSexpr proof;
+    const std::string& conclusionText = node.hasResultClause
+      ? node.resultClause : node.resultFormula;
+    if (node.hasResultClause == node.hasResultFormula
+        || !parser.parse(conclusionText, conclusion)
+        || !parser.parse(node.producerProof, proof)) {
+      error = "ground choice prooftrans cannot parse node " + node.step;
+      return false;
+    }
+    conclusion = node.hasResultFormula
+      ? specializeLeadingBinders(
+          std::move(conclusion), key.instance, "ALLV")
+      : specialize(std::move(conclusion), key.instance);
+    proof = specializeLeadingBinders(
+      std::move(proof), key.instance, "term_lambda");
+    PreservedSexpr rewrittenProof;
+    if (!rewrite(proof, rewrittenProof)) {
+      if (error.empty()) {
+        error = "ground choice prooftrans cannot rewrite node " + node.step;
+      }
+      return false;
+    }
+
+    ChoiceNode rendered;
+    rendered.index = result.nodes.size();
+    rendered.step = groundId(key.instance, node.step);
+    rendered.parameters = retainedParameters(node, key.instance);
+    rendered.hasResultClause = node.hasResultClause;
+    rendered.hasResultFormula = node.hasResultFormula;
+    if (rendered.hasResultClause) rendered.resultClause = conclusion.render();
+    if (rendered.hasResultFormula) rendered.resultFormula = conclusion.render();
+    rendered.producerProof = rewrittenProof.render();
+    std::set<std::string> parents;
+    collectProofParents(rewrittenProof, parents, collectProofParents);
+    rendered.parents.assign(parents.begin(), parents.end());
+
+    if (node.hasRootExistsScope) {
+      ParentTarget scopeParent;
+      PreservedSexpr witness;
+      PreservedSexpr scopeSource;
+      PreservedSexpr scopeTarget;
+      PreservedSexpr scopeBridge;
+      if (!resolveParent(node.rootExistsScopeParent, scopeParent)
+          || (scopeParent.generated && !emit(scopeParent.key))
+          || !parser.parse(node.rootExistsScopeWitnessTerm, witness)
+          || !parser.parse(node.rootExistsScopeSourceFormula, scopeSource)
+          || !parser.parse(node.rootExistsScopeTargetFormula, scopeTarget)
+          || !parser.parse(node.rootExistsScopeBridgeProof, scopeBridge)) {
+        error = "ground choice prooftrans cannot specialize a root scope at "
+          + node.step;
+        return false;
+      }
+      witness = specialize(std::move(witness), key.instance);
+      scopeSource = specialize(std::move(scopeSource), key.instance);
+      scopeTarget = specialize(std::move(scopeTarget), key.instance);
+      scopeBridge = specialize(std::move(scopeBridge), key.instance);
+      PreservedSexpr rewrittenBridge;
+      if (!rewrite(scopeBridge, rewrittenBridge)) return false;
+      rendered.hasRootExistsScope = true;
+      rendered.rootExistsScopeParent = scopeParent.rendered;
+      rendered.rootExistsScopeWitnessType = node.rootExistsScopeWitnessType;
+      rendered.rootExistsScopeWitnessTerm = witness.render();
+      rendered.rootExistsScopeSourceFormula = scopeSource.render();
+      rendered.rootExistsScopeTargetFormula = scopeTarget.render();
+      rendered.rootExistsScopeBridgeProof = rewrittenBridge.render();
+    }
+    emittedIndex.emplace(key, rendered.index);
+    result.nodes.push_back(std::move(rendered));
+    state[key] = 2;
+    return true;
+  };
+
+  const Key root = {source.finalStep, 0};
+  if (!emit(root)) return false;
+  result.version = source.version == "ivy_choice_dag_v2"
+    ? "ivy_ground_choice_dag_v2"
+    : "ivy_ground_choice_dag_v1";
+  result.finalStep = groundId(0, source.finalStep);
+  result.eliminatedSymbols = source.eliminatedSymbols;
   return true;
 }
 
