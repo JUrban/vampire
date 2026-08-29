@@ -861,9 +861,12 @@ std::string skolemChoiceProofBlock(
   result += ") (nodes";
   for (std::size_t expected = 0; expected < proof.nodes.size(); ++expected) {
     const auto& node = proof.nodes[expected];
+    const auto ivyRule = node.ivyJustification.rule;
+    const bool hasIvyJustification =
+      ivyRule != MegalodonKernelSyntax::RenderedKernelIvyRule::None;
     if (node.index != expected
         || node.step.empty()
-        || node.producerProof.empty()
+        || (node.producerProof.empty() == !hasIvyJustification)
         || node.hasResultClause == node.hasResultFormula) {
       return "";
     }
@@ -887,8 +890,150 @@ std::string skolemChoiceProofBlock(
     } else {
       result += "(formula " + node.resultFormula + ")";
     }
-    result +=
-      ") (program \"ivy_nd_v1\" (proof " + node.producerProof + "))";
+    if (hasIvyJustification) {
+      std::string rule;
+      switch (ivyRule) {
+      case MegalodonKernelSyntax::RenderedKernelIvyRule::Copy:
+        rule = "copy";
+        break;
+      case MegalodonKernelSyntax::RenderedKernelIvyRule::Instantiate:
+        rule = "instantiate";
+        break;
+      case MegalodonKernelSyntax::RenderedKernelIvyRule::Resolve:
+        rule = "resolve";
+        break;
+      case MegalodonKernelSyntax::RenderedKernelIvyRule::Factor:
+        rule = "factor";
+        break;
+      case MegalodonKernelSyntax::RenderedKernelIvyRule::EqualityResolution:
+        rule = "equality_resolution";
+        break;
+      case MegalodonKernelSyntax::RenderedKernelIvyRule::EqualitySymmetry:
+        rule = "equality_symmetry";
+        break;
+      case MegalodonKernelSyntax::RenderedKernelIvyRule::TruthConflict:
+        rule = "truth_conflict";
+        break;
+      case MegalodonKernelSyntax::RenderedKernelIvyRule::Paramodulate:
+        rule = "paramodulate";
+        break;
+      case MegalodonKernelSyntax::RenderedKernelIvyRule::None:
+        return "";
+      }
+      result += ") (justification \"ivy_v1\" (rule \""
+        + rule + "\") (parents";
+      for (const std::string& parent : node.ivyJustification.parents) {
+        if (parent.empty()) return "";
+        result += " " + quote(parent);
+      }
+      result += ")";
+      const bool noParamodulatePayload =
+        node.ivyJustification.parentArguments.empty()
+        && node.ivyJustification.position.empty()
+        && node.ivyJustification.from.empty()
+        && node.ivyJustification.to.empty();
+      if (ivyRule == MegalodonKernelSyntax::RenderedKernelIvyRule::Copy) {
+        if (node.ivyJustification.parents.size() != 1
+            || !node.ivyJustification.indices.empty()
+            || !node.ivyJustification.terms.empty()
+            || !noParamodulatePayload) {
+          return "";
+        }
+      } else if (ivyRule
+                 == MegalodonKernelSyntax::RenderedKernelIvyRule::Instantiate) {
+        if (node.ivyJustification.parents.size() != 1
+            || !node.ivyJustification.indices.empty()
+            || node.ivyJustification.terms.empty()
+            || !noParamodulatePayload) {
+          return "";
+        }
+        result += " (arguments";
+        for (const std::string& term : node.ivyJustification.terms) {
+          if (term.empty()) return "";
+          result += " " + term;
+        }
+        result += ")";
+      } else if (ivyRule
+                 == MegalodonKernelSyntax::RenderedKernelIvyRule::Resolve) {
+        if (node.ivyJustification.parents.size() != 2
+            || node.ivyJustification.indices.size() != 2
+            || !node.ivyJustification.terms.empty()
+            || !noParamodulatePayload) {
+          return "";
+        }
+        result += " (pivots "
+          + std::to_string(node.ivyJustification.indices[0]) + " "
+          + std::to_string(node.ivyJustification.indices[1]) + ")";
+      } else if (ivyRule
+                 == MegalodonKernelSyntax::RenderedKernelIvyRule::Factor) {
+        if (node.ivyJustification.parents.size() != 1
+            || node.ivyJustification.indices.size() != 2
+            || !noParamodulatePayload) {
+          return "";
+        }
+        result += " (arguments";
+        for (const std::string& term : node.ivyJustification.terms) {
+          if (term.empty()) return "";
+          result += " " + term;
+        }
+        result += ")";
+        result += " (literals "
+          + std::to_string(node.ivyJustification.indices[0]) + " "
+          + std::to_string(node.ivyJustification.indices[1]) + ")";
+      } else if (ivyRule
+                 == MegalodonKernelSyntax::RenderedKernelIvyRule::EqualityResolution
+                 || ivyRule
+                    == MegalodonKernelSyntax::RenderedKernelIvyRule::EqualitySymmetry
+                 || ivyRule
+                    == MegalodonKernelSyntax::RenderedKernelIvyRule::TruthConflict) {
+        if (node.ivyJustification.parents.size() != 1
+            || node.ivyJustification.indices.size() != 1
+            || !noParamodulatePayload) {
+          return "";
+        }
+        result += " (arguments";
+        for (const std::string& term : node.ivyJustification.terms) {
+          if (term.empty()) return "";
+          result += " " + term;
+        }
+        result += ") (literal "
+          + std::to_string(node.ivyJustification.indices[0]) + ")";
+      } else if (ivyRule
+                 == MegalodonKernelSyntax::RenderedKernelIvyRule::Paramodulate) {
+        if (node.ivyJustification.parents.size() != 2
+            || node.ivyJustification.indices.size() != 3
+            || !node.ivyJustification.terms.empty()
+            || node.ivyJustification.parentArguments.size() != 2
+            || node.ivyJustification.position.empty()
+            || node.ivyJustification.from.empty()
+            || node.ivyJustification.to.empty()) {
+          return "";
+        }
+        result += " (arguments (equality";
+        for (const std::string& term
+             : node.ivyJustification.parentArguments[0]) {
+          if (term.empty()) return "";
+          result += " " + term;
+        }
+        result += ") (target";
+        for (const std::string& term
+             : node.ivyJustification.parentArguments[1]) {
+          if (term.empty()) return "";
+          result += " " + term;
+        }
+        result += ")) (literals "
+          + std::to_string(node.ivyJustification.indices[0]) + " "
+          + std::to_string(node.ivyJustification.indices[1]) + " "
+          + std::to_string(node.ivyJustification.indices[2]) + ") "
+          + node.ivyJustification.position
+          + " (from " + node.ivyJustification.from + ")"
+          + " (to " + node.ivyJustification.to + ")";
+      }
+      result += ")";
+    } else {
+      result +=
+        ") (program \"ivy_nd_v1\" (proof " + node.producerProof + "))";
+    }
     if (node.hasRootExistsScope) {
       if ((proof.version != "ivy_choice_dag_v2"
            && proof.version != "ivy_ground_choice_dag_v2")
@@ -1220,12 +1365,14 @@ MegalodonKernelSyntax::PrimitiveStep equalityResolutionStep(
   const std::string& producerProof)
 {
   const std::string literalText = std::to_string(literal);
+  std::vector<std::pair<std::string, std::string>> fields = metadataFields;
+  fields.push_back({"literal", literalText});
   MegalodonKernelSyntax::PrimitiveStep step = primitiveClauseStep(
     "equality_resolution",
     id,
     {parent.value},
     result.sexpr,
-    metadataFields,
+    fields,
     "(equality_resolution " + quote(id)
       + " (parent " + quote(parent.value) + ")"
       + " (literal " + literalText + ")"
@@ -1357,6 +1504,7 @@ MegalodonKernelSyntax::PrimitiveStep paramodulateIvyStep(
 
   std::vector<bool> usedResult(resultLiterals.size(), false);
   std::size_t nodeIndex = 0;
+  std::size_t rewrittenResultIndex = resultLiterals.size();
   auto clauseSexpr = [](const std::vector<std::string>& literals) {
     std::string rendered = "(clause";
     for (const std::string& literal : literals) {
@@ -1403,6 +1551,9 @@ MegalodonKernelSyntax::PrimitiveStep paramodulateIvyStep(
         if (!takeTarget(produced, target)) {
           return false;
         }
+        if (literalIndex == selected && selectedResult != nullptr) {
+          rewrittenResultIndex = target;
+        }
         rendered += " (action \""
           + std::string(literalIndex == selected ? selectedAction : "copy")
           + "\") (target " + std::to_string(target) + "))";
@@ -1421,7 +1572,8 @@ MegalodonKernelSyntax::PrimitiveStep paramodulateIvyStep(
          rewriteSymmetry ? "rewrite_symmetry" : "rewrite",
          &rewrittenLiteral, targetProgram)
     || std::find(usedResult.begin(), usedResult.end(), false)
-       != usedResult.end()) {
+       != usedResult.end()
+    || rewrittenResultIndex >= resultLiterals.size()) {
     return paramodulateStep(
       id, equalityParent, equalityLiteral, targetParent, targetLiteral,
       position, from, to, result);
@@ -1430,6 +1582,9 @@ MegalodonKernelSyntax::PrimitiveStep paramodulateIvyStep(
   MegalodonKernelSyntax::PrimitiveStep step = paramodulateStep(
     id, equalityParent, equalityLiteral, targetParent, targetLiteral,
     position, from, to, result);
+  step.fields.push_back({
+    "result_literal", std::to_string(rewrittenResultIndex),
+  });
   step.rendered.pop_back();
   step.rendered += " (program \"ivy_paramodulate_v2\" "
     + equalityProgram + " " + targetProgram

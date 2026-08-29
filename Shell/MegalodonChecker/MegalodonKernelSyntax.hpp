@@ -179,6 +179,29 @@ struct RenderedKernelGroundProof {
   std::vector<RenderedKernelGroundInstance> instances;
 };
 
+enum class RenderedKernelIvyRule {
+  None,
+  Copy,
+  Instantiate,
+  Resolve,
+  Factor,
+  EqualityResolution,
+  EqualitySymmetry,
+  TruthConflict,
+  Paramodulate,
+};
+
+struct RenderedKernelIvyJustification {
+  RenderedKernelIvyRule rule = RenderedKernelIvyRule::None;
+  std::vector<std::string> parents;
+  std::vector<std::size_t> indices;
+  std::vector<std::string> terms;
+  std::vector<std::vector<std::string>> parentArguments;
+  std::string position;
+  std::string from;
+  std::string to;
+};
+
 struct RenderedKernelChoiceProofNode {
   std::size_t index = 0;
   std::string step;
@@ -189,6 +212,7 @@ struct RenderedKernelChoiceProofNode {
   bool hasResultFormula = false;
   std::string resultFormula;
   std::string producerProof;
+  RenderedKernelIvyJustification ivyJustification;
   bool hasRootExistsScope = false;
   std::string rootExistsScopeParent;
   std::string rootExistsScopeWitnessType;

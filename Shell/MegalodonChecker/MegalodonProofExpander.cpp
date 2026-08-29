@@ -4084,6 +4084,7 @@ bool expandChoiceNormalizedProof(
   std::string& error)
 {
   using PrimitiveStep = MegalodonKernelSyntax::PrimitiveStep;
+  using IvyRule = MegalodonKernelSyntax::RenderedKernelIvyRule;
   PreservedSexprParser parser;
   result = {};
   if (steps.empty() || finalStep.empty()
@@ -4568,6 +4569,28 @@ bool expandChoiceNormalizedProof(
     if (source.atom) return;
     for (const auto& item : source.items) self(item, parents, self);
   };
+  const auto proofInstantiation = [&](const PreservedSexpr& source,
+                                      std::string& parent,
+                                      std::vector<std::string>& arguments) {
+    const PreservedSexpr* current = &source;
+    while (sexprHead(*current, "term_apply")
+           && current->items.size() == 3) {
+      const PreservedSexpr& argument = current->items[2];
+      if (!sexprHead(argument, "term") || argument.items.size() != 2) {
+        return false;
+      }
+      arguments.push_back(argument.render());
+      current = &current->items[1];
+    }
+    if (arguments.empty()
+        || !sexprHead(*current, "parent")
+        || current->items.size() != 2
+        || !preservedName(current->items[1], parent)) {
+      return false;
+    }
+    std::reverse(arguments.begin(), arguments.end());
+    return true;
+  };
 
   for (const ChoiceProofStep* wrapped : ordered) {
     const PrimitiveStep& step = wrapped->primitive;
@@ -4661,7 +4684,221 @@ bool expandChoiceNormalizedProof(
     node.hasResultFormula = step.hasResultFormula;
     if (step.hasResultClause) node.resultClause = conclusion.render();
     if (step.hasResultFormula) node.resultFormula = conclusion.render();
-    node.producerProof = proof.render();
+    const auto normalizedParent = [&](const std::string& parent) {
+      auto support = supportClaims.find(parent);
+      return support != supportClaims.end()
+        ? support->second : normalizedId(parent);
+    };
+    const auto parameterFreeParent = [&](const std::string& parent) {
+      auto found = byId.find(parent);
+      return found != byId.end() && found->second->parameters.empty();
+    };
+    const auto indexField = [&](const std::string& name,
+                                std::size_t& value) {
+      auto found = std::find_if(
+        step.fields.begin(), step.fields.end(),
+        [&](const auto& item) { return item.first == name; });
+      if (found == step.fields.end() || found->second.empty()) return false;
+      char* end = nullptr;
+      const unsigned long parsed = std::strtoul(
+        found->second.c_str(), &end, 10);
+      if (end == nullptr || *end != '\0') return false;
+      value = static_cast<std::size_t>(parsed);
+      return true;
+    };
+    const auto textField = [&](const std::string& name,
+                               std::string& value) {
+      auto found = std::find_if(
+        step.fields.begin(), step.fields.end(),
+        [&](const auto& item) { return item.first == name; });
+      if (found == step.fields.end() || found->second.empty()) return false;
+      value = found->second;
+      return true;
+    };
+    const auto normalizedSexprField = [&](const std::string& name,
+                                          std::string& value) {
+      std::string source;
+      PreservedSexpr parsed;
+      if (!textField(name, source) || !parser.parse(source, parsed)) {
+        return false;
+      }
+      parsed = normalize(parsed, supportClaims, normalize);
+      if (containsEliminated(parsed, containsEliminated)) return false;
+      value = parsed.render();
+      return true;
+    };
+    const auto identityArguments = [&](const std::string& parent,
+                                       std::vector<std::string>& arguments) {
+      auto found = byId.find(parent);
+      if (found == byId.end()) return false;
+      for (const auto& parameter : found->second->parameters) {
+        if (std::find(
+              wrapped->parameters.begin(), wrapped->parameters.end(),
+              parameter) == wrapped->parameters.end()) {
+          return false;
+        }
+        arguments.push_back(
+          "(term (TMH " + quotePreservedName(parameter.first) + "))");
+      }
+      return true;
+    };
+    const auto parentClauseNormalizationStable = [&](const std::string& parent) {
+      if (affected.find(parent) != affected.end()
+          || supportClaims.find(parent) != supportClaims.end()) {
+        return true;
+      }
+      auto found = byId.find(parent);
+      if (found == byId.end() || !found->second->primitive.hasResultClause) {
+        return false;
+      }
+      PreservedSexpr original;
+      if (!parser.parse(found->second->primitive.resultClause, original)) {
+        return false;
+      }
+      return normalize(original, supportClaims, normalize).render()
+        == original.render();
+    };
+    std::string instantiatedParent;
+    std::vector<std::string> instantiationArguments;
+    if (referencedParents.size() == 1
+        && sexprHead(proof, "parent")
+        && proof.items.size() == 2) {
+      node.ivyJustification.rule = IvyRule::Copy;
+      node.ivyJustification.parents.assign(
+        referencedParents.begin(), referencedParents.end());
+    } else if (referencedParents.size() == 1
+               && proofInstantiation(
+                    proof, instantiatedParent, instantiationArguments)
+               && referencedParents.count(instantiatedParent) == 1) {
+      node.ivyJustification.rule = IvyRule::Instantiate;
+      node.ivyJustification.parents = {instantiatedParent};
+      node.ivyJustification.terms = std::move(instantiationArguments);
+    } else if (step.rule == "resolve"
+               && step.hasResultClause
+               && wrapped->parameters.empty()
+               && step.parentIds.size() == 2) {
+      const std::vector<std::string> parents{
+        normalizedParent(step.parentIds[0]),
+        normalizedParent(step.parentIds[1]),
+      };
+      std::size_t leftPivot = 0;
+      std::size_t rightPivot = 0;
+      std::set<std::string> expectedParents(parents.begin(), parents.end());
+      if (parameterFreeParent(step.parentIds[0])
+          && parameterFreeParent(step.parentIds[1])
+          && parentClauseNormalizationStable(step.parentIds[0])
+          && parentClauseNormalizationStable(step.parentIds[1])
+          && expectedParents == referencedParents
+          && indexField("pivot_left", leftPivot)
+          && indexField("pivot_right", rightPivot)) {
+        node.ivyJustification.rule = IvyRule::Resolve;
+        node.ivyJustification.parents = parents;
+        node.ivyJustification.indices = {leftPivot, rightPivot};
+      } else {
+        node.producerProof = proof.render();
+      }
+    } else if (step.rule == "factor"
+               && step.hasResultClause
+               && step.parentIds.size() == 1) {
+      const std::string parent = normalizedParent(step.parentIds.front());
+      auto parentStep = byId.find(step.parentIds.front());
+      std::size_t leftLiteral = 0;
+      std::size_t rightLiteral = 0;
+      if (parentStep != byId.end()
+          && parentStep->second->parameters == wrapped->parameters
+          && parentClauseNormalizationStable(step.parentIds.front())
+          && referencedParents == std::set<std::string>{parent}
+          && indexField("literal_left", leftLiteral)
+          && indexField("literal_right", rightLiteral)) {
+        node.ivyJustification.rule = IvyRule::Factor;
+        node.ivyJustification.parents = {parent};
+        node.ivyJustification.indices = {leftLiteral, rightLiteral};
+        for (const auto& parameter : wrapped->parameters) {
+          node.ivyJustification.terms.push_back(
+            "(term (TMH " + quotePreservedName(parameter.first) + "))");
+        }
+      } else {
+        node.producerProof = proof.render();
+      }
+    } else if ((step.rule == "equality_resolution"
+                || step.rule == "equality_symmetry")
+               && step.hasResultClause
+               && step.parentIds.size() == 1) {
+      const std::string parent = normalizedParent(step.parentIds.front());
+      std::vector<std::string> arguments;
+      std::size_t literal = 0;
+      if (referencedParents == std::set<std::string>{parent}
+          && parentClauseNormalizationStable(step.parentIds.front())
+          && identityArguments(step.parentIds.front(), arguments)
+          && indexField("literal", literal)) {
+        node.ivyJustification.rule = step.rule == "equality_resolution"
+          ? IvyRule::EqualityResolution : IvyRule::EqualitySymmetry;
+        node.ivyJustification.parents = {parent};
+        node.ivyJustification.indices = {literal};
+        node.ivyJustification.terms = std::move(arguments);
+      } else {
+        node.producerProof = proof.render();
+      }
+    } else if (step.rule == "truth_conflict"
+               && step.hasResultClause
+               && step.parentIds.size() == 1) {
+      const std::string parent = normalizedParent(step.parentIds.front());
+      std::vector<std::string> arguments;
+      std::size_t literal = 0;
+      if (referencedParents == std::set<std::string>{parent}
+          && parentClauseNormalizationStable(step.parentIds.front())
+          && identityArguments(step.parentIds.front(), arguments)
+          && indexField("literal", literal)) {
+        node.ivyJustification.rule = IvyRule::TruthConflict;
+        node.ivyJustification.parents = {parent};
+        node.ivyJustification.indices = {literal};
+        node.ivyJustification.terms = std::move(arguments);
+      } else {
+        node.producerProof = proof.render();
+      }
+    } else if (step.rule == "paramodulate"
+               && step.hasResultClause
+               && step.parentIds.size() == 2) {
+      const std::vector<std::string> parents{
+        normalizedParent(step.parentIds[0]),
+        normalizedParent(step.parentIds[1]),
+      };
+      std::vector<std::string> equalityArguments;
+      std::vector<std::string> targetArguments;
+      std::size_t equalityLiteral = 0;
+      std::size_t targetLiteral = 0;
+      std::size_t resultLiteral = 0;
+      std::string position;
+      std::string from;
+      std::string to;
+      if (referencedParents == std::set<std::string>(parents.begin(), parents.end())
+          && parentClauseNormalizationStable(step.parentIds[0])
+          && parentClauseNormalizationStable(step.parentIds[1])
+          && identityArguments(step.parentIds[0], equalityArguments)
+          && identityArguments(step.parentIds[1], targetArguments)
+          && indexField("equality_literal", equalityLiteral)
+          && indexField("target_literal", targetLiteral)
+          && indexField("result_literal", resultLiteral)
+          && normalizedSexprField("position", position)
+          && normalizedSexprField("from", from)
+          && normalizedSexprField("to", to)) {
+        node.ivyJustification.rule = IvyRule::Paramodulate;
+        node.ivyJustification.parents = parents;
+        node.ivyJustification.indices = {
+          equalityLiteral, targetLiteral, resultLiteral,
+        };
+        node.ivyJustification.parentArguments = {
+          equalityArguments, targetArguments,
+        };
+        node.ivyJustification.position = position;
+        node.ivyJustification.from = from;
+        node.ivyJustification.to = to;
+      } else {
+        node.producerProof = proof.render();
+      }
+    } else {
+      node.producerProof = proof.render();
+    }
 
     result.nodes.push_back(std::move(node));
   }
@@ -4690,6 +4927,7 @@ bool expandGroundChoiceProof(
 {
   using ChoiceNode = MegalodonKernelSyntax::RenderedKernelChoiceProofNode;
   using GroundInstance = MegalodonKernelSyntax::RenderedKernelGroundInstance;
+  using IvyRule = MegalodonKernelSyntax::RenderedKernelIvyRule;
   PreservedSexprParser parser;
   result = {};
   if ((source.version != "ivy_choice_dag_v1"
@@ -5011,9 +5249,12 @@ bool expandGroundChoiceProof(
     PreservedSexpr proof;
     const std::string& conclusionText = node.hasResultClause
       ? node.resultClause : node.resultFormula;
+    const bool hasIvyJustification =
+      node.ivyJustification.rule != IvyRule::None;
     if (node.hasResultClause == node.hasResultFormula
         || !parser.parse(conclusionText, conclusion)
-        || !parser.parse(node.producerProof, proof)) {
+        || (!hasIvyJustification
+            && !parser.parse(node.producerProof, proof))) {
       error = "ground choice prooftrans cannot parse node " + node.step;
       return false;
     }
@@ -5021,14 +5262,146 @@ bool expandGroundChoiceProof(
       ? specializeLeadingBinders(
           std::move(conclusion), key.instance, "ALLV")
       : specialize(std::move(conclusion), key.instance);
-    proof = specializeLeadingBinders(
-      std::move(proof), key.instance, "term_lambda");
     PreservedSexpr rewrittenProof;
-    if (!rewrite(proof, rewrittenProof)) {
-      if (error.empty()) {
-        error = "ground choice prooftrans cannot rewrite node " + node.step;
+    std::vector<PreservedSexpr> rewrittenParentApplications;
+    ParentTarget compactParent;
+    if (node.ivyJustification.rule == IvyRule::Copy) {
+      if (node.ivyJustification.parents.size() != 1
+          || !resolveParent(node.ivyJustification.parents.front(), compactParent)
+          || (compactParent.generated && !emit(compactParent.key))) {
+        error = "ground choice prooftrans cannot specialize compact copy node "
+          + node.step;
+        return false;
       }
-      return false;
+    } else if (node.ivyJustification.rule == IvyRule::Instantiate) {
+      if (node.ivyJustification.parents.size() != 1
+          || node.ivyJustification.terms.empty()
+          || !parser.parse(
+               "(parent "
+                 + quotePreservedName(node.ivyJustification.parents.front())
+                 + ")",
+               proof)) {
+        error = "ground choice prooftrans cannot parse compact instantiation at "
+          + node.step;
+        return false;
+      }
+      for (const std::string& argumentText : node.ivyJustification.terms) {
+        PreservedSexpr argument;
+        PreservedSexpr applied;
+        if (!parser.parse(argumentText, argument)
+            || !parser.parse(
+                 "(term_apply " + proof.render() + " "
+                   + argument.render() + ")",
+                 applied)) {
+          error = "ground choice prooftrans cannot parse compact instantiation argument at "
+            + node.step;
+          return false;
+        }
+        proof = std::move(applied);
+      }
+      if (!rewrite(proof, rewrittenProof)) {
+        if (error.empty()) {
+          error = "ground choice prooftrans cannot specialize compact instantiation at "
+            + node.step;
+        }
+        return false;
+      }
+    } else if (node.ivyJustification.rule == IvyRule::Resolve) {
+      if (node.ivyJustification.parents.size() != 2
+          || node.ivyJustification.indices.size() != 2) {
+        error = "ground choice prooftrans received malformed compact resolution at "
+          + node.step;
+        return false;
+      }
+    } else if (node.ivyJustification.rule == IvyRule::Factor
+               || node.ivyJustification.rule == IvyRule::EqualityResolution
+               || node.ivyJustification.rule == IvyRule::EqualitySymmetry
+               || node.ivyJustification.rule == IvyRule::TruthConflict) {
+      const std::size_t expectedIndices =
+        node.ivyJustification.rule == IvyRule::Factor ? 2 : 1;
+      if (node.ivyJustification.parents.size() != 1
+          || node.ivyJustification.indices.size() != expectedIndices
+          || !parser.parse(
+               "(parent "
+                 + quotePreservedName(node.ivyJustification.parents.front())
+                 + ")",
+               proof)) {
+        error = "ground choice prooftrans received malformed compact factor at "
+          + node.step;
+        return false;
+      }
+      for (const std::string& argumentText : node.ivyJustification.terms) {
+        PreservedSexpr argument;
+        PreservedSexpr applied;
+        if (!parser.parse(argumentText, argument)
+            || !parser.parse(
+                 "(term_apply " + proof.render() + " "
+                   + argument.render() + ")",
+                 applied)) {
+          error = "ground choice prooftrans cannot parse compact factor argument at "
+            + node.step;
+          return false;
+        }
+        proof = std::move(applied);
+      }
+      if (!rewrite(proof, rewrittenProof)) {
+        if (error.empty()) {
+          error = "ground choice prooftrans cannot specialize compact factor at "
+            + node.step;
+        }
+        return false;
+      }
+    } else if (node.ivyJustification.rule == IvyRule::Paramodulate) {
+      if (node.ivyJustification.parents.size() != 2
+          || node.ivyJustification.indices.size() != 3
+          || node.ivyJustification.parentArguments.size() != 2) {
+        error = "ground choice prooftrans received malformed compact paramodulation at "
+          + node.step;
+        return false;
+      }
+      for (std::size_t side = 0; side < 2; ++side) {
+        PreservedSexpr application;
+        if (!parser.parse(
+              "(parent "
+                + quotePreservedName(node.ivyJustification.parents[side])
+                + ")",
+              application)) {
+          return false;
+        }
+        for (const std::string& argumentText
+             : node.ivyJustification.parentArguments[side]) {
+          PreservedSexpr argument;
+          PreservedSexpr applied;
+          if (!parser.parse(argumentText, argument)
+              || !parser.parse(
+                   "(term_apply " + application.render() + " "
+                     + argument.render() + ")",
+                   applied)) {
+            error = "ground choice prooftrans cannot parse compact paramodulation argument at "
+              + node.step;
+            return false;
+          }
+          application = std::move(applied);
+        }
+        PreservedSexpr rewritten;
+        if (!rewrite(application, rewritten)) {
+          if (error.empty()) {
+            error = "ground choice prooftrans cannot specialize compact paramodulation at "
+              + node.step;
+          }
+          return false;
+        }
+        rewrittenParentApplications.push_back(std::move(rewritten));
+      }
+    } else {
+      proof = specializeLeadingBinders(
+        std::move(proof), key.instance, "term_lambda");
+      if (!rewrite(proof, rewrittenProof)) {
+        if (error.empty()) {
+          error = "ground choice prooftrans cannot rewrite node " + node.step;
+        }
+        return false;
+      }
     }
 
     ChoiceNode rendered;
@@ -5039,10 +5412,123 @@ bool expandGroundChoiceProof(
     rendered.hasResultFormula = node.hasResultFormula;
     if (rendered.hasResultClause) rendered.resultClause = conclusion.render();
     if (rendered.hasResultFormula) rendered.resultFormula = conclusion.render();
-    rendered.producerProof = rewrittenProof.render();
-    std::set<std::string> parents;
-    collectProofParents(rewrittenProof, parents, collectProofParents);
-    rendered.parents.assign(parents.begin(), parents.end());
+    rendered.ivyJustification = node.ivyJustification;
+    if (hasIvyJustification) {
+      if (node.ivyJustification.rule == IvyRule::Copy) {
+        rendered.parents = {compactParent.rendered};
+        rendered.ivyJustification.parents = rendered.parents;
+      } else if (node.ivyJustification.rule == IvyRule::Instantiate) {
+        const PreservedSexpr* current = &rewrittenProof;
+        std::vector<std::string> arguments;
+        while (sexprHead(*current, "term_apply")
+               && current->items.size() == 3) {
+          arguments.push_back(current->items[2].render());
+          current = &current->items[1];
+        }
+        std::string parent;
+        if (!sexprHead(*current, "parent")
+            || current->items.size() != 2
+            || !preservedName(current->items[1], parent)) {
+          error = "ground choice prooftrans cannot normalize compact instantiation at "
+            + node.step;
+          return false;
+        }
+        std::reverse(arguments.begin(), arguments.end());
+        rendered.parents = {parent};
+        rendered.ivyJustification.parents = rendered.parents;
+        rendered.ivyJustification.terms = std::move(arguments);
+        if (rendered.ivyJustification.terms.empty()) {
+          rendered.ivyJustification.rule = IvyRule::Copy;
+        }
+      } else if (node.ivyJustification.rule == IvyRule::Factor
+                 || node.ivyJustification.rule == IvyRule::EqualityResolution
+                 || node.ivyJustification.rule == IvyRule::EqualitySymmetry
+                 || node.ivyJustification.rule == IvyRule::TruthConflict) {
+        const PreservedSexpr* current = &rewrittenProof;
+        std::vector<std::string> arguments;
+        while (sexprHead(*current, "term_apply")
+               && current->items.size() == 3) {
+          arguments.push_back(current->items[2].render());
+          current = &current->items[1];
+        }
+        std::string parent;
+        if (!sexprHead(*current, "parent")
+            || current->items.size() != 2
+            || !preservedName(current->items[1], parent)) {
+          error = "ground choice prooftrans cannot normalize compact factor at "
+            + node.step;
+          return false;
+        }
+        std::reverse(arguments.begin(), arguments.end());
+        rendered.parents = {parent};
+        rendered.ivyJustification.parents = rendered.parents;
+        rendered.ivyJustification.terms = std::move(arguments);
+      } else if (node.ivyJustification.rule == IvyRule::Paramodulate) {
+        std::set<std::string> parents;
+        rendered.ivyJustification.parents.clear();
+        rendered.ivyJustification.parentArguments.clear();
+        for (const PreservedSexpr& application
+             : rewrittenParentApplications) {
+          const PreservedSexpr* current = &application;
+          std::vector<std::string> arguments;
+          while (sexprHead(*current, "term_apply")
+                 && current->items.size() == 3) {
+            arguments.push_back(current->items[2].render());
+            current = &current->items[1];
+          }
+          std::string parent;
+          if (!sexprHead(*current, "parent")
+              || current->items.size() != 2
+              || !preservedName(current->items[1], parent)) {
+            error = "ground choice prooftrans cannot normalize compact paramodulation at "
+              + node.step;
+            return false;
+          }
+          std::reverse(arguments.begin(), arguments.end());
+          rendered.ivyJustification.parents.push_back(parent);
+          rendered.ivyJustification.parentArguments.push_back(
+            std::move(arguments));
+          parents.insert(parent);
+        }
+        PreservedSexpr position;
+        PreservedSexpr from;
+        PreservedSexpr to;
+        if (!parser.parse(node.ivyJustification.position, position)
+            || !parser.parse(node.ivyJustification.from, from)
+            || !parser.parse(node.ivyJustification.to, to)) {
+          error = "ground choice prooftrans cannot parse compact paramodulation payload at "
+            + node.step;
+          return false;
+        }
+        rendered.ivyJustification.position =
+          specialize(std::move(position), key.instance).render();
+        rendered.ivyJustification.from =
+          specialize(std::move(from), key.instance).render();
+        rendered.ivyJustification.to =
+          specialize(std::move(to), key.instance).render();
+        rendered.parents.assign(parents.begin(), parents.end());
+      } else {
+        std::set<std::string> parents;
+        rendered.ivyJustification.parents.clear();
+        for (const std::string& parent : node.ivyJustification.parents) {
+          ParentTarget target;
+          if (!resolveParent(parent, target)
+              || (target.generated && !emit(target.key))) {
+            error = "ground choice prooftrans cannot specialize compact parent at "
+              + node.step;
+            return false;
+          }
+          rendered.ivyJustification.parents.push_back(target.rendered);
+          parents.insert(target.rendered);
+        }
+        rendered.parents.assign(parents.begin(), parents.end());
+      }
+    } else {
+      rendered.producerProof = rewrittenProof.render();
+      std::set<std::string> parents;
+      collectProofParents(rewrittenProof, parents, collectProofParents);
+      rendered.parents.assign(parents.begin(), parents.end());
+    }
 
     if (node.hasRootExistsScope) {
       ParentTarget scopeParent;
