@@ -63,6 +63,18 @@ void TwoLiteralRewriteInferenceExtra::output(std::ostream &out) const {
   rewrite.output(out);
 }
 
+void ForwardSubsumptionDemodulationExtra::output(std::ostream &out) const {
+  out << "main=" << mainParent->number()
+      << ",side=" << sideParent->number()
+      << ",equality=(" << equalityLiteral->toString() << ')'
+      << ",target=(" << targetLiteral->toString() << ')'
+      << ",rewritten=(" << rewrittenLiteral->toString() << ')'
+      << ",lhs=" << lhs
+      << ",rhs=" << rhs
+      << ",redex=" << redex
+      << ",replacement=" << replacement;
+}
+
 void UnitResultingResolutionExtra::output(std::ostream &out) const {
   out << "main=(" << mainParent->toString() << ')';
   for (std::size_t i = 0; i < steps.size(); ++i) {

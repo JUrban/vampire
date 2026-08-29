@@ -8,7 +8,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <functional>
+#include <iostream>
 #include <map>
 #include <set>
 #include <sstream>
@@ -1472,8 +1474,11 @@ bool expandGoalReplay(
       }
       auto found = byId.find(id);
       if (found == byId.end()) {
-        error = "goal replay references missing parent " + id;
-        return false;
+        // A choice-normalized producer block may replace an entire local-symbol
+        // slice.  References into that replaced slice are opaque leaves in the
+        // final native certificate, exactly as they are for the consumer.
+        reachable.insert(id);
+        return true;
       }
       if (!active.insert(id).second) {
         error = "goal replay proof graph is cyclic at " + id;
@@ -1490,6 +1495,41 @@ bool expandGoalReplay(
     };
   if (!visit(finalStep)) {
     return false;
+  }
+
+  if (std::getenv("MEGALODON_CERT_DEBUG")) {
+    std::function<bool(
+      const std::string&, const std::string&, std::set<std::string>&,
+      std::vector<std::string>&)> findPath;
+    findPath = [&](const std::string& id,
+                   const std::string& target,
+                   std::set<std::string>& seen,
+                   std::vector<std::string>& path) {
+      if (!seen.insert(id).second) return false;
+      path.push_back(id);
+      if (id == target) return true;
+      const auto found = byId.find(id);
+      if (found != byId.end()) {
+        for (const std::string& parent : found->second->parentIds) {
+          if (findPath(parent, target, seen, path)) return true;
+        }
+      }
+      path.pop_back();
+      seen.erase(id);
+      return false;
+    };
+    for (const auto& step : steps) {
+      if (!step.source || step.sourceRole == "conjecture"
+          || reachable.find(step.id) == reachable.end()) {
+        continue;
+      }
+      std::set<std::string> seen;
+      std::vector<std::string> path;
+      findPath(finalStep, step.id, seen, path);
+      std::cerr << "megalodon goal source path " << step.id << ':';
+      for (const std::string& id : path) std::cerr << ' ' << id;
+      std::cerr << std::endl;
+    }
   }
 
   std::vector<const GoalReplayStep*> conjectures;
@@ -3944,6 +3984,651 @@ bool expandFoolFormulaProof(
   return true;
 }
 
+bool expandChoiceNormalizedProof(
+  const std::vector<ChoiceProofStep>& steps,
+  const std::vector<MegalodonKernelSyntax::PrimitiveStep>& skolemSteps,
+  const std::vector<ChoiceTermDefinition>& termDefinitions,
+  const std::string& finalStep,
+  MegalodonKernelSyntax::RenderedKernelChoiceProof& result,
+  std::string& error)
+{
+  using PrimitiveStep = MegalodonKernelSyntax::PrimitiveStep;
+  PreservedSexprParser parser;
+  result = {};
+  if (steps.empty() || finalStep.empty()
+      || (skolemSteps.empty() && termDefinitions.empty())) {
+    error = "choice-normalized proof DAG has no steps, local definitions, or root";
+    return false;
+  }
+
+  std::map<std::string, PreservedSexpr> replacements;
+  std::vector<std::string> eliminated;
+  const auto choiceOperator = [](const std::string& type) {
+    if (type == "(SET)") return std::string("Eps_i");
+    if (type == "(PROP)") return std::string("Eps_prop");
+    if (type == "(AR (SET) (PROP))") return std::string("Eps_set_prop");
+    if (type == "(AR (SET) (SET))") return std::string("Eps_set_set");
+    if (type == "(AR (SET) (AR (SET) (PROP)))") {
+      return std::string("Eps_set_set_prop");
+    }
+    return std::string();
+  };
+  const auto replaceConstants = [&](const PreservedSexpr& source,
+                                    const auto& self) -> PreservedSexpr {
+    for (const auto& replacement : replacements) {
+      if (namedTermSexpr(source, replacement.first)) {
+        return replacement.second;
+      }
+    }
+    PreservedSexpr replaced = source;
+    if (replaced.atom) return replaced;
+    for (std::size_t index = 1; index < replaced.items.size(); ++index) {
+      replaced.items[index] = self(replaced.items[index], self);
+    }
+    return replaced;
+  };
+
+  for (const PrimitiveStep& step : skolemSteps) {
+    if (!step.builderOwned || step.rule != "skolem_formula"
+        || step.producerSkolemChoiceDefinitions.empty()) {
+      error = "choice-normalized proof DAG received an incomplete Skolem step";
+      return false;
+    }
+    for (const auto& definition : step.producerSkolemChoiceDefinitions) {
+      if (definition.symbol.empty()
+          || replacements.find(definition.symbol) != replacements.end()) {
+        error = "choice-normalized proof DAG repeats a Skolem symbol";
+        return false;
+      }
+      PreservedSexpr source;
+      if (!parser.parse(definition.sourceFormulaSexpr, source)
+          || !sexprHead(source, "AP") || source.items.size() != 3
+          || !namedTermSexpr(source.items[1], "vampire_exists_prop")
+          || !(sexprHead(source.items[2], "VLAMV")
+               || sexprHead(source.items[2], "LAMV"))
+          || source.items[2].items.size() != 4) {
+        error = "choice definition for " + definition.symbol
+          + " is not an exact producer existential";
+        return false;
+      }
+      std::string witnessVariable;
+      if (!preservedName(source.items[2].items[1], witnessVariable)
+          || source.items[2].items[2].render()
+             != definition.witnessTypeSexpr) {
+        error = "choice definition for " + definition.symbol
+          + " has the wrong producer witness binder";
+        return false;
+      }
+      const std::string epsilon = choiceOperator(definition.witnessTypeSexpr);
+      if (epsilon.empty()) {
+        error = "choice definition for " + definition.symbol
+          + " uses an unsupported witness type";
+        return false;
+      }
+      const PreservedSexpr body =
+        replaceConstants(source.items[2].items[3], replaceConstants);
+      std::string rendered =
+        "(AP (TMH " + quotePreservedName(epsilon) + ")"
+        + " (LAMV " + quotePreservedName(witnessVariable) + " "
+        + definition.witnessTypeSexpr + " " + body.render() + "))";
+      for (auto parameter = definition.parameters.rbegin();
+           parameter != definition.parameters.rend(); ++parameter) {
+        if (parameter->first.empty() || parameter->second.empty()) {
+          error = "choice definition for " + definition.symbol
+            + " has an incomplete dependency binder";
+          return false;
+        }
+        rendered =
+          "(LAMV " + quotePreservedName(parameter->first) + " "
+          + parameter->second + " " + rendered + ")";
+      }
+      PreservedSexpr replacement;
+      if (!parser.parse(rendered, replacement)) {
+        error = "choice definition for " + definition.symbol
+          + " cannot be represented in the Ivy term language";
+        return false;
+      }
+      replacements.emplace(definition.symbol, std::move(replacement));
+      eliminated.push_back(definition.symbol);
+    }
+  }
+
+  std::map<std::string, const ChoiceTermDefinition*> termDefinitionBySymbol;
+  for (const ChoiceTermDefinition& definition : termDefinitions) {
+    if (definition.stepId.empty() || definition.symbol.empty()
+        || definition.resultType.empty() || definition.body.empty()
+        || definition.resultClause.empty()
+        || replacements.find(definition.symbol) != replacements.end()
+        || !termDefinitionBySymbol.emplace(
+              definition.symbol, &definition).second) {
+      error = "choice-normalized proof DAG has an invalid producer term definition";
+      return false;
+    }
+  }
+  std::map<std::string, unsigned> termDefinitionState;
+  std::function<bool(const std::string&)> expandTermDefinition;
+  expandTermDefinition = [&](const std::string& symbol) {
+    const unsigned state = termDefinitionState[symbol];
+    if (state == 1) {
+      error = "choice-normalized proof DAG has cyclic producer term definitions";
+      return false;
+    }
+    if (state == 2) return true;
+    termDefinitionState[symbol] = 1;
+    const ChoiceTermDefinition& definition =
+      *termDefinitionBySymbol.at(symbol);
+    PreservedSexpr body;
+    if (!parser.parse(definition.body, body)) {
+      error = "choice-normalized producer term definition " + symbol
+        + " has an unreadable body";
+      return false;
+    }
+    std::function<bool(PreservedSexpr&)> expandBody;
+    expandBody = [&](PreservedSexpr& source) {
+      std::string referenced;
+      if (sexprHead(source, "TMH") && source.items.size() == 2
+          && preservedName(source.items[1], referenced)) {
+        auto local = termDefinitionBySymbol.find(referenced);
+        if (local != termDefinitionBySymbol.end()) {
+          if (!expandTermDefinition(referenced)) return false;
+          source = replacements.at(referenced);
+          return true;
+        }
+        auto replacement = replacements.find(referenced);
+        if (replacement != replacements.end()) {
+          source = replacement->second;
+          return true;
+        }
+      }
+      if (source.atom) return true;
+      for (std::size_t index = 1; index < source.items.size(); ++index) {
+        if (!expandBody(source.items[index])) return false;
+      }
+      return true;
+    };
+    if (!expandBody(body)) return false;
+    std::string rendered = body.render();
+    for (auto parameter = definition.parameters.rbegin();
+         parameter != definition.parameters.rend(); ++parameter) {
+      if (parameter->first.empty() || parameter->second.empty()) {
+        error = "choice-normalized producer term definition " + symbol
+          + " has an incomplete parameter contract";
+        return false;
+      }
+      rendered =
+        "(LAMV " + quotePreservedName(parameter->first) + " "
+        + parameter->second + " " + rendered + ")";
+    }
+    PreservedSexpr replacement;
+    if (!parser.parse(rendered, replacement)) {
+      error = "choice-normalized producer term definition " + symbol
+        + " cannot be represented in the Ivy term language";
+      return false;
+    }
+    replacements.emplace(symbol, std::move(replacement));
+    termDefinitionState[symbol] = 2;
+    return true;
+  };
+  for (const ChoiceTermDefinition& definition : termDefinitions) {
+    if (!expandTermDefinition(definition.symbol)) return false;
+  }
+  for (const ChoiceTermDefinition& definition : termDefinitions) {
+    eliminated.push_back(definition.symbol);
+  }
+
+  std::map<std::string, const ChoiceProofStep*> byId;
+  for (const ChoiceProofStep& step : steps) {
+    if (!step.primitive.builderOwned || step.primitive.id.empty()
+        || !byId.emplace(step.primitive.id, &step).second) {
+      error = "choice-normalized proof DAG has a duplicate or unowned step";
+      return false;
+    }
+  }
+  if (byId.find(finalStep) == byId.end()) {
+    error = "choice-normalized proof DAG does not contain its final step";
+    return false;
+  }
+
+  std::set<std::string> ancestors;
+  std::function<bool(const std::string&)> collectAncestors;
+  collectAncestors = [&](const std::string& id) {
+    if (!ancestors.insert(id).second) return true;
+    auto found = byId.find(id);
+    if (found == byId.end()) return true;
+    for (const std::string& parent : found->second->primitive.parentIds) {
+      if (byId.find(parent) != byId.end() && !collectAncestors(parent)) {
+        return false;
+      }
+    }
+    return true;
+  };
+  if (!collectAncestors(finalStep)) {
+    error = "choice-normalized proof DAG ancestor traversal failed";
+    return false;
+  }
+
+  // Split dependencies are explicit identity objects in the native
+  // certificate.  Keep every such object whose owner is on the refutation
+  // path, even when no later inference selected the identity as its parent.
+  // This makes the producer DAG replace the complete local-symbol-bearing
+  // native slice instead of leaving the consumer to infer that it is dead.
+  std::vector<std::string> ownerLinkedObjects;
+  bool addedOwnerLinkedObject = true;
+  while (addedOwnerLinkedObject) {
+    addedOwnerLinkedObject = false;
+    for (const auto& entry : byId) {
+      const PrimitiveStep& step = entry.second->primitive;
+      const bool identity =
+        step.rule == "split_dependency" && step.parentIds.size() == 1;
+      const bool component =
+        step.rule == "avatar_component" && !step.parentIds.empty();
+      const bool linked = std::any_of(
+        step.parentIds.begin(), step.parentIds.end(),
+        [&](const std::string& parent) {
+          return parent != finalStep
+            && ancestors.find(parent) != ancestors.end();
+        });
+      if ((identity || component) && linked
+          && ancestors.insert(step.id).second) {
+        ownerLinkedObjects.push_back(step.id);
+        addedOwnerLinkedObject = true;
+      }
+    }
+  }
+
+  std::vector<const ChoiceProofStep*> ordered;
+  std::set<std::string> visiting;
+  std::set<std::string> visited;
+  std::function<bool(const std::string&)> order;
+  order = [&](const std::string& id) {
+    if (visited.find(id) != visited.end()) return true;
+    if (!visiting.insert(id).second) return false;
+    const ChoiceProofStep& step = *byId.at(id);
+    for (const std::string& parent : step.primitive.parentIds) {
+      if (ancestors.find(parent) != ancestors.end()
+          && byId.find(parent) != byId.end()
+          && !order(parent)) {
+        return false;
+      }
+    }
+    visiting.erase(id);
+    visited.insert(id);
+    ordered.push_back(&step);
+    return true;
+  };
+  for (const std::string& id : ownerLinkedObjects) {
+    if (!order(id)) {
+      error = "choice-normalized proof DAG is cyclic";
+      return false;
+    }
+  }
+  if (!order(finalStep)) {
+    error = "choice-normalized proof DAG is cyclic";
+    return false;
+  }
+
+  // AVATAR split names are certificate-local proposition constants.  The
+  // defining component is already recorded exactly by Vampire, so prooftrans
+  // can uniformly substitute that component through the small proof object.
+  // No split-name abstraction or definition recovery is left to the checker.
+  for (const ChoiceProofStep* wrapped : ordered) {
+    const PrimitiveStep& step = wrapped->primitive;
+    if (step.rule != "avatar_definition") continue;
+    const auto definition = std::find_if(
+      step.producerProofClaims.begin(), step.producerProofClaims.end(),
+      [&](const auto& claim) {
+        return claim.replacesDefinition == step.id
+          && !claim.resultFormula.empty();
+      });
+    PreservedSexpr relation;
+    if (definition == step.producerProofClaims.end()
+        || !parser.parse(definition->resultFormula, relation)) {
+      error = "choice-normalized AVATAR definition " + step.id
+        + " has no exact relation formula";
+      return false;
+    }
+    relation = replaceConstants(relation, replaceConstants);
+    if (!sexprHead(relation, "AP") || relation.items.size() != 3
+        || !sexprHead(relation.items[1], "AP")
+        || relation.items[1].items.size() != 3
+        || !namedTermSexpr(relation.items[1].items[1], "vampire_and")) {
+      error = "choice-normalized AVATAR definition " + step.id
+        + " is not an exact conjunction of implications";
+      return false;
+    }
+    const PreservedSexpr& left = relation.items[1].items[2];
+    const PreservedSexpr& right = relation.items[2];
+    if (!sexprHead(left, "IMP") || left.items.size() != 3
+        || !sexprHead(right, "IMP") || right.items.size() != 3
+        || left.items[2].render() != right.items[1].render()
+        || left.items[1].render() != right.items[2].render()
+        || !sexprHead(left.items[1], "TMH")
+        || left.items[1].items.size() != 2) {
+      error = "choice-normalized AVATAR definition " + step.id
+        + " does not identify one exact split component";
+      return false;
+    }
+    std::string split;
+    if (!preservedName(left.items[1].items[1], split)
+        || split.compare(0, 6, "split_") != 0
+        || replacements.find(split) != replacements.end()) {
+      error = "choice-normalized AVATAR definition " + step.id
+        + " repeats or misnames its split proposition";
+      return false;
+    }
+    replacements.emplace(split, left.items[2]);
+  }
+
+  const auto containsEliminated = [&](const PreservedSexpr& source,
+                                      const auto& self) -> bool {
+    for (const std::string& symbol : eliminated) {
+      if (namedTermSexpr(source, symbol)) return true;
+    }
+    if (source.atom) return false;
+    for (const auto& item : source.items) {
+      if (self(item, self)) return true;
+    }
+    return false;
+  };
+  std::set<std::string> affected;
+  std::set<std::string> skolemIds;
+  for (const PrimitiveStep& step : skolemSteps) skolemIds.insert(step.id);
+  for (const ChoiceProofStep* wrapped : ordered) {
+    const PrimitiveStep& step = wrapped->primitive;
+    PreservedSexpr conclusion;
+    const std::string& renderedConclusion = step.hasResultClause
+      ? step.resultClause : step.resultFormula;
+    if (step.hasResultClause == step.hasResultFormula
+        || !parser.parse(renderedConclusion, conclusion)) {
+      error = "choice-normalized proof DAG step " + step.id
+        + " has no exact producer conclusion";
+      return false;
+    }
+    const bool parentAffected = std::any_of(
+      step.parentIds.begin(), step.parentIds.end(),
+      [&](const std::string& parent) {
+        return affected.find(parent) != affected.end();
+      });
+    if (skolemIds.find(step.id) != skolemIds.end()
+        || containsEliminated(conclusion, containsEliminated)
+        || parentAffected) {
+      affected.insert(step.id);
+    }
+  }
+  if (affected.find(finalStep) == affected.end()) {
+    error = "choice-normalized proof DAG root is independent of its local definitions";
+    return false;
+  }
+
+  // Definition users consume an explicit relation claim in the small proof
+  // DAG. Retain every producer definition that supports an affected step even
+  // when that definition itself contains no eliminated Skolem symbol.
+  for (const ChoiceProofStep* wrapped : ordered) {
+    if (affected.find(wrapped->primitive.id) == affected.end()) continue;
+    for (const std::string& parent : wrapped->primitive.parentIds) {
+      auto found = byId.find(parent);
+      if (found != byId.end()
+          && !found->second->primitive.producerProofClaims.empty()) {
+        affected.insert(parent);
+      }
+    }
+  }
+  // A retained definition can make an explicitly emitted, otherwise-dead
+  // AVATAR component relevant.  Propagate once more in topological order so
+  // those producer objects and their identity records replace the complete
+  // native local-symbol slice.
+  for (const ChoiceProofStep* wrapped : ordered) {
+    if (affected.find(wrapped->primitive.id) != affected.end()) continue;
+    const bool parentAffected = std::any_of(
+      wrapped->primitive.parentIds.begin(),
+      wrapped->primitive.parentIds.end(),
+      [&](const std::string& parent) {
+        return affected.find(parent) != affected.end();
+      });
+    if (parentAffected) affected.insert(wrapped->primitive.id);
+  }
+
+  const std::string normalizedPrefix = "ivy_choice_";
+  const auto normalizedId = [&](const std::string& id) {
+    return affected.find(id) == affected.end() ? id : normalizedPrefix + id;
+  };
+  std::map<std::string, std::string> definitionClaims;
+  std::set<std::string> generatedClaimIds;
+  bool emittedRootExistsScope = false;
+  for (const ChoiceProofStep* wrapped : ordered) {
+    const PrimitiveStep& step = wrapped->primitive;
+    if (affected.find(step.id) == affected.end()) continue;
+    for (const auto& claim : step.producerProofClaims) {
+      const std::string claimId = normalizedPrefix + claim.id;
+      if (claim.id.empty()
+          || claim.resultFormula.empty() == claim.resultClause.empty()
+          || claim.producerProof.empty()
+          || !generatedClaimIds.insert(claimId).second
+          || byId.find(claim.id) != byId.end()) {
+        error = "choice-normalized proof DAG step " + step.id
+          + " has an invalid producer support claim";
+        return false;
+      }
+      if (!claim.replacesDefinition.empty()
+          && !definitionClaims.emplace(
+                claim.replacesDefinition, claimId).second) {
+        error = "choice-normalized proof DAG has duplicate producer definition claims";
+        return false;
+      }
+    }
+  }
+  const auto normalize = [&](const PreservedSexpr& source,
+                             const std::map<std::string, std::string>& supportClaims,
+                             const auto& self) -> PreservedSexpr {
+    for (const auto& replacement : replacements) {
+      if (namedTermSexpr(source, replacement.first)) {
+        return replacement.second;
+      }
+    }
+    if (sexprHead(source, "parent") && source.items.size() == 2) {
+      std::string parent;
+      if (preservedName(source.items[1], parent)) {
+        auto support = supportClaims.find(parent);
+        if (support != supportClaims.end()) {
+          PreservedSexpr redirected;
+          parser.parse(
+            "(parent " + quotePreservedName(support->second) + ")",
+            redirected);
+          return redirected;
+        }
+        if (affected.find(parent) != affected.end()) {
+          PreservedSexpr redirected;
+          parser.parse(
+            "(parent " + quotePreservedName(normalizedId(parent)) + ")",
+            redirected);
+          return redirected;
+        }
+      }
+    }
+    if (sexprHead(source, "definition") && source.items.size() == 2) {
+      std::string definition;
+      if (preservedName(source.items[1], definition)) {
+        auto found = definitionClaims.find(definition);
+        if (found != definitionClaims.end()) {
+          PreservedSexpr redirected;
+          parser.parse(
+            "(parent " + quotePreservedName(found->second) + ")",
+            redirected);
+          return redirected;
+        }
+      }
+    }
+    PreservedSexpr normalized = source;
+    if (normalized.atom) return normalized;
+    for (std::size_t index = 1; index < normalized.items.size(); ++index) {
+      normalized.items[index] =
+        self(normalized.items[index], supportClaims, self);
+    }
+    return normalized;
+  };
+
+  const auto proofParents = [&](const PreservedSexpr& source,
+                                std::set<std::string>& parents,
+                                const auto& self) -> void {
+    if (sexprHead(source, "parent") && source.items.size() == 2) {
+      std::string parent;
+      if (preservedName(source.items[1], parent)) parents.insert(parent);
+      return;
+    }
+    if (source.atom) return;
+    for (const auto& item : source.items) self(item, parents, self);
+  };
+
+  for (const ChoiceProofStep* wrapped : ordered) {
+    const PrimitiveStep& step = wrapped->primitive;
+    if (affected.find(step.id) == affected.end()) continue;
+    if (!wrapped->hasParameterContract) {
+      error = "choice-normalized proof DAG step " + step.id
+        + " lacks a producer variable contract";
+      return false;
+    }
+    std::map<std::string, std::string> supportClaims;
+    for (const auto& claim : step.producerProofClaims) {
+      if (!claim.replacesParent.empty()
+          && !supportClaims.emplace(
+                claim.replacesParent, normalizedPrefix + claim.id).second) {
+        error = "choice-normalized proof DAG step " + step.id
+          + " has duplicate local support claims";
+        return false;
+      }
+    }
+    for (const auto& claim : step.producerProofClaims) {
+      PreservedSexpr claimProof;
+      PreservedSexpr claimConclusion;
+      const std::string& renderedClaimConclusion =
+        claim.resultClause.empty() ? claim.resultFormula : claim.resultClause;
+      if (!parser.parse(claim.producerProof, claimProof)
+          || !parser.parse(renderedClaimConclusion, claimConclusion)) {
+        error = "choice-normalized proof DAG step " + step.id
+          + " has an unreadable producer support claim";
+        return false;
+      }
+      claimProof = normalize(claimProof, supportClaims, normalize);
+      claimConclusion = normalize(claimConclusion, supportClaims, normalize);
+      if (containsEliminated(claimProof, containsEliminated)
+          || containsEliminated(claimConclusion, containsEliminated)) {
+        error = "choice-normalized proof DAG support claim " + claim.id
+          + " retains a certificate-local Skolem symbol";
+        return false;
+      }
+      MegalodonKernelSyntax::RenderedKernelChoiceProofNode claimNode;
+      claimNode.index = result.nodes.size();
+      claimNode.step = normalizedPrefix + claim.id;
+      claimNode.parameters = claim.hasParameterContract
+        ? claim.parameters : wrapped->parameters;
+      claimNode.hasResultFormula = !claim.resultFormula.empty();
+      claimNode.hasResultClause = !claim.resultClause.empty();
+      if (claimNode.hasResultFormula) {
+        claimNode.resultFormula = claimConclusion.render();
+      } else {
+        claimNode.resultClause = claimConclusion.render();
+      }
+      claimNode.producerProof = claimProof.render();
+      std::set<std::string> referencedParents;
+      proofParents(claimProof, referencedParents, proofParents);
+      claimNode.parents.assign(
+        referencedParents.begin(), referencedParents.end());
+      result.nodes.push_back(std::move(claimNode));
+    }
+    std::string proofText = step.producerProof;
+    if (proofText.empty()
+        && (step.rule == "formula_copy"
+            || step.rule == "formula_term_copy")
+        && step.parentIds.size() == 1) {
+      proofText = "(parent " + quotePreservedName(step.parentIds.front()) + ")";
+    }
+    PreservedSexpr proof;
+    PreservedSexpr conclusion;
+    const std::string& renderedConclusion = step.hasResultClause
+      ? step.resultClause : step.resultFormula;
+    if (proofText.empty() || !parser.parse(proofText, proof)
+        || !parser.parse(renderedConclusion, conclusion)) {
+      error = "choice-normalized proof DAG step " + step.id
+        + " has no direct producer proof";
+      return false;
+    }
+    proof = normalize(proof, supportClaims, normalize);
+    conclusion = normalize(conclusion, supportClaims, normalize);
+    if (containsEliminated(proof, containsEliminated)
+        || containsEliminated(conclusion, containsEliminated)) {
+      error = "choice-normalized proof DAG step " + step.id
+        + " retains a certificate-local Skolem symbol";
+      return false;
+    }
+    MegalodonKernelSyntax::RenderedKernelChoiceProofNode node;
+    node.index = result.nodes.size();
+    node.step = normalizedId(step.id);
+    std::set<std::string> referencedParents;
+    proofParents(proof, referencedParents, proofParents);
+    node.parents.assign(referencedParents.begin(), referencedParents.end());
+    node.parameters = wrapped->parameters;
+    node.hasResultClause = step.hasResultClause;
+    node.hasResultFormula = step.hasResultFormula;
+    if (step.hasResultClause) node.resultClause = conclusion.render();
+    if (step.hasResultFormula) node.resultFormula = conclusion.render();
+    node.producerProof = proof.render();
+
+    if (step.rule == "skolem_formula"
+        && step.producerSkolemChoiceDefinitions.size() == 1
+        && wrapped->parameters.empty()
+        && step.parentIds.size() == 1) {
+      const auto& definition = step.producerSkolemChoiceDefinitions.front();
+      auto witness = replacements.find(definition.symbol);
+      PreservedSexpr scopeSource;
+      PreservedSexpr scopeTarget;
+      PreservedSexpr scopeBridge;
+      if (witness == replacements.end()
+          || definition.scopeSourceFormulaSexpr.empty()
+          || definition.scopeTargetFormulaSexpr.empty()
+          || definition.scopeBridgeProof.empty()
+          || !parser.parse(definition.scopeSourceFormulaSexpr, scopeSource)
+          || !parser.parse(definition.scopeTargetFormulaSexpr, scopeTarget)
+          || !parser.parse(definition.scopeBridgeProof, scopeBridge)) {
+        error = "choice-normalized root scope at " + step.id
+          + " lacks a complete producer bridge";
+        return false;
+      }
+      scopeSource = normalize(scopeSource, supportClaims, normalize);
+      scopeTarget = normalize(scopeTarget, supportClaims, normalize);
+      scopeBridge = normalize(scopeBridge, supportClaims, normalize);
+      if (containsEliminated(scopeSource, containsEliminated)
+          || containsEliminated(scopeTarget, containsEliminated)
+          || containsEliminated(scopeBridge, containsEliminated)) {
+        error = "choice-normalized root scope at " + step.id
+          + " retains a certificate-local Skolem symbol";
+        return false;
+      }
+      if (scopeTarget.render() == conclusion.render()) {
+        node.hasRootExistsScope = true;
+        node.rootExistsScopeParent = normalizedId(step.parentIds.front());
+        node.rootExistsScopeWitnessType = definition.witnessTypeSexpr;
+        node.rootExistsScopeWitnessTerm = witness->second.render();
+        node.rootExistsScopeSourceFormula = scopeSource.render();
+        node.rootExistsScopeTargetFormula = scopeTarget.render();
+        node.rootExistsScopeBridgeProof = scopeBridge.render();
+        emittedRootExistsScope = true;
+      }
+    }
+    result.nodes.push_back(std::move(node));
+  }
+  if (result.nodes.empty()
+      || result.nodes.back().step != normalizedId(finalStep)) {
+    error = "choice-normalized proof DAG does not end at its declared root";
+    return false;
+  }
+  result.version = emittedRootExistsScope
+    ? "ivy_choice_dag_v2"
+    : "ivy_choice_dag_v1";
+  result.finalStep = normalizedId(finalStep);
+  result.eliminatedSymbols = std::move(eliminated);
+  return true;
+}
+
 bool expandEnnfFormulaProof(
   const std::string& stepId,
   const std::string& parentId,
@@ -4688,6 +5373,7 @@ bool expandAvatarComponentProof(
 
 bool expandAvatarDefinitionProof(
   const MegalodonKernelSyntax::RenderedKernelAvatarDefinition& request,
+  std::string& resultFormula,
   std::string& result,
   std::string& error)
 {
@@ -4786,6 +5472,8 @@ bool expandAvatarDefinitionProof(
     "(TMH " + quote("split_" + std::to_string(request.componentSplit.variable)) + ")";
   const std::string left = formulaImp(split, component);
   const std::string right = formulaImp(component, split);
+  resultFormula =
+    "(AP (AP (TMH \"vampire_and\") " + left + ") " + right + ")";
   const std::string qName = "ivy_definition_q";
   const std::string introName = "ivy_definition_intro";
   const std::string splitName = "ivy_definition_split";

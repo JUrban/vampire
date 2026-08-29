@@ -72,6 +72,7 @@ private:
   struct CertificateFunctionDefinition {
     unsigned symbol = 0;
     std::vector<unsigned> parameters;
+    std::vector<Kernel::TermList> parameterSorts;
     Kernel::TermList body;
   };
 

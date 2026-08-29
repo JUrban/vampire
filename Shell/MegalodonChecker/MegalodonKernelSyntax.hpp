@@ -51,6 +51,20 @@ struct ProducerSkolemChoiceDefinition {
   std::string witnessTermSexpr;
   std::vector<std::pair<std::string, std::string>> parameters;
   std::string sourceFormulaSexpr;
+  std::string scopeSourceFormulaSexpr;
+  std::string scopeTargetFormulaSexpr;
+  std::string scopeBridgeProof;
+};
+
+struct ProducerProofClaim {
+  std::string id;
+  std::string replacesDefinition;
+  std::string replacesParent;
+  bool hasParameterContract = false;
+  std::vector<std::pair<std::string, std::string>> parameters;
+  std::string resultFormula;
+  std::string resultClause;
+  std::string producerProof;
 };
 
 struct PrimitiveStep {
@@ -58,6 +72,8 @@ struct PrimitiveStep {
   std::string id;
   std::string rendered;
   bool builderOwned = false;
+  bool hasChoiceParameterContract = false;
+  std::vector<std::pair<std::string, std::string>> choiceParameters;
   std::vector<std::string> parentIds;
   bool hasResultClause = false;
   std::string resultClause;
@@ -70,6 +86,7 @@ struct PrimitiveStep {
   std::vector<std::size_t> certificateLocalSymbolDependencyCounts;
   std::vector<ProducerSkolemChoiceDefinition> producerSkolemChoiceDefinitions;
   std::vector<ProducerFunctionApplication> producerFunctionApplications;
+  std::vector<ProducerProofClaim> producerProofClaims;
   std::string producerProof;
   std::vector<std::pair<std::string, std::string>> fields;
 };
@@ -157,6 +174,32 @@ struct RenderedKernelGroundProof {
   std::string version;
   RenderedKernelUnitRef finalStep;
   std::vector<RenderedKernelGroundInstance> instances;
+};
+
+struct RenderedKernelChoiceProofNode {
+  std::size_t index = 0;
+  std::string step;
+  std::vector<std::string> parents;
+  std::vector<std::pair<std::string, std::string>> parameters;
+  bool hasResultClause = false;
+  std::string resultClause;
+  bool hasResultFormula = false;
+  std::string resultFormula;
+  std::string producerProof;
+  bool hasRootExistsScope = false;
+  std::string rootExistsScopeParent;
+  std::string rootExistsScopeWitnessType;
+  std::string rootExistsScopeWitnessTerm;
+  std::string rootExistsScopeSourceFormula;
+  std::string rootExistsScopeTargetFormula;
+  std::string rootExistsScopeBridgeProof;
+};
+
+struct RenderedKernelChoiceProof {
+  std::string version;
+  std::string finalStep;
+  std::vector<std::string> eliminatedSymbols;
+  std::vector<RenderedKernelChoiceProofNode> nodes;
 };
 
 struct RenderedKernelPosition {
@@ -584,6 +627,10 @@ struct RenderedKernelScopedSkolemWitness {
   // Producer-internal proof transformer. The top-level skolem_formula Ivy
   // object inlines this term; the typed witness trace remains diagnostic.
   std::string producerTransform;
+  // Producer-internal bridge from the exact existential body at this witness
+  // to its target. Unlike producerTransform, this proof does not use choice;
+  // prooftrans places it under an explicit existential scope in the Ivy DAG.
+  std::string producerScopeBridge;
 };
 
 struct RenderedKernelScopedSkolemContextStage {

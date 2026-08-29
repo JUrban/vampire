@@ -63,6 +63,21 @@ struct Expansion {
   std::vector<Instance> instances;
 };
 
+struct ChoiceProofStep {
+  MegalodonKernelSyntax::PrimitiveStep primitive;
+  bool hasParameterContract = false;
+  std::vector<std::pair<std::string, std::string>> parameters;
+};
+
+struct ChoiceTermDefinition {
+  std::string stepId;
+  std::string symbol;
+  std::string resultType;
+  std::vector<std::pair<std::string, std::string>> parameters;
+  std::string body;
+  std::string resultClause;
+};
+
 struct SubstituteClauseStep {
   std::string id;
   MegalodonKernelSyntax::RenderedKernelUnitRef parent;
@@ -202,6 +217,14 @@ bool expandGroundProof(
   Expansion& result,
   std::string& error);
 
+bool expandChoiceNormalizedProof(
+  const std::vector<ChoiceProofStep>& steps,
+  const std::vector<MegalodonKernelSyntax::PrimitiveStep>& skolemSteps,
+  const std::vector<ChoiceTermDefinition>& termDefinitions,
+  const std::string& finalStep,
+  MegalodonKernelSyntax::RenderedKernelChoiceProof& result,
+  std::string& error);
+
 bool expandClauseProof(
   const std::vector<ClauseStepRequest>& requests,
   const std::string& finalStep,
@@ -226,6 +249,7 @@ bool expandAvatarContradictionProof(
 
 bool expandAvatarDefinitionProof(
   const MegalodonKernelSyntax::RenderedKernelAvatarDefinition& request,
+  std::string& resultFormula,
   std::string& result,
   std::string& error);
 

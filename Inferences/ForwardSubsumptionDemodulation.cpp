@@ -10,6 +10,7 @@
 
 #include "ForwardSubsumptionDemodulation.hpp"
 #include "SubsumptionDemodulationHelper.hpp"
+#include "ProofExtra.hpp"
 
 #include "Debug/RuntimeStatistics.hpp"
 #include "Indexing/Index.hpp"
@@ -589,6 +590,32 @@ isRedundant:
               premises = pvi(getSingletonIterator(mcl));
               replacement = Clause::fromStack(*resLits,
                  SimplifyingInference2(InferenceRule::FORWARD_SUBSUMPTION_DEMODULATION, cl, mcl));
+
+              if (env.options->proofExtra() == Options::ProofExtra::FULL
+                  || env.options->proofExtra() == Options::ProofExtra::LEAN
+                  || env.reconstruction) {
+                Substitution sideSubstitution;
+                auto sideVariables = mcl->getVariableIterator();
+                while (sideVariables.hasNext()) {
+                  const unsigned variable = sideVariables.next();
+                  TermList binding;
+                  ALWAYS(binder.tryGetBinding(variable, binding));
+                  sideSubstitution.bind(variable, binding);
+                }
+                env.proofExtra.insert(
+                  replacement,
+                  new ForwardSubsumptionDemodulationExtra(
+                    cl,
+                    mcl,
+                    eqLit,
+                    dlit,
+                    newLit,
+                    std::move(sideSubstitution),
+                    lhs,
+                    rhs,
+                    lhsS,
+                    rhsS));
+              }
 
 #if FSD_LOG_INFERENCES
               std::cout << "\% Begin Inference \"FSD-" << replacement->number() << "\"\n";

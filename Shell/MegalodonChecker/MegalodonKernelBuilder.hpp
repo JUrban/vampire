@@ -51,6 +51,9 @@ std::string skolemFiniteUnherbrandizationBlock(
 std::string skolemGroundProofBlock(
   const MegalodonKernelSyntax::RenderedKernelGroundProof& proof);
 
+std::string skolemChoiceProofBlock(
+  const MegalodonKernelSyntax::RenderedKernelChoiceProof& proof);
+
 std::string avatarPrimitiveWithMetadata(
   const MegalodonKernelSyntax::PrimitiveStep& step);
 
@@ -248,6 +251,7 @@ MegalodonKernelSyntax::PrimitiveStep avatarDefinitionStep(
   unsigned splitVariable,
   bool splitPositive,
   const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::string& definitionFormula,
   const std::string& producerProof,
   const std::string& resultProof);
 

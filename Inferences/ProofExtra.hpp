@@ -20,6 +20,7 @@
 
 
 #include "Kernel/Term.hpp"
+#include "Kernel/Substitution.hpp"
 #include "Lib/ProofExtra.hpp"
 
 #include <vector>
@@ -158,6 +159,43 @@ struct TwoLiteralRewriteInferenceExtra : public InferenceExtra {
   TwoLiteralInferenceExtra selected;
   // rewrite information
   RewriteInferenceExtra rewrite;
+};
+
+struct ForwardSubsumptionDemodulationExtra : public InferenceExtra {
+  ForwardSubsumptionDemodulationExtra(
+    Kernel::Clause* mainParent,
+    Kernel::Clause* sideParent,
+    Kernel::Literal* equalityLiteral,
+    Kernel::Literal* targetLiteral,
+    Kernel::Literal* rewrittenLiteral,
+    Kernel::Substitution sideSubstitution,
+    Kernel::TermList lhs,
+    Kernel::TermList rhs,
+    Kernel::TermList redex,
+    Kernel::TermList replacement)
+    : mainParent(mainParent),
+      sideParent(sideParent),
+      equalityLiteral(equalityLiteral),
+      targetLiteral(targetLiteral),
+      rewrittenLiteral(rewrittenLiteral),
+      sideSubstitution(std::move(sideSubstitution)),
+      lhs(lhs),
+      rhs(rhs),
+      redex(redex),
+      replacement(replacement) {}
+
+  void output(std::ostream &out) const override;
+
+  Kernel::Clause* mainParent;
+  Kernel::Clause* sideParent;
+  Kernel::Literal* equalityLiteral;
+  Kernel::Literal* targetLiteral;
+  Kernel::Literal* rewrittenLiteral;
+  Kernel::Substitution sideSubstitution;
+  Kernel::TermList lhs;
+  Kernel::TermList rhs;
+  Kernel::TermList redex;
+  Kernel::TermList replacement;
 };
 
 struct UnitResultingResolutionExtra : public InferenceExtra {
