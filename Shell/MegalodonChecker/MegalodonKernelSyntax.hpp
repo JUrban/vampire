@@ -88,6 +88,9 @@ struct PrimitiveStep {
   std::vector<ProducerFunctionApplication> producerFunctionApplications;
   std::vector<ProducerProofClaim> producerProofClaims;
   std::string producerProof;
+  // Producer-only clause payload retained for delayed prooftrans lowering.
+  std::vector<std::string> producerSourceLiterals;
+  std::vector<std::string> producerResultLiterals;
   std::vector<std::pair<std::string, std::string>> fields;
 };
 

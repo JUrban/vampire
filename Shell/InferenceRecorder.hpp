@@ -44,6 +44,12 @@ public:
     unsigned superpositionEqualityLiteralIndex = 0;
     Kernel::TermList superpositionEqualityLhs;
     Kernel::TermList superpositionEqualityRhs;
+    bool hasSuperpositionInstantiatedSelection = false;
+    Kernel::Literal* superpositionTargetLiteralSubstituted = nullptr;
+    Kernel::TermList superpositionTargetTermSubstituted;
+    Kernel::Literal* superpositionEqualityLiteralSubstituted = nullptr;
+    Kernel::TermList superpositionEqualityLhsSubstituted;
+    Kernel::TermList superpositionEqualityRhsSubstituted;
     bool superpositionEqualityIsResult = false;
     bool superpositionSimultaneous = false;
   };
@@ -126,6 +132,11 @@ public:
     Kernel::Literal* equalityLiteral,
     Kernel::TermList equalityLhs,
     Kernel::TermList equalityRhs,
+    Kernel::Literal* targetLiteralSubstituted,
+    Kernel::TermList targetTermSubstituted,
+    Kernel::Literal* equalityLiteralSubstituted,
+    Kernel::TermList equalityLhsSubstituted,
+    Kernel::TermList equalityRhsSubstituted,
     bool simultaneous);
 
   void factoring(unsigned int id, Kernel::Clause *conclusion, const std::vector<Kernel::Clause *> &premises, const Indexing::RobSubstitution &recordedSubst);
@@ -271,22 +282,14 @@ private:
     substMap.resize(premises.size());
     
     for (size_t bank = 0; bank < premises.size(); bank++) {
-      unsigned int highestVar = 0;
-      //std::cout << premises[bank]->toString() << std::endl;
       auto iter = premises[bank]->getVariableIterator();
       while (iter.hasNext()) {
-        unsigned int var = variableSubst.apply(iter.next()).var();
-        if (var > highestVar) {
-          highestVar = var;
-        }
-      }
-      for (unsigned v = 0; v <= highestVar; v++) {
+        const unsigned v = iter.next();
         TermList x = applyFunc(recordedSubst, TermList::var(v), bank);
         substMap[bank].bind(v,
                             SubstHelper::apply(x,
                                                variableSubst));
       }
-      //std::cout << "Substitution for bank " << bank << ": " << substMap[bank] << std::endl;
     }
   }
 

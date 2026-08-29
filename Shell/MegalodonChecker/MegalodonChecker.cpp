@@ -3656,6 +3656,10 @@ bool MegalodonChecker::certificateCondensationStepSexpr(
               current,
               next,
               producerProof);
+          // The compact choice DAG consumes this checked projection directly,
+          // even when the verbose factor annotation cannot encode the source
+          // literal multiplicity pattern and falls back to a plain factor.
+          factor.producerProof = producerProof;
           steps.push_back(factor.rendered);
           primitives.push_back(std::move(factor));
           const auto parentSorts =
@@ -12521,6 +12525,13 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
   MegalodonKernelSyntax::PrimitiveStep* equalityResolutionPrimitive,
   std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps)
 {
+  auto failExact = [&](const std::string& reason) {
+    if (std::getenv("MEGALODON_CERT_DEBUG") && unit->isClause()) {
+      std::cerr << "megalodon exact equality-resolution lowering failed for u"
+                << unit->number() << ": " << reason << std::endl;
+    }
+    return false;
+  };
   const Kernel::InferenceRule& rule = unit->inference().rule();
   if (!unit->isClause()
     || (
@@ -12833,7 +12844,7 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
 	    _certificateProducerFreeVariableSorts.find(unitId);
 	  if (unitProducerSorts
 	      == _certificateProducerFreeVariableSorts.end()) {
-	    return false;
+	    return failExact("missing result variable contract");
 	  }
 	  const auto primitiveScope = unitProducerSorts->second;
 	  std::string activeParentId = "u" + std::to_string(parent->number());
@@ -12965,21 +12976,6 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
       return true;
     }
 
-    if (!sameMultiset(expected, actual)) {
-      std::vector<std::string> current = expected;
-      std::vector<std::string> probeSteps;
-      std::string probeParentId = unitId + "_eqres";
-      if (!emitEqualitySymmetrySteps(
-            probeSteps,
-            current,
-            probeParentId,
-            actual,
-            unitId,
-            nullptr)) {
-        return false;
-      }
-    }
-
 	    std::vector<std::string> steps;
 	    if (!substitutionStep.empty()) {
 	      steps.push_back(substitutionStep);
@@ -13017,7 +13013,7 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
           equalityResolutionId,
           producerProof,
           producerProofError)) {
-      return false;
+      return failExact("direct proof construction: " + producerProofError);
     }
     auto equalityPrimitive = MegalodonKernelBuilder::equalityResolutionStep(
       equalityResolutionId,
@@ -13093,7 +13089,7 @@ bool MegalodonChecker::certificateEqualityResolutionStepSexpr(
       return true;
     }
   }
-  return false;
+  return failExact("no selected disequality admits exact lowering");
 }
 
 bool MegalodonChecker::certificateEqualityFactoringStepSexpr(
@@ -15969,7 +15965,8 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
     || replayInfo == nullptr
     || replayInfo->premises.size() != 2
     || replayInfo->substitutionForBanksSub.size() != 2
-    || !replayInfo->hasSuperpositionSelection) {
+    || !replayInfo->hasSuperpositionSelection
+    || !replayInfo->hasSuperpositionInstantiatedSelection) {
     return failExact("recorded selection precondition");
   }
 
@@ -16239,31 +16236,18 @@ bool MegalodonChecker::certificateSuperpositionStepsSexpr(
     }
   }
 
-  Kernel::Literal* targetSubstituted = nullptr;
-  Kernel::Literal* equalitySubstituted = nullptr;
-  Kernel::TermList from;
-  Kernel::TermList to;
-  Kernel::TermList targetRedex;
-  if (!safeApplySubstitution(
-        targetLiteral,
-        replayInfo->substitutionForBanksSub[targetParentIndex],
-        targetSubstituted)
-    || !safeApplySubstitution(
-        equalityLiteral,
-        replayInfo->substitutionForBanksSub[equalityParentIndex],
-        equalitySubstituted)
-    || !safeApplySubstitution(
-        replayInfo->superpositionEqualityLhs,
-        replayInfo->substitutionForBanksSub[equalityParentIndex],
-        from)
-    || !safeApplySubstitution(
-        replayInfo->superpositionEqualityRhs,
-        replayInfo->substitutionForBanksSub[equalityParentIndex],
-        to)
-    || !safeApplySubstitution(
-        replayInfo->superpositionTargetTerm,
-        replayInfo->substitutionForBanksSub[targetParentIndex],
-        targetRedex)
+  Kernel::Literal* targetSubstituted =
+    replayInfo->superpositionTargetLiteralSubstituted;
+  Kernel::Literal* equalitySubstituted =
+    replayInfo->superpositionEqualityLiteralSubstituted;
+  const Kernel::TermList from =
+    replayInfo->superpositionEqualityLhsSubstituted;
+  const Kernel::TermList to =
+    replayInfo->superpositionEqualityRhsSubstituted;
+  const Kernel::TermList targetRedex =
+    replayInfo->superpositionTargetTermSubstituted;
+  if (targetSubstituted == nullptr
+    || equalitySubstituted == nullptr
     || from != targetRedex) {
     return failExact("recorded selected-term substitution");
   }
@@ -17100,6 +17084,15 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
   out << "(certificate vampire-megalodon 1\n";
   out << "  (problem \"vampire-native-certificate\")\n";
   for (const std::string& metadata : _certificateNativeMetadata) {
+    const bool avatarDefinitionContract =
+      metadata.rfind("(step_extra ", 0) == 0
+      && metadata.find("\"kernel_v1\"") != std::string::npos
+      && metadata.find("\"rule=avatar_definition\"") != std::string::npos;
+    if ((metadata.rfind("(step_extra ", 0) == 0
+          && !avatarDefinitionContract)
+        || metadata.rfind("(step_proposition ", 0) == 0) {
+      continue;
+    }
     out << "  " << metadata << "\n";
   }
   std::map<std::string, std::vector<std::string>> emittedGoalParents;
@@ -17163,6 +17156,47 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       }
       hasNegatedConjecture = hasNegatedConjecture
         || step.sourceRole == "negated_conjecture";
+      if (step.sourceRole == "negated_conjecture") {
+        for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
+          if (parent->isClause()) {
+            continue;
+          }
+          std::string parentRole;
+          std::string parentName;
+          if (!certificateSourceDetails(parent, parentRole, parentName)
+            || parentRole != "conjecture") {
+            continue;
+          }
+          const std::string parentId =
+            "u" + std::to_string(parent->number());
+          if (std::find(
+                step.parentIds.begin(), step.parentIds.end(), parentId)
+              == step.parentIds.end()) {
+            step.parentIds.push_back(parentId);
+          }
+          MegalodonProofExpander::GoalReplayStep conjecture;
+          conjecture.id = parentId;
+          if (!goalReplayUnitIds.insert(conjecture.id).second) {
+            continue;
+          }
+          conjecture.source = true;
+          conjecture.sourceRole = parentRole;
+          auto sourceFormula =
+            _certificateNativeSourceFormulaByUnit.find(parent->number());
+          std::string renderedFormula;
+          if (sourceFormula != _certificateNativeSourceFormulaByUnit.end()) {
+            renderedFormula = sourceFormula->second;
+          } else if (!certificateFormulaTermSexpr(
+                       parent->getFormula(), renderedFormula)) {
+            INVALID_OPERATION(
+              "typed goal replay omitted conjecture formula cannot be serialized at "
+              + conjecture.id);
+          }
+          conjecture.formula =
+            MegalodonKernelSyntax::formula(renderedFormula);
+          goalReplaySteps.push_back(std::move(conjecture));
+        }
+      }
     }
     if (!unit->isClause()
         && (step.sourceRole == "conjecture"
@@ -17217,6 +17251,26 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       }
     }
   }
+  std::set<std::string> refutationReachableSteps;
+  std::function<void(const std::string&)> markRefutationReachable =
+    [&](const std::string& id) {
+      if (!refutationReachableSteps.insert(id).second) return;
+      auto parents = emittedGoalParents.find(id);
+      if (parents == emittedGoalParents.end()) return;
+      for (const std::string& parent : parents->second) {
+        markRefutationReachable(parent);
+      }
+    };
+  markRefutationReachable(finalStep);
+  skolemSteps.erase(
+    std::remove_if(
+      skolemSteps.begin(),
+      skolemSteps.end(),
+      [&](const auto& step) {
+        return refutationReachableSteps.find(step.id)
+          == refutationReachableSteps.end();
+      }),
+    skolemSteps.end());
   std::vector<MegalodonKernelSyntax::RenderedKernelSkolemUse> skolemUses;
   struct SkolemUseDescriptor {
     std::string step;
@@ -17250,6 +17304,10 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       break;
     }
   }
+  // The direct Ivy choice DAG is the complete Skolem reconstruction object.
+  // Do not build the legacy occurrence/grounding/unherbrandization inventory
+  // for newly emitted certificates.
+  skolemUseDescriptors.clear();
   std::map<unsigned, CertificateFunctionDefinition> producerFunctionDefinitions;
   for (Kernel::Unit* unit : proof) {
     CertificateFunctionDefinition definition;
@@ -18206,28 +18264,17 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       out << "  " << groundingBlock << "\n";
     }
   }
-  const std::string skolemUseBlock =
-    MegalodonKernelBuilder::skolemRefutationUseBlock(
-      "u" + std::to_string((*proof.rbegin())->number()),
-      groundedSkolemSteps,
-      groundedSkolemInventoryUses);
-  if (!skolemUseBlock.empty()) {
-    out << "  " << skolemUseBlock << "\n";
-    std::string unherbrandizationError;
-    const std::string unherbrandizationBlock =
-      MegalodonKernelBuilder::skolemFiniteUnherbrandizationBlock(
-        "u" + std::to_string((*proof.rbegin())->number()),
-        groundedSkolemUses,
-        renderedGrounding,
-        unherbrandizationError);
-    if (unherbrandizationBlock.empty()) {
-      INVALID_OPERATION(
-        "typed finite Skolem unherbrandization serialization failed: "
-        + unherbrandizationError);
+  if (!skolemSteps.empty()) {
+    const std::string skolemScope =
+      MegalodonKernelBuilder::skolemRefutationScopeBlock(
+        finalStep,
+        skolemSteps);
+    if (skolemScope.empty()) {
+      INVALID_OPERATION("direct Ivy Skolem scope serialization failed");
     }
-    out << "  " << unherbrandizationBlock << "\n";
+    out << "  " << skolemScope << "\n";
   }
-  if (!groundedSkolemSteps.empty() || !choiceTermDefinitions.empty()) {
+  if (!skolemSteps.empty() || !choiceTermDefinitions.empty()) {
     std::vector<MegalodonProofExpander::ChoiceProofStep> choiceSteps;
     std::set<std::string> choiceStepIds;
     auto appendChoiceStep =
@@ -18235,8 +18282,55 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
         if (!choiceStepIds.insert(primitive.id).second) return;
         MegalodonProofExpander::ChoiceProofStep step;
         step.primitive = primitive;
+        if (step.primitive.rule == "factor"
+            && step.primitive.parentIds.size() == 1
+            && _certificateProducerFreeVariableSorts.find(step.primitive.id)
+               == _certificateProducerFreeVariableSorts.end()) {
+          const auto parentVariables =
+            _certificateProducerFreeVariableSorts.find(
+              step.primitive.parentIds.front());
+          if (parentVariables
+              != _certificateProducerFreeVariableSorts.end()) {
+            _certificateProducerFreeVariableSorts[step.primitive.id] =
+              parentVariables->second;
+          }
+        }
+        if (step.primitive.rule == "factor"
+            && step.primitive.producerProof.empty()
+            && step.primitive.parentIds.size() == 1
+            && !step.primitive.producerSourceLiterals.empty()
+            && !step.primitive.producerResultLiterals.empty()) {
+          std::vector<std::string> parentArguments;
+          std::string proofError;
+          if (!producerParentArguments(
+                 _certificateProducerFreeVariableSorts,
+                 step.primitive.parentIds.front(),
+                 parentArguments,
+                 proofError)
+              || !MegalodonProofExpander::expandClauseProjectionProof(
+                   step.primitive.parentIds.front(),
+                   parentArguments,
+                   step.primitive.producerSourceLiterals,
+                   step.primitive.producerResultLiterals,
+                   step.primitive.producerProof,
+                   proofError)
+              || !closeProducerProofOverEliminatedVariables(
+                   _certificateProducerFreeVariableSorts,
+                   step.primitive.parentIds,
+                   step.primitive.id,
+                   step.primitive.producerProof,
+                   proofError)) {
+            step.primitive.producerProof.clear();
+          }
+        }
         auto variables =
           _certificateProducerFreeVariableSorts.find(primitive.id);
+        if (variables == _certificateProducerFreeVariableSorts.end()
+          && primitive.rule == "factor"
+          && primitive.parentIds.size() == 1) {
+          variables = _certificateProducerFreeVariableSorts.find(
+            primitive.parentIds.front());
+        }
         if (primitive.hasChoiceParameterContract) {
           step.hasParameterContract = true;
           step.parameters = primitive.choiceParameters;
@@ -18308,7 +18402,7 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
     std::string choiceProofError;
     if (!MegalodonProofExpander::expandChoiceNormalizedProof(
           choiceSteps,
-          groundedSkolemSteps,
+          skolemSteps,
           choiceTermDefinitions,
           finalStep,
           choiceProof,
@@ -18462,6 +18556,22 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
       parentClauses.push_back(parent->asClause());
     }
   }
+  auto replaySubstitutionForParent =
+    [&](std::size_t parentIndex) -> const Kernel::Substitution* {
+      if (info == nullptr
+        || parentIndex >= parentClauses.size()
+        || info->premises.size() != info->substitutionForBanksSub.size()) {
+        return nullptr;
+      }
+      for (std::size_t replayIndex = 0;
+           replayIndex < info->premises.size();
+           ++replayIndex) {
+        if (info->premises[replayIndex] == parentClauses[parentIndex]) {
+          return &info->substitutionForBanksSub[replayIndex];
+        }
+      }
+      return nullptr;
+    };
   auto literalPositionInParent = [&](Kernel::Literal* literal, std::size_t parentIndex) -> int {
     if (literal == nullptr) {
       return -1;
@@ -18503,12 +18613,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     fields.push_back(prefix + "_parent_index=" + std::to_string(parentIndex));
     fields.push_back(prefix + "_literal_index=" + std::to_string(literalIndex));
     fields.push_back(prefix + "_parent_unit=" + std::to_string(parentClauses[parentIndex]->number()));
-    if (
-      info != nullptr
-      && static_cast<std::size_t>(parentIndex) < info->substitutionForBanksSub.size()
-      && static_cast<std::size_t>(parentIndex) < info->premises.size()
-    ) {
-      Kernel::Literal* substituted = Kernel::SubstHelper::apply(literal, info->substitutionForBanksSub[parentIndex]);
+    const Kernel::Substitution* substitution =
+      replaySubstitutionForParent(static_cast<std::size_t>(parentIndex));
+    if (substitution != nullptr) {
+      Kernel::Literal* substituted =
+        Kernel::SubstHelper::apply(literal, *substitution);
       addSubstitutedLiteralFields(fields, prefix, substituted);
     }
   };
@@ -18621,20 +18730,18 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         renderedParent.hasLiterals = true;
         renderedParent.literals = MegalodonKernelSyntax::literals(literals);
       }
-      if (
-        info != nullptr
-        && parentIndex < info->premises.size()
-        && parentIndex < info->substitutionForBanksSub.size()
-      ) {
+      const Kernel::Substitution* substitution =
+        replaySubstitutionForParent(parentIndex);
+      if (substitution != nullptr) {
         std::string subst;
-        if (substitutionSexprForKernel(info->substitutionForBanksSub[parentIndex], subst)) {
+        if (substitutionSexprForKernel(*substitution, subst)) {
           renderedParent.hasSubstitution = true;
           renderedParent.substitution = MegalodonKernelSyntax::substitution(subst);
         }
         std::vector<std::string> substitutedLiterals;
-        for (Kernel::Literal* literal : info->premises[parentIndex]->iterLits()) {
+        for (Kernel::Literal* literal : parent->iterLits()) {
           Kernel::Literal* substituted =
-            Kernel::SubstHelper::apply(literal, info->substitutionForBanksSub[parentIndex]);
+            Kernel::SubstHelper::apply(literal, *substitution);
           std::string rendered;
           if (literalSexprForKernel(substituted, rendered)) {
             substitutedLiterals.push_back(rendered);
@@ -18692,11 +18799,11 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
         selection.parentUnit =
           MegalodonKernelSyntax::unitRef("u" + std::to_string(parentClauses[parentIndex]->number()));
         bool addedSubstituted = false;
-        if (info != nullptr
-          && static_cast<std::size_t>(parentIndex) < info->premises.size()
-          && static_cast<std::size_t>(parentIndex) < info->substitutionForBanksSub.size()) {
+        const Kernel::Substitution* substitution =
+          replaySubstitutionForParent(static_cast<std::size_t>(parentIndex));
+        if (substitution != nullptr) {
           Kernel::Literal* substituted =
-            Kernel::SubstHelper::apply(literal, info->substitutionForBanksSub[parentIndex]);
+            Kernel::SubstHelper::apply(literal, *substitution);
           if (literalSexprForKernel(substituted, rendered)) {
             selection.hasSubstituted = true;
             selection.substituted = MegalodonKernelSyntax::literal(rendered);
@@ -18734,12 +18841,16 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
   };
   auto addKernelPrimitiveParentSubstitutions =
     [&](MegalodonKernelSyntax::MegalodonKernelStep& step) {
-    if (info == nullptr || info->premises.size() != info->substitutionForBanksSub.size()) {
-      return;
-    }
-    for (std::size_t parentIndex = 0; parentIndex < info->substitutionForBanksSub.size(); ++parentIndex) {
+    for (std::size_t parentIndex = 0;
+         parentIndex < parentClauses.size();
+         ++parentIndex) {
+      const Kernel::Substitution* substitution =
+        replaySubstitutionForParent(parentIndex);
+      if (substitution == nullptr) {
+        continue;
+      }
       std::string subst;
-      if (substitutionSexprForKernel(info->substitutionForBanksSub[parentIndex], subst)) {
+      if (substitutionSexprForKernel(*substitution, subst)) {
         MegalodonKernelSyntax::addPrimitiveParentSubstitution(
           step,
           MegalodonKernelSyntax::primitiveParentSubstitution(
@@ -18752,23 +18863,26 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
     [&](std::vector<std::string>& fields,
         Kernel::Literal* targetLiteral,
         Kernel::Literal* equalityLiteral) {
-      if (info == nullptr || info->premises.size() != info->substitutionForBanksSub.size()) {
-        return;
-      }
       auto [targetParent, targetIndex] = literalPosition(targetLiteral, 0);
       auto [equalityParent, equalityIndex] = literalPosition(equalityLiteral, 1);
       if (targetParent < 0
         || targetIndex < 0
         || equalityParent < 0
         || equalityIndex < 0
-        || static_cast<std::size_t>(targetParent) >= info->substitutionForBanksSub.size()
-        || static_cast<std::size_t>(equalityParent) >= info->substitutionForBanksSub.size()) {
+        ) {
+        return;
+      }
+      const Kernel::Substitution* targetSubstitution =
+        replaySubstitutionForParent(static_cast<std::size_t>(targetParent));
+      const Kernel::Substitution* equalitySubstitution =
+        replaySubstitutionForParent(static_cast<std::size_t>(equalityParent));
+      if (targetSubstitution == nullptr || equalitySubstitution == nullptr) {
         return;
       }
       Kernel::Literal* targetSubstituted =
-        Kernel::SubstHelper::apply(targetLiteral, info->substitutionForBanksSub[targetParent]);
+        Kernel::SubstHelper::apply(targetLiteral, *targetSubstitution);
       Kernel::Literal* equalitySubstituted =
-        Kernel::SubstHelper::apply(equalityLiteral, info->substitutionForBanksSub[equalityParent]);
+        Kernel::SubstHelper::apply(equalityLiteral, *equalitySubstitution);
       if (targetSubstituted == nullptr
         || equalitySubstituted == nullptr
         || !equalitySubstituted->isEquality()
@@ -23194,8 +23308,6 @@ void MegalodonChecker::printReplayExtra(Kernel::Unit* u, const InferenceRecorder
             Kernel::Substitution substitution = satSR.getBindingsForSubsumptionResolutionWithLiteral();
             fields.push_back("selected_substitution_source=sat_subsumption");
             fields.push_back("selected_substitution=" + substitutionText(substitution));
-            Kernel::Literal* substituted = Kernel::SubstHelper::apply(selected->selectedLiteral, substitution);
-            addSubstitutedLiteralFields(fields, "selected", substituted);
           }
         }
       }

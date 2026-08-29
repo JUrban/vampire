@@ -895,6 +895,8 @@ bool expandClauseProof(
             step->leftLiteral,
             step->rightLiteral,
             step->result);
+      primitive.producerSourceLiterals = step->sourceLiterals;
+      primitive.producerResultLiterals = step->resultLiterals;
     }
 
     std::string rendered = primitive.rendered;
@@ -1520,9 +1522,9 @@ bool expandGoalReplay(
   std::vector<const GoalReplayStep*> conjectures;
   std::vector<const GoalReplayStep*> negatedConjectures;
   for (const auto& step : steps) {
-    if (reachable.find(step.id) == reachable.end()) {
-      continue;
-    }
+    // The refutation can be independent of the conjecture when the imported
+    // axioms are already inconsistent.  Preserve the unique source goal pair
+    // even in that case; the final contradiction remains the replay root.
     if (step.sourceRole == "conjecture") {
       conjectures.push_back(&step);
     } else if (step.sourceRole == "negated_conjecture") {
@@ -1569,13 +1571,14 @@ bool expandGoalReplay(
       step.sourceRole,
     });
   }
-  if (std::none_of(
-        result.sources.begin(),
-        result.sources.end(),
-        [&](const auto& source) {
-          return source.step.value == negated.id
-            && source.role == "negated_conjecture";
-        })) {
+  if (reachable.find(negated.id) != reachable.end()
+      && std::none_of(
+           result.sources.begin(),
+           result.sources.end(),
+           [&](const auto& source) {
+             return source.step.value == negated.id
+               && source.role == "negated_conjecture";
+           })) {
     error = "goal replay source leaves omit the negated conjecture";
     return false;
   }
@@ -3250,11 +3253,84 @@ public:
       selectedType, selectedOther, otherOther);
     const PreservedSexpr introducedNegative = literalSexpr(
       false, introducedAtom);
-    if (injectLiteralOrSymmetry(
-          target, otherOriented.render(), "proof_probe").empty()
-        || injectLiteralOrSymmetry(
-          target, introducedNegative.render(), "proof_probe").empty()) {
+    const bool hasOtherLiteral = !injectLiteralOrSymmetry(
+      target, otherOriented.render(), "proof_probe").empty();
+    const bool hasDirectConstraint = !injectLiteralOrSymmetry(
+      target, introducedNegative.render(), "proof_probe").empty();
+    if (!hasOtherLiteral) {
       return false;
+    }
+
+    PreservedSexpr abstractionConstraint;
+    PreservedSexpr abstractionConstraintType;
+    std::string abstractionConstraintLiteral;
+    std::vector<unsigned> abstractionPosition;
+    bool abstractionLeftToRight = true;
+    bool hasAbstractionConstraint = false;
+    if (!hasDirectConstraint) {
+      const auto rewritePosition = [&] (
+          const PreservedSexpr& from,
+          const PreservedSexpr& to,
+          std::vector<unsigned>& resultPosition) {
+        std::vector<unsigned> position;
+        std::function<bool(const PreservedSexpr&)> visit =
+          [&](const PreservedSexpr& current) {
+            if (current == from) {
+              PreservedSexpr rewritten;
+              PreservedSexpr selectedAtPosition;
+              if (replaceSexprTermAtPosition(
+                    selectedOriented.items[1],
+                    position,
+                    to,
+                    rewritten,
+                    &selectedAtPosition)
+                  && selectedAtPosition == from
+                  && rewritten == otherOriented.items[1]) {
+                resultPosition = position;
+                return true;
+              }
+            }
+            for (unsigned childIndex = 0; childIndex != 2; ++childIndex) {
+              PreservedSexpr copy = current;
+              PreservedSexpr* child = sexprTermChild(copy, childIndex);
+              if (child == nullptr) continue;
+              position.push_back(childIndex);
+              if (visit(*child)) return true;
+              position.pop_back();
+            }
+            return false;
+          };
+        return visit(selectedOriented.items[1]);
+      };
+      for (const std::string& candidateText : target) {
+        PreservedSexpr candidate;
+        PreservedSexpr constraintLeft;
+        PreservedSexpr constraintRight;
+        if (!parser.parse(candidateText, candidate)
+            || !sexprHead(candidate, "neg")
+            || candidate.items.size() != 2
+            || !typedEqualitySexpr(
+                 candidate.items[1],
+                 abstractionConstraintType,
+                 constraintLeft,
+                 constraintRight)) {
+          continue;
+        }
+        if (rewritePosition(
+              constraintLeft, constraintRight, abstractionPosition)) {
+          abstractionLeftToRight = true;
+        } else if (rewritePosition(
+                     constraintRight, constraintLeft, abstractionPosition)) {
+          abstractionLeftToRight = false;
+        } else {
+          continue;
+        }
+        abstractionConstraint = candidate.items[1];
+        abstractionConstraintLiteral = candidateText;
+        hasAbstractionConstraint = true;
+        break;
+      }
+      if (!hasAbstractionConstraint) return false;
     }
 
     std::string targetFormula;
@@ -3272,6 +3348,35 @@ public:
         const std::string selectedProof = orientEqualityProof(
           selectedLiteral, selectedOriented, proof);
         if (selectedProof.empty()) return std::string();
+
+        if (hasAbstractionConstraint) {
+          const std::string positiveName = fresh("factoring_constraint");
+          const std::string negativeName = fresh("factoring_not_constraint");
+          const std::string transported = equalityTransport(
+            abstractionConstraintType,
+            selectedOriented,
+            otherOriented.items[1],
+            abstractionPosition,
+            abstractionLeftToRight,
+            hypothesis(positiveName),
+            selectedProof);
+          const std::string positiveProof = injectLiteralOrSymmetry(
+            target, otherOriented.render(), transported);
+          const std::string negativeProof = injectLiteral(
+            target,
+            abstractionConstraintLiteral,
+            hypothesis(negativeName));
+          if (positiveProof.empty() || negativeProof.empty()) {
+            return std::string();
+          }
+          return excludedMiddle(
+            abstractionConstraint.render(),
+            targetFormula,
+            positiveName,
+            positiveProof,
+            negativeName,
+            negativeProof);
+        }
 
         const std::string positiveName = fresh("factoring_positive");
         const std::string negativeName = fresh("factoring_negative");

@@ -1079,6 +1079,12 @@ MegalodonKernelSyntax::PrimitiveStep factorIvyStep(
   const std::vector<std::string>& resultLiterals,
   const std::string& producerProof)
 {
+  const auto retainProducerClauses = [&] (
+      MegalodonKernelSyntax::PrimitiveStep step) {
+    step.producerSourceLiterals = sourceLiterals;
+    step.producerResultLiterals = resultLiterals;
+    return step;
+  };
   const std::size_t removed = std::max(leftLiteral, rightLiteral);
   const std::size_t retained = std::min(leftLiteral, rightLiteral);
   if (leftLiteral >= sourceLiterals.size()
@@ -1087,7 +1093,8 @@ MegalodonKernelSyntax::PrimitiveStep factorIvyStep(
     || sourceLiterals[leftLiteral] != sourceLiterals[rightLiteral]
     || producerProof.empty()
     || resultLiterals.size() + 1 != sourceLiterals.size()) {
-    return factorStep(id, parent, leftLiteral, rightLiteral, result);
+    return retainProducerClauses(
+      factorStep(id, parent, leftLiteral, rightLiteral, result));
   }
 
   std::vector<std::size_t> targets(sourceLiterals.size(), resultLiterals.size());
@@ -1109,13 +1116,15 @@ MegalodonKernelSyntax::PrimitiveStep factorIvyStep(
       }
     }
     if (targets[sourceIndex] == resultLiterals.size()) {
-      return factorStep(id, parent, leftLiteral, rightLiteral, result);
+      return retainProducerClauses(
+        factorStep(id, parent, leftLiteral, rightLiteral, result));
     }
   }
   if (targets[retained] == resultLiterals.size()
     || std::find(usedResult.begin(), usedResult.end(), false)
        != usedResult.end()) {
-    return factorStep(id, parent, leftLiteral, rightLiteral, result);
+    return retainProducerClauses(
+      factorStep(id, parent, leftLiteral, rightLiteral, result));
   }
   targets[removed] = targets[retained];
 
@@ -1142,7 +1151,7 @@ MegalodonKernelSyntax::PrimitiveStep factorIvyStep(
   step.rendered.pop_back();
   step.rendered += " " + program + ")";
   step.producerProof = producerProof;
-  return step;
+  return retainProducerClauses(std::move(step));
 }
 
 MegalodonKernelSyntax::PrimitiveStep equalitySymmetryStep(

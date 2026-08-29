@@ -207,6 +207,11 @@ void InferenceRecorder::superposition(
   Literal* equalityLiteral,
   TermList equalityLhs,
   TermList equalityRhs,
+  Literal* targetLiteralSubstituted,
+  TermList targetTermSubstituted,
+  Literal* equalityLiteralSubstituted,
+  TermList equalityLhsSubstituted,
+  TermList equalityRhsSubstituted,
   bool simultaneous)
 {
   recordGenericSubstitutionInference<ResultSubstitutionSP>(id, conclusion, premises, recordedSubst,
@@ -253,6 +258,20 @@ void InferenceRecorder::superposition(
   info->superpositionEqualityLiteral = equalityLiteral;
   info->superpositionEqualityLhs = equalityLhs;
   info->superpositionEqualityRhs = equalityRhs;
+  if (targetLiteralSubstituted != nullptr
+    && equalityLiteralSubstituted != nullptr) {
+    info->hasSuperpositionInstantiatedSelection = true;
+    info->superpositionTargetLiteralSubstituted = Kernel::SubstHelper::apply(
+      targetLiteralSubstituted, info->conclusionVariableRenaming);
+    info->superpositionTargetTermSubstituted = Kernel::SubstHelper::apply(
+      targetTermSubstituted, info->conclusionVariableRenaming);
+    info->superpositionEqualityLiteralSubstituted = Kernel::SubstHelper::apply(
+      equalityLiteralSubstituted, info->conclusionVariableRenaming);
+    info->superpositionEqualityLhsSubstituted = Kernel::SubstHelper::apply(
+      equalityLhsSubstituted, info->conclusionVariableRenaming);
+    info->superpositionEqualityRhsSubstituted = Kernel::SubstHelper::apply(
+      equalityRhsSubstituted, info->conclusionVariableRenaming);
+  }
   info->superpositionEqualityIsResult = eqIsResult;
   info->superpositionSimultaneous = simultaneous;
 }

@@ -521,6 +521,11 @@ Clause* Superposition::performSuperposition(
       eqLit,
       eqLHS,
       tgtTerm,
+      rwLitS,
+      rwTermS,
+      subst->apply(eqLit, eqIsResult),
+      eqLHSS,
+      tgtTermS,
       doSimS);
   }
 
