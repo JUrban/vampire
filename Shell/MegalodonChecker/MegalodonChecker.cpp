@@ -18316,17 +18316,8 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       INVALID_OPERATION(
         "choice-normalized Ivy DAG expansion failed: " + choiceProofError);
     }
-    MegalodonKernelSyntax::RenderedKernelChoiceProof groundChoiceProof;
-    if (!MegalodonProofExpander::expandGroundChoiceProof(
-          choiceProof,
-          renderedGrounding,
-          groundChoiceProof,
-          choiceProofError)) {
-      INVALID_OPERATION(
-        "ground choice Ivy prooftrans failed: " + choiceProofError);
-    }
     const std::string choiceProofBlock =
-      MegalodonKernelBuilder::skolemChoiceProofBlock(groundChoiceProof);
+      MegalodonKernelBuilder::skolemChoiceProofBlock(choiceProof);
     if (choiceProofBlock.empty()) {
       INVALID_OPERATION("choice-normalized Ivy DAG serialization failed");
     }

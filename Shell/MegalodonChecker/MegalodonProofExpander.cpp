@@ -4380,7 +4380,6 @@ bool expandChoiceNormalizedProof(
   };
   std::map<std::string, std::string> definitionClaims;
   std::set<std::string> generatedClaimIds;
-  bool emittedRootExistsScope = false;
   for (const ChoiceProofStep* wrapped : ordered) {
     const PrimitiveStep& step = wrapped->primitive;
     if (affected.find(step.id) == affected.end()) continue;
@@ -4559,47 +4558,6 @@ bool expandChoiceNormalizedProof(
     if (step.hasResultFormula) node.resultFormula = conclusion.render();
     node.producerProof = proof.render();
 
-    if (step.rule == "skolem_formula"
-        && step.producerSkolemChoiceDefinitions.size() == 1
-        && wrapped->parameters.empty()
-        && step.parentIds.size() == 1) {
-      const auto& definition = step.producerSkolemChoiceDefinitions.front();
-      auto witness = replacements.find(definition.symbol);
-      PreservedSexpr scopeSource;
-      PreservedSexpr scopeTarget;
-      PreservedSexpr scopeBridge;
-      if (witness == replacements.end()
-          || definition.scopeSourceFormulaSexpr.empty()
-          || definition.scopeTargetFormulaSexpr.empty()
-          || definition.scopeBridgeProof.empty()
-          || !parser.parse(definition.scopeSourceFormulaSexpr, scopeSource)
-          || !parser.parse(definition.scopeTargetFormulaSexpr, scopeTarget)
-          || !parser.parse(definition.scopeBridgeProof, scopeBridge)) {
-        error = "choice-normalized root scope at " + step.id
-          + " lacks a complete producer bridge";
-        return false;
-      }
-      scopeSource = normalize(scopeSource, supportClaims, normalize);
-      scopeTarget = normalize(scopeTarget, supportClaims, normalize);
-      scopeBridge = normalize(scopeBridge, supportClaims, normalize);
-      if (containsEliminated(scopeSource, containsEliminated)
-          || containsEliminated(scopeTarget, containsEliminated)
-          || containsEliminated(scopeBridge, containsEliminated)) {
-        error = "choice-normalized root scope at " + step.id
-          + " retains a certificate-local Skolem symbol";
-        return false;
-      }
-      if (scopeTarget.render() == conclusion.render()) {
-        node.hasRootExistsScope = true;
-        node.rootExistsScopeParent = normalizedId(step.parentIds.front());
-        node.rootExistsScopeWitnessType = definition.witnessTypeSexpr;
-        node.rootExistsScopeWitnessTerm = witness->second.render();
-        node.rootExistsScopeSourceFormula = scopeSource.render();
-        node.rootExistsScopeTargetFormula = scopeTarget.render();
-        node.rootExistsScopeBridgeProof = scopeBridge.render();
-        emittedRootExistsScope = true;
-      }
-    }
     result.nodes.push_back(std::move(node));
   }
   if (result.nodes.empty()
@@ -4607,9 +4565,7 @@ bool expandChoiceNormalizedProof(
     error = "choice-normalized proof DAG does not end at its declared root";
     return false;
   }
-  result.version = emittedRootExistsScope
-    ? "ivy_choice_dag_v2"
-    : "ivy_choice_dag_v1";
+  result.version = "ivy_choice_dag_v1";
   result.finalStep = normalizedId(finalStep);
   for (const auto& replacement : replacements) {
     result.producerGroundSubstitutions.push_back({
