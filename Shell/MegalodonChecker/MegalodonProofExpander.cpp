@@ -2318,7 +2318,8 @@ bool buildFoolProgramNode(
     std::string, MegalodonKernelSyntax::RenderedKernelType>>& context,
   std::size_t& nextIndex,
   MegalodonKernelSyntax::RenderedKernelFoolProgramNode& node,
-  const std::map<std::string, PreservedSexpr>* instantiations = nullptr)
+  const std::map<std::string, PreservedSexpr>* instantiations = nullptr,
+  bool allowJunctionReassociation = false)
 {
   node.index = nextIndex++;
   node.direction = forward ? "forward" : "backward";
@@ -2368,7 +2369,8 @@ bool buildFoolProgramNode(
       target.items[3], targetName, replacement);
     return buildFoolProgramNode(
       sourceBody, targetBody, forward,
-      bodyContext, nextIndex, node.children[0], instantiations);
+      bodyContext, nextIndex, node.children[0], instantiations,
+      allowJunctionReassociation);
   }
   if (forward && instantiations != nullptr
       && sexprHead(source, "ALLV") && source.items.size() == 4) {
@@ -2384,7 +2386,8 @@ bool buildFoolProgramNode(
         source.items[3], sourceName, witness->second);
       return buildFoolProgramNode(
         sourceBody, target, forward,
-        context, nextIndex, node.children[0], instantiations);
+        context, nextIndex, node.children[0], instantiations,
+        allowJunctionReassociation);
     }
   }
   if (sexprHead(source, "IMP") && source.items.size() == 3
@@ -2393,10 +2396,12 @@ bool buildFoolProgramNode(
     node.children.resize(2);
     return buildFoolProgramNode(
              source.items[1], target.items[1], !forward,
-             context, nextIndex, node.children[0], instantiations)
+             context, nextIndex, node.children[0], instantiations,
+             allowJunctionReassociation)
       && buildFoolProgramNode(
              source.items[2], target.items[2], forward,
-             context, nextIndex, node.children[1], instantiations);
+             context, nextIndex, node.children[1], instantiations,
+             allowJunctionReassociation);
   }
   PreservedSexpr sourceLeft;
   PreservedSexpr sourceRight;
@@ -2407,14 +2412,51 @@ bool buildFoolProgramNode(
           source, connective, sourceLeft, sourceRight)
         && binaryNamedApplicationSexpr(
           target, connective, targetLeft, targetRight)) {
+      if (allowJunctionReassociation
+          && connective == std::string("vampire_or")) {
+        std::vector<PreservedSexpr> sourceLeaves;
+        std::vector<PreservedSexpr> targetLeaves;
+        const auto flatten = [&](const PreservedSexpr& value,
+                                 std::vector<PreservedSexpr>& leaves,
+                                 const auto& self) -> void {
+          PreservedSexpr left;
+          PreservedSexpr right;
+          if (binaryNamedApplicationSexpr(
+                value, "vampire_or", left, right)) {
+            self(left, leaves, self);
+            self(right, leaves, self);
+          } else {
+            leaves.push_back(value);
+          }
+        };
+        flatten(source, sourceLeaves, flatten);
+        flatten(target, targetLeaves, flatten);
+        if (sourceLeaves.size() != targetLeaves.size()
+            || sourceLeaves.size() < 2) {
+          return false;
+        }
+        node.rule = "or_reassociate";
+        node.children.resize(sourceLeaves.size());
+        for (std::size_t index = 0; index < sourceLeaves.size(); ++index) {
+          if (!buildFoolProgramNode(
+                sourceLeaves[index], targetLeaves[index], forward,
+                context, nextIndex, node.children[index], instantiations,
+                allowJunctionReassociation)) {
+            return false;
+          }
+        }
+        return true;
+      }
       node.rule = connective == std::string("vampire_and") ? "and" : "or";
       node.children.resize(2);
       return buildFoolProgramNode(
                sourceLeft, targetLeft, forward,
-               context, nextIndex, node.children[0], instantiations)
+               context, nextIndex, node.children[0], instantiations,
+               allowJunctionReassociation)
         && buildFoolProgramNode(
              sourceRight, targetRight, forward,
-             context, nextIndex, node.children[1], instantiations);
+             context, nextIndex, node.children[1], instantiations,
+             allowJunctionReassociation);
     }
   }
   std::string sourceExistsName;
@@ -2458,7 +2500,8 @@ bool buildFoolProgramNode(
       targetExistsBody, targetExistsName, replacement);
     return buildFoolProgramNode(
       sourceBody, targetBody, forward,
-      bodyContext, nextIndex, node.children[0], instantiations);
+      bodyContext, nextIndex, node.children[0], instantiations,
+      allowJunctionReassociation);
   }
   PreservedSexpr sourceType;
   PreservedSexpr targetType;
@@ -2490,6 +2533,24 @@ bool buildFoolProgramNode(
     node.rule = source == right
       ? "true_eq_prop" : "true_eq_prop_lambda_alpha";
     return true;
+  }
+  const bool rightIsTrue = namedTermSexpr(right, "vampire_true")
+    || namedTermSexpr(right, "f__true");
+  const bool leftIsTrue = namedTermSexpr(left, "vampire_true")
+    || namedTermSexpr(left, "f__true");
+  if (allowJunctionReassociation && (rightIsTrue || leftIsTrue)) {
+    const PreservedSexpr& atom = rightIsTrue ? left : right;
+    node.rule = rightIsTrue
+      ? "prop_eq_true_transport" : "true_eq_prop_transport";
+    node.children.resize(1);
+    return buildFoolProgramNode(
+      source, atom, forward, context, nextIndex, node.children[0],
+      instantiations, allowJunctionReassociation);
+  }
+  if (allowJunctionReassociation && std::getenv("MEGALODON_CERT_DEBUG")) {
+    std::cerr << "FOOL predicate-fold atomic mismatch"
+              << "\n  source: " << source.render()
+              << "\n  target: " << target.render() << std::endl;
   }
   return false;
 }
@@ -3039,6 +3100,117 @@ public:
               orIntroduction(toLeft, toRight, rightProof, false)));
         }
 
+        if (node.rule == "or_reassociate") {
+          if (!node.binders.empty() || node.children.size() < 2) {
+            return std::string();
+          }
+          const auto flatten = [&](const PreservedSexpr& value,
+                                   std::vector<PreservedSexpr>& leaves,
+                                   const auto& self) -> void {
+            PreservedSexpr left;
+            PreservedSexpr right;
+            if (binaryNamedApplicationSexpr(
+                  value, "vampire_or", left, right)) {
+              self(left, leaves, self);
+              self(right, leaves, self);
+            } else {
+              leaves.push_back(value);
+            }
+          };
+          std::vector<PreservedSexpr> sourceLeaves;
+          std::vector<PreservedSexpr> targetLeaves;
+          flatten(source, sourceLeaves, flatten);
+          flatten(target, targetLeaves, flatten);
+          if (sourceLeaves.size() != node.children.size()
+              || targetLeaves.size() != node.children.size()) {
+            return std::string();
+          }
+          for (std::size_t index = 0; index < node.children.size(); ++index) {
+            PreservedSexpr childSource;
+            PreservedSexpr childTarget;
+            if (!parseFormula(node.children[index].source, childSource)
+                || !parseFormula(node.children[index].target, childTarget)
+                || childSource != sourceLeaves[index]
+                || childTarget != targetLeaves[index]
+                || node.children[index].direction != node.direction) {
+              return std::string();
+            }
+          }
+
+          const PreservedSexpr& from = directionIs(node, "forward")
+            ? source : target;
+          const PreservedSexpr& to = directionIs(node, "forward")
+            ? target : source;
+          const auto leafCount = [&](const PreservedSexpr& value,
+                                     const auto& self) -> std::size_t {
+            PreservedSexpr left;
+            PreservedSexpr right;
+            return binaryNamedApplicationSexpr(
+                     value, "vampire_or", left, right)
+              ? self(left, self) + self(right, self)
+              : 1;
+          };
+          const auto inject = [&](const PreservedSexpr& value,
+                                  std::size_t leafIndex,
+                                  const std::string& leafProof,
+                                  const auto& self) -> std::string {
+            PreservedSexpr left;
+            PreservedSexpr right;
+            if (!binaryNamedApplicationSexpr(
+                  value, "vampire_or", left, right)) {
+              return leafIndex == 0 ? leafProof : std::string();
+            }
+            const std::size_t leftCount = leafCount(left, leafCount);
+            if (leafIndex < leftCount) {
+              const std::string nested = self(
+                left, leafIndex, leafProof, self);
+              return nested.empty()
+                ? nested
+                : orIntroduction(left, right, nested, true);
+            }
+            const std::string nested = self(
+              right, leafIndex - leftCount, leafProof, self);
+            return nested.empty()
+              ? nested
+              : orIntroduction(left, right, nested, false);
+          };
+          const auto eliminate = [&](const PreservedSexpr& value,
+                                     std::size_t offset,
+                                     const std::string& valueProof,
+                                     const auto& self) -> std::string {
+            PreservedSexpr left;
+            PreservedSexpr right;
+            if (!binaryNamedApplicationSexpr(
+                  value, "vampire_or", left, right)) {
+              if (offset >= node.children.size()) return std::string();
+              const std::string converted = convert(
+                node.children[offset], valueProof);
+              return converted.empty()
+                ? converted
+                : inject(to, offset, converted, inject);
+            }
+            const std::string leftName = fresh("fool_or_reassoc_left");
+            const std::string rightName = fresh("fool_or_reassoc_right");
+            const std::string leftProof = self(
+              left, offset, hypothesis(leftName), self);
+            const std::string rightProof = self(
+              right,
+              offset + leafCount(left, leafCount),
+              hypothesis(rightName), self);
+            if (leftProof.empty() || rightProof.empty()) {
+              return std::string();
+            }
+            return proofApply(
+              proofApply(
+                termApply(valueProof, formula(to.render())),
+                proofLambda(
+                  leftName, formula(left.render()), leftProof)),
+              proofLambda(
+                rightName, formula(right.render()), rightProof));
+          };
+          return eliminate(from, 0, proof, eliminate);
+        }
+
         if (node.rule == "exists") {
           if (node.binders.size() != 1 || node.children.size() != 1) {
             return std::string();
@@ -3136,15 +3308,23 @@ public:
                 targetType, targetLeft, targetRight, proof);
         }
 
-        const bool propEqTrue = node.rule == "prop_eq_true"
+        const bool propEqTransport =
+          node.rule == "prop_eq_true_transport";
+        const bool trueEqTransport =
+          node.rule == "true_eq_prop_transport";
+        const bool propEqTrue = propEqTransport
+          || node.rule == "prop_eq_true"
           || node.rule == "prop_eq_true_lambda_alpha";
-        const bool trueEqProp = node.rule == "true_eq_prop"
+        const bool trueEqProp = trueEqTransport
+          || node.rule == "true_eq_prop"
           || node.rule == "true_eq_prop_lambda_alpha";
+        const bool transported = propEqTransport || trueEqTransport;
         PreservedSexpr equalityType;
         PreservedSexpr equalityLeft;
         PreservedSexpr equalityRight;
         if ((!propEqTrue && !trueEqProp)
-            || !node.binders.empty() || !node.children.empty()
+            || !node.binders.empty()
+            || node.children.size() != (transported ? 1 : 0)
             || !typedEqualitySexpr(
                  target, equalityType, equalityLeft, equalityRight)
             || !sexprHead(equalityType, "PROP")
@@ -3157,13 +3337,29 @@ public:
           ? equalityLeft : equalityRight;
         const PreservedSexpr& trueTerm = propEqTrue
           ? equalityRight : equalityLeft;
+        if (!transported && !alphaEquivalentSexpr(source, atom)) {
+          return std::string();
+        }
+        if (transported) {
+          PreservedSexpr childSource;
+          PreservedSexpr childTarget;
+          if (!parseFormula(node.children[0].source, childSource)
+              || !parseFormula(node.children[0].target, childTarget)
+              || childSource != source || childTarget != atom
+              || node.children[0].direction != node.direction) {
+            return std::string();
+          }
+        }
         const std::string atomProofName = fresh("fool_atom");
         const std::string trueProofName = fresh("fool_true");
         const std::string atomToTrue = proofLambda(
           atomProofName, formula(atom.render()), truthProof());
         if (directionIs(node, "forward")) {
+          const std::string atomProof = transported
+            ? convert(node.children[0], proof) : proof;
+          if (atomProof.empty()) return atomProof;
           const std::string trueToAtom = proofLambda(
-            trueProofName, formula(trueTerm.render()), proof);
+            trueProofName, formula(trueTerm.render()), atomProof);
           return propEqTrue
             ? propExt(atom, trueTerm, atomToTrue, trueToAtom)
             : propExt(trueTerm, atom, trueToAtom, atomToTrue);
@@ -3182,9 +3378,11 @@ public:
           "(term (LAMV " + quote(leftName) + " (PROP)"
           + " (LAMV " + quote(rightName) + " (PROP) "
           + motiveBody + ")))";
-        return proofApply(
+        const std::string atomProof = proofApply(
           proofApply(termApply(proof, motive), atomToTrue),
           truthProof());
+        return transported
+          ? convert(node.children[0], atomProof) : atomProof;
       };
 
     if (inputProof.empty() || program.version != "ivy_fool_formula_v1") {
@@ -4649,6 +4847,173 @@ private:
 
 }
 
+bool buildPredicateDefinitionReplacement(
+  const std::string& symbol,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelPredicateDefinitionBinder>& binders,
+  const std::string& definiendumFormula,
+  const std::string& bodyFormula,
+  std::string& replacement,
+  std::string& error)
+{
+  PreservedSexprParser parser;
+  PreservedSexpr definiendum;
+  PreservedSexpr body;
+  if (!parser.parse(definiendumFormula, definiendum)
+      || !parser.parse(bodyFormula, body)) {
+    error = "producer could not parse its rendered definition endpoints";
+    return false;
+  }
+
+  std::vector<PreservedSexpr> arguments;
+  std::size_t matches = 0;
+  std::function<void(const PreservedSexpr&)> findApplication;
+  findApplication = [&](const PreservedSexpr& current) {
+    const PreservedSexpr* head = &current;
+    std::vector<PreservedSexpr> currentArguments;
+    while (sexprHead(*head, "AP") && head->items.size() == 3) {
+      currentArguments.push_back(head->items[2]);
+      head = &head->items[1];
+    }
+    if (namedTermSexpr(*head, symbol)) {
+      std::reverse(currentArguments.begin(), currentArguments.end());
+      arguments = std::move(currentArguments);
+      ++matches;
+      return;
+    }
+    if (!current.atom) {
+      for (std::size_t index = 1; index < current.items.size(); ++index) {
+        findApplication(current.items[index]);
+      }
+    }
+  };
+  findApplication(definiendum);
+  if (matches != 1) {
+    error = "definiendum does not contain exactly one complete application of " + symbol;
+    return false;
+  }
+  if (arguments.size() != binders.size()) {
+    error = "definiendum arity does not match its universal binders";
+    return false;
+  }
+
+  std::vector<const MegalodonKernelSyntax::RenderedKernelPredicateDefinitionBinder*>
+    orderedBinders;
+  std::set<std::string> used;
+  for (const PreservedSexpr& argument : arguments) {
+    const auto binder = std::find_if(
+      binders.begin(), binders.end(),
+      [&](const auto& candidate) {
+        return namedTermSexpr(argument, candidate.variable);
+      });
+    if (binder == binders.end() || !used.insert(binder->variable).second) {
+      error = "definiendum arguments are not a permutation of its universal binders";
+      return false;
+    }
+    orderedBinders.push_back(&*binder);
+  }
+
+  replacement = body.render();
+  for (auto binder = orderedBinders.rbegin(); binder != orderedBinders.rend(); ++binder) {
+    replacement =
+      "(LAMV " + quotePreservedName((*binder)->variable) + " "
+      + (*binder)->type.sexpr + " " + replacement + ")";
+  }
+  PreservedSexpr parsedReplacement;
+  if (!parser.parse(replacement, parsedReplacement)) {
+    error = "producer generated an invalid predicate replacement term";
+    return false;
+  }
+  replacement = parsedReplacement.render();
+  return true;
+}
+
+bool expandPredicateDefinitionFoldProof(
+  const std::string& parentId,
+  const std::string& sourceFormula,
+  const std::string& targetFormula,
+  const std::vector<std::pair<std::string, std::string>>& definitions,
+  std::string& result,
+  std::string& error)
+{
+  PreservedSexprParser parser;
+  PreservedSexpr source;
+  PreservedSexpr target;
+  if (parentId.empty()
+      || !parser.parse(sourceFormula, source)
+      || !parser.parse(targetFormula, target)
+      || definitions.empty()) {
+    error = "predicate fold has incomplete producer endpoints or definitions";
+    return false;
+  }
+
+  std::map<std::string, PreservedSexpr> replacements;
+  for (const auto& definition : definitions) {
+    PreservedSexpr replacement;
+    if (definition.first.empty()
+        || !parser.parse(definition.second, replacement)
+        || !replacements.emplace(definition.first, std::move(replacement)).second) {
+      error = "predicate fold has an invalid or duplicate producer definition";
+      return false;
+    }
+  }
+
+  bool valid = true;
+  std::set<std::string> expanding;
+  std::function<PreservedSexpr(const PreservedSexpr&)> unfold;
+  unfold = [&](const PreservedSexpr& current) -> PreservedSexpr {
+    const PreservedSexpr* head = &current;
+    std::vector<PreservedSexpr> arguments;
+    while (sexprHead(*head, "AP") && head->items.size() == 3) {
+      arguments.push_back(head->items[2]);
+      head = &head->items[1];
+    }
+    std::reverse(arguments.begin(), arguments.end());
+    const auto definition = std::find_if(
+      replacements.begin(), replacements.end(),
+      [&](const auto& candidate) {
+        return namedTermSexpr(*head, candidate.first);
+      });
+    if (definition != replacements.end()) {
+      if (!expanding.insert(definition->first).second) {
+        valid = false;
+        return current;
+      }
+      PreservedSexpr expanded = definition->second;
+      for (const PreservedSexpr& argument : arguments) {
+        expanded = preservedList(
+          preservedAtom("AP"), std::move(expanded), unfold(argument));
+      }
+      expanded = betaNormalizeSexpr(expanded);
+      expanded = unfold(expanded);
+      expanding.erase(definition->first);
+      return expanded;
+    }
+    if (current.atom) return current;
+    PreservedSexpr rewritten = current;
+    for (std::size_t index = 1; index < rewritten.items.size(); ++index) {
+      rewritten.items[index] = unfold(rewritten.items[index]);
+    }
+    return rewritten;
+  };
+
+  target = unfold(target);
+  if (!valid) {
+    error = "predicate fold producer definitions are cyclic";
+    return false;
+  }
+  MegalodonKernelSyntax::RenderedKernelFoolProgram program;
+  if (!buildFoolFormulaProgram(
+        source.render(), target.render(), program, error, true)) {
+    error = "predicate fold does not lower to atomic FOOL transport: " + error;
+    return false;
+  }
+  if (!expandFoolFormulaProof(parentId, {}, program, result, error)) {
+    error = "predicate fold atomic FOOL proof failed: " + error;
+    return false;
+  }
+  return true;
+}
+
 bool expandAvatarSatProjectionProof(
   const std::string& parentId,
   const std::vector<std::string>& sourceLiterals,
@@ -5511,7 +5876,8 @@ bool expandChoiceNormalizedProof(
       [&](const std::string& parent) {
         return affected.find(parent) != affected.end();
       });
-    if (skolemIds.find(step.id) != skolemIds.end()
+    if (step.forceChoiceNormalization
+        || skolemIds.find(step.id) != skolemIds.end()
         || containsEliminated(conclusion, containsEliminated)
         || parentAffected) {
       affected.insert(step.id);
@@ -6274,6 +6640,15 @@ bool expandFiniteSkolemProof(
   std::string& error)
 {
   PreservedSexprParser parser;
+  if (proof.version == "ivy_atomic_choice_v1") {
+    if (proof.finalStep.value.empty()
+        || !proof.applications.empty()
+        || !proof.dischargeOrder.empty()) {
+      error = "atomic choice replay received a malformed producer plan";
+      return false;
+    }
+    return true;
+  }
   if (proof.version != "smolka_finite_v7"
       || proof.applications.empty()
       || proof.dischargeOrder.size() != proof.applications.size()) {
@@ -7042,14 +7417,17 @@ bool expandGroundChoiceProof(
         value, betaNormalizeSexpr(needle), replacement, replacements);
     };
   result = {};
+  const bool atomicChoicePlan =
+    finiteProof.version == "ivy_atomic_choice_v1";
   if ((source.version != "ivy_choice_dag_v1"
        && source.version != "ivy_choice_dag_v2")
       || source.nodes.empty() || source.finalStep.empty()
       || groundProof.version != "ivy_instance_v3"
       || groundProof.instances.empty()
       || groundProof.finalStep.value.empty()
-      || finiteProof.version != "smolka_finite_v7"
-      || finiteProof.applications.empty()
+      || (!atomicChoicePlan && finiteProof.version != "smolka_finite_v7")
+      || (!atomicChoicePlan && finiteProof.applications.empty())
+      || (atomicChoicePlan && !finiteProof.applications.empty())
       || finiteProof.dischargeOrder.size() != finiteProof.applications.size()
       || finiteProof.finalStep.value != groundProof.finalStep.value) {
     error = "ground choice prooftrans received an incomplete source DAG or instance graph";
@@ -7228,6 +7606,66 @@ bool expandGroundChoiceProof(
     return specializeWithEnvironment(
       std::move(value), environments[instance]);
   };
+  struct FiniteWitnessClass {
+    std::string type;
+    PreservedSexpr witness;
+    std::size_t count = 0;
+  };
+  std::vector<FiniteWitnessClass> finiteWitnessClasses;
+  for (const auto& application : finiteProof.applications) {
+    const std::string sourceNodeId = mainNodeId(application.skolemStep.value);
+    const auto sourceNode = nodeById.find(sourceNodeId);
+    if (sourceNode == nodeById.end()
+        || application.ownerInstance >= environments.size()
+        || !sourceNode->second->hasRootExistsScope
+        || sourceNode->second->rootExistsScopeWitnessType == "(SET)") {
+      continue;
+    }
+    const std::size_t macroApplicationCount = static_cast<std::size_t>(
+      std::count_if(
+        finiteProof.applications.begin(),
+        finiteProof.applications.end(),
+        [&](const auto& candidate) {
+          return candidate.ownerInstance == application.ownerInstance
+            && candidate.skolemStep.value == application.skolemStep.value;
+        }));
+    const bool hasRetainedParameter = std::any_of(
+      application.producerChoiceDefinition.parameters.begin(),
+      application.producerChoiceDefinition.parameters.end(),
+      [&](const auto& parameter) {
+        return environments[application.ownerInstance].find(parameter.first)
+          == environments[application.ownerInstance].end();
+      });
+    if (macroApplicationCount != 1 || hasRetainedParameter) continue;
+
+    PreservedSexpr witness;
+    if (!parser.parse(application.term.sexpr, witness)) {
+      error = "ground choice prooftrans cannot parse a finite witness during replay selection";
+      return false;
+    }
+    witness = betaNormalizeSexpr(specialize(
+      normalizeProducerTerms(witness, normalizeProducerTerms),
+      application.ownerInstance));
+    auto witnessClass = std::find_if(
+      finiteWitnessClasses.begin(), finiteWitnessClasses.end(),
+      [&](const FiniteWitnessClass& candidate) {
+        return candidate.type == application.witnessTypeSexpr
+          && alphaEquivalentSexpr(candidate.witness, witness);
+      });
+    if (witnessClass == finiteWitnessClasses.end()) {
+      finiteWitnessClasses.push_back(
+        {application.witnessTypeSexpr, std::move(witness), 1});
+    } else {
+      ++witnessClass->count;
+    }
+  }
+  const bool forceAtomicFiniteReplay = atomicChoicePlan
+    || (finiteWitnessClasses.size() > 1
+        && std::any_of(
+      finiteWitnessClasses.begin(), finiteWitnessClasses.end(),
+      [](const FiniteWitnessClass& witnessClass) {
+        return witnessClass.count > 1;
+      }));
   const auto specializeLeadingBindersWithEnvironment = [&](
       PreservedSexpr value,
       const std::map<std::string, PreservedSexpr>& bindings,
@@ -8190,7 +8628,8 @@ bool expandGroundChoiceProof(
                  == rootFiniteApplication->skolemStep.value;
         }));
     const bool requiresAtomicChoiceReplay =
-      macroApplicationCount > 1
+      forceAtomicFiniteReplay
+      || macroApplicationCount > 1
       || (rootFiniteApplication != nullptr
           && std::any_of(
         finiteProof.applications.begin(),
@@ -8210,7 +8649,9 @@ bool expandGroundChoiceProof(
     // A single ground witness is discharged by finite Smolka abstraction.
     // Multi-witness macros are replayed atomically so that one choice lambda
     // cannot be rewritten independently inside another witness definition.
-    // The same atomic path handles witnesses below retained forall binders.
+    // The same atomic path handles witnesses below retained forall binders and
+    // repeated witness classes that cannot be represented by properly nested
+    // independent finite scopes.
     if (node.hasRootExistsScope
         && node.rootExistsScopeWitnessType != "(SET)"
         && !requiresAtomicChoiceReplay) {
@@ -10589,7 +11030,8 @@ bool buildFoolFormulaProgram(
   const std::string& sourceFormula,
   const std::string& targetFormula,
   MegalodonKernelSyntax::RenderedKernelFoolProgram& program,
-  std::string& error)
+  std::string& error,
+  bool allowJunctionReassociation)
 {
   PreservedSexprParser parser;
   PreservedSexpr source;
@@ -10598,7 +11040,8 @@ bool buildFoolFormulaProgram(
   if (!parser.parse(sourceFormula, source)
       || !parser.parse(targetFormula, target)
       || !buildFoolProgramNode(
-           source, target, true, {}, nextIndex, program.root)) {
+           source, target, true, {}, nextIndex, program.root, nullptr,
+           allowJunctionReassociation)) {
     error = "FOOL formulas do not produce a typed recorder program";
     return false;
   }

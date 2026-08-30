@@ -86,6 +86,8 @@ struct PrimitiveStep {
   std::string id;
   std::string rendered;
   bool builderOwned = false;
+  // Producer-only prooftrans selection. This never becomes a consumer rule.
+  bool forceChoiceNormalization = false;
   bool hasChoiceParameterContract = false;
   std::vector<std::pair<std::string, std::string>> choiceParameters;
   std::vector<std::string> parentIds;
@@ -102,6 +104,10 @@ struct PrimitiveStep {
   std::vector<ProducerFunctionApplication> producerFunctionApplications;
   std::vector<ProducerProofClaim> producerProofClaims;
   std::string producerProof;
+  // Producer-owned transparent definitions used while lowering preprocessing
+  // macros to atomic Ivy proof terms.
+  std::string producerPredicateDefinitionSymbol;
+  std::string producerPredicateDefinitionReplacement;
   // Producer-only clause payload retained for delayed prooftrans lowering.
   std::vector<std::string> producerSourceLiterals;
   std::vector<std::string> producerResultLiterals;
@@ -1047,6 +1053,8 @@ struct RenderedKernelPredicateDefinition {
   std::string definiendumSymbol;
   bool hasBodyFormula = false;
   RenderedKernelFormula bodyFormula;
+  bool hasReplacementTerm = false;
+  RenderedKernelTerm replacementTerm;
   bool hasResultFormula = false;
   RenderedKernelFormula resultFormula;
   std::vector<RenderedKernelPredicateDefinitionBinder> binders;

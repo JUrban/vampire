@@ -7815,6 +7815,22 @@ bool MegalodonChecker::certificatePredicateDefinitionStepSexpr(
   definition.bodySide = "right";
   definition.definiendumElimination = "definition_unfold";
 
+  std::string replacement;
+  std::string replacementError;
+  if (!MegalodonProofExpander::buildPredicateDefinitionReplacement(
+        symbolName,
+        definition.binders,
+        definition.definiendumFormula.sexpr,
+        definition.bodyFormula.sexpr,
+        replacement,
+        replacementError)) {
+    INVALID_OPERATION(
+      "cannot export Ivy predicate definition u"
+      + std::to_string(unit->number()) + ": " + replacementError);
+  }
+  definition.hasReplacementTerm = true;
+  definition.replacementTerm = MegalodonKernelSyntax::term(std::move(replacement));
+
   if (definiendumFormula->connective() == Kernel::LITERAL) {
     Kernel::Literal* literal = definiendumFormula->literal();
     Kernel::Literal* positive = literal->isPositive()
@@ -7842,7 +7858,10 @@ bool MegalodonChecker::certificatePredicateDefinitionStepSexpr(
   return true;
 }
 
-bool MegalodonChecker::certificatePredicateDefinitionFoldStepSexpr(Kernel::Unit* unit, std::string& result)
+bool MegalodonChecker::certificatePredicateDefinitionFoldStepSexpr(
+  Kernel::Unit* unit,
+  std::string& result,
+  MegalodonKernelSyntax::PrimitiveStep* primitiveStep)
 {
   if (unit->isClause() || unit->inference().rule() != Kernel::InferenceRule::DEFINITION_FOLDING_PRED) {
     return false;
@@ -7872,11 +7891,56 @@ bool MegalodonChecker::certificatePredicateDefinitionFoldStepSexpr(Kernel::Unit*
   if (!certificateFormulaTermSexpr(static_cast<Kernel::FormulaUnit*>(unit)->formula(), resultFormula)) {
     return false;
   }
+  std::string sourceFormula;
+  if (!certificateFormulaTermSexpr(
+        static_cast<Kernel::FormulaUnit*>(sourceParent)->formula(), sourceFormula)) {
+    return false;
+  }
+  std::vector<std::pair<std::string, std::string>> producerDefinitions;
+  for (Kernel::Unit* definitionParent : definitionParents) {
+    std::string renderedDefinition;
+    MegalodonKernelSyntax::PrimitiveStep definitionPrimitive;
+    if (!certificatePredicateDefinitionStepSexpr(
+          definitionParent, renderedDefinition, &definitionPrimitive)
+        || definitionPrimitive.producerPredicateDefinitionSymbol.empty()
+        || definitionPrimitive.producerPredicateDefinitionReplacement.empty()) {
+      INVALID_OPERATION(
+        "cannot export predicate folding u" + std::to_string(unit->number())
+        + ": missing producer predicate definition");
+    }
+    producerDefinitions.emplace_back(
+      definitionPrimitive.producerPredicateDefinitionSymbol,
+      definitionPrimitive.producerPredicateDefinitionReplacement);
+  }
+  std::string producerProof;
+  std::string producerProofError;
+  if (!MegalodonProofExpander::expandPredicateDefinitionFoldProof(
+        "u" + std::to_string(sourceParent->number()),
+        sourceFormula,
+        resultFormula,
+        producerDefinitions,
+        producerProof,
+        producerProofError)) {
+    INVALID_OPERATION(
+      "cannot export predicate folding u" + std::to_string(unit->number())
+      + ": " + producerProofError);
+  }
+  auto primitive = MegalodonKernelBuilder::formulaTermCopyStep(
+    "u" + std::to_string(unit->number()),
+    MegalodonKernelSyntax::unitRef(
+      "u" + std::to_string(sourceParent->number())),
+    MegalodonKernelSyntax::formula(resultFormula));
+  primitive.producerProof = producerProof;
+  primitive.forceChoiceNormalization = true;
+  if (primitiveStep != nullptr) {
+    *primitiveStep = std::move(primitive);
+  }
   if (definitionParents.size() == 1) {
     result = "(predicate_definition_fold " + sexprQuote("u" + std::to_string(unit->number()))
       + " (source " + sexprQuote("u" + std::to_string(sourceParent->number())) + ")"
       + " (definition " + sexprQuote("u" + std::to_string(definitionParents[0]->number())) + ")"
-      + " (result (formula " + resultFormula + ")))";
+      + " (producer_proof (program \"ivy_nd_v1\" (proof " + producerProof + ")))"
+      + " (result (formula " + resultFormula + ")) (builder \"typed_v2\"))";
     return true;
   }
   std::reverse(definitionParents.begin(), definitionParents.end());
@@ -7889,7 +7953,8 @@ bool MegalodonChecker::certificatePredicateDefinitionFoldStepSexpr(Kernel::Unit*
   result = "(predicate_definition_fold_chain " + sexprQuote("u" + std::to_string(unit->number()))
     + " (source " + sexprQuote("u" + std::to_string(sourceParent->number())) + ") "
     + definitions.str()
-    + " (result (formula " + resultFormula + ")))";
+    + " (producer_proof (program \"ivy_nd_v1\" (proof " + producerProof + ")))"
+    + " (result (formula " + resultFormula + ")) (builder \"typed_v2\"))";
   return true;
 }
 
@@ -17033,6 +17098,17 @@ bool MegalodonChecker::certificateNativeStepSexpr(
     };
     return true;
   };
+  auto certificatePredicateDefinitionFoldPrimitiveStep = [&]() {
+    MegalodonKernelSyntax::PrimitiveStep primitiveStep;
+    if (!certificatePredicateDefinitionFoldStepSexpr(
+          unit, result, &primitiveStep)) {
+      return false;
+    }
+    _certificateNativePrimitiveStepsByUnit[unit->number()] = {
+      std::move(primitiveStep),
+    };
+    return true;
+  };
   try {
     return certificateInputStepSexpr(unit, result)
       || certificateFormulaInputStepSexpr(unit, result)
@@ -17046,7 +17122,7 @@ bool MegalodonChecker::certificateNativeStepSexpr(
       || certificateSkolemPrimitiveStep()
       || certificateCnfPrimitiveStep()
       || certificatePredicateDefinitionPrimitiveStep()
-      || certificatePredicateDefinitionFoldStepSexpr(unit, result)
+      || certificatePredicateDefinitionFoldPrimitiveStep()
       || certificateDefinitionInputStepSexpr(unit, result)
       || certificateInequalitySplittingNameIntroductionStepSexpr(unit, result)
       || certificateInequalitySplittingStepSexpr(unit, result)
@@ -18382,6 +18458,41 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
         groundingSteps.push_back(std::move(step));
       }
     }
+    // The grounded slice may start at an exact formula theorem whose own
+    // preprocessing object is outside the local Skolem-bearing primitive
+    // expansion.  Materialize every such declared parent as a boundary node
+    // from Vampire's in-memory proof unit so the instance graph is closed.
+    std::set<std::string> groundingStepIds;
+    for (const auto& step : groundingSteps) {
+      groundingStepIds.insert(step.id);
+    }
+    std::vector<std::string> boundaryParentIds;
+    for (const auto& step : groundingSteps) {
+      for (const std::string& parentId : step.parentIds) {
+        if (groundingStepIds.find(parentId) == groundingStepIds.end()) {
+          boundaryParentIds.push_back(parentId);
+        }
+      }
+    }
+    std::sort(boundaryParentIds.begin(), boundaryParentIds.end());
+    boundaryParentIds.erase(
+      std::unique(boundaryParentIds.begin(), boundaryParentIds.end()),
+      boundaryParentIds.end());
+    for (const std::string& parentId : boundaryParentIds) {
+      auto parentUnit = unitById.find(parentId);
+      if (parentUnit == unitById.end()) {
+        INVALID_OPERATION(
+          "typed proof grounding has no in-memory boundary parent "
+          + parentId);
+      }
+      MegalodonProofExpander::Step boundary;
+      boundary.id = parentId;
+      boundary.freeVariableSorts =
+        collectUnitFreeVariableSorts(parentUnit->second);
+      collectUnitGroundingApplications(
+        parentUnit->second, boundary.applications);
+      groundingSteps.push_back(std::move(boundary));
+    }
     MegalodonProofExpander::Expansion grounding;
     std::string groundingError;
     std::vector<MegalodonProofExpander::FunctionDefinition>
@@ -18721,8 +18832,58 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
         appendChoiceStep(primitive);
       }
     }
+    // Structural output can omit a predicate-fold macro even though a later
+    // affected preprocessing step names it as a proof parent.  Detached
+    // prooftrans owns this lowering, so rebuild each such in-proof unit from
+    // the exact Kernel object before taking the normalized DAG closure.
+    for (Kernel::Unit* unit : proof) {
+      if (unit->inference().rule()
+          != Kernel::InferenceRule::DEFINITION_FOLDING_PRED) {
+        continue;
+      }
+      const std::string id = "u" + std::to_string(unit->number());
+      if (choiceStepIds.find(id) != choiceStepIds.end()) continue;
+      std::string renderedFold;
+      MegalodonKernelSyntax::PrimitiveStep primitive;
+      if (!certificatePredicateDefinitionFoldStepSexpr(
+            unit, renderedFold, &primitive)) {
+        INVALID_OPERATION(
+          "detached prooftrans cannot lower in-proof predicate fold " + id);
+      }
+      appendChoiceStep(primitive);
+    }
     for (const auto& primitive : _certificateNativeAuxiliaryPrimitiveSteps) {
       appendChoiceStep(primitive);
+    }
+    // Some preprocessing parents are intentionally absent from the ordinary
+    // emitted-step list until the detached prooftrans slice demands them.
+    // Close that slice from Vampire's full typed primitive table before local
+    // symbols are eliminated.
+    bool addedPrimitiveParent = true;
+    while (addedPrimitiveParent) {
+      addedPrimitiveParent = false;
+      std::set<std::string> missingParents;
+      for (const auto& step : choiceSteps) {
+        for (const std::string& parent : step.primitive.parentIds) {
+          if (choiceStepIds.find(parent) == choiceStepIds.end()) {
+            missingParents.insert(parent);
+          }
+        }
+      }
+      for (const auto& entry : _certificateNativePrimitiveStepsByUnit) {
+        const bool demanded = std::any_of(
+          entry.second.begin(), entry.second.end(),
+          [&](const auto& primitive) {
+            return missingParents.find(primitive.id) != missingParents.end();
+          });
+        if (!demanded) continue;
+        const std::size_t previousSize = choiceSteps.size();
+        for (const auto& primitive : entry.second) {
+          appendChoiceStep(primitive);
+        }
+        addedPrimitiveParent = addedPrimitiveParent
+          || choiceSteps.size() != previousSize;
+      }
     }
     for (const auto& definition : choiceTermDefinitions) {
       MegalodonKernelSyntax::PrimitiveStep primitive;

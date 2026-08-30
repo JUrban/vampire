@@ -1391,6 +1391,9 @@ void appendPredicateDefinitionFields(
   if (definition.hasBodyFormula) {
     fields.push_back("body_formula=" + definition.bodyFormula.sexpr);
   }
+  if (definition.hasReplacementTerm) {
+    fields.push_back("replacement_term=" + definition.replacementTerm.sexpr);
+  }
   if (definition.hasResultFormula) {
     fields.push_back("result_formula=" + definition.resultFormula.sexpr);
   }

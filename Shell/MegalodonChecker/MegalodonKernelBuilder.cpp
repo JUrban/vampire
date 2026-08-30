@@ -506,11 +506,14 @@ bool buildSkolemFiniteUnherbrandization(
     }
     const SkolemUse* owner = findOwner(use);
     if (owner == nullptr) {
-      error = "finite application " + use.term.sexpr
-        + " at " + use.unit + "/instance "
-        + std::to_string(use.groundInstance)
-        + " has no ancestor occurrence at Skolem step " + use.skolemStep;
-      return false;
+      // A later parametric inference can instantiate a Skolem application in a
+      // way that no materialized introducing instance owns exactly.  The
+      // producer's choice-normalized Ivy DAG is already a complete proof for
+      // this case, so select atomic replay instead of inventing a finite owner.
+      result = {};
+      result.version = "ivy_atomic_choice_v1";
+      result.finalStep = MegalodonKernelSyntax::unitRef(finalStep);
+      return true;
     }
     const ApplicationKey groupKey = {
       owner->skolemStep,
@@ -2320,6 +2323,7 @@ MegalodonKernelSyntax::PrimitiveStep predicateDefinitionStep(
   const std::string program =
     "(program \"ivy_predicate_definition_v1\" " + binders
     + " (body (formula " + definition.bodyFormula.sexpr + "))"
+    + " (replacement (term " + definition.replacementTerm.sexpr + "))"
     + " (definiendum (formula " + definition.definiendumFormula.sexpr + "))"
     + " (negative (formula " + definition.negativeFormula.sexpr + "))"
     + " (target (formula " + definition.targetFormula.sexpr + "))"
@@ -2334,10 +2338,13 @@ MegalodonKernelSyntax::PrimitiveStep predicateDefinitionStep(
   step.fields = {
     {"predicate_definition_program", program},
     {"body_formula", definition.bodyFormula.sexpr},
+    {"replacement_term", definition.replacementTerm.sexpr},
     {"definiendum_formula", definition.definiendumFormula.sexpr},
     {"negative_formula", definition.negativeFormula.sexpr},
     {"target_formula", definition.targetFormula.sexpr},
   };
+  step.producerPredicateDefinitionSymbol = symbol;
+  step.producerPredicateDefinitionReplacement = definition.replacementTerm.sexpr;
   step.rendered =
     "(predicate_definition " + quote(id)
     + " (symbol " + quote(symbol) + ")"

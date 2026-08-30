@@ -107,6 +107,22 @@ struct PositiveExistsContextExpansion {
   std::string scopeBridgeProof;
 };
 
+bool buildPredicateDefinitionReplacement(
+  const std::string& symbol,
+  const std::vector<MegalodonKernelSyntax::RenderedKernelPredicateDefinitionBinder>& binders,
+  const std::string& definiendumFormula,
+  const std::string& bodyFormula,
+  std::string& replacement,
+  std::string& error);
+
+bool expandPredicateDefinitionFoldProof(
+  const std::string& parentId,
+  const std::string& sourceFormula,
+  const std::string& targetFormula,
+  const std::vector<std::pair<std::string, std::string>>& definitions,
+  std::string& result,
+  std::string& error);
+
 struct SubstituteClauseStep {
   std::string id;
   MegalodonKernelSyntax::RenderedKernelUnitRef parent;
@@ -355,7 +371,8 @@ bool buildFoolFormulaProgram(
   const std::string& sourceFormula,
   const std::string& targetFormula,
   MegalodonKernelSyntax::RenderedKernelFoolProgram& program,
-  std::string& error);
+  std::string& error,
+  bool allowJunctionReassociation = false);
 
 bool expandAvatarSatResolutionProof(
   const std::string& leftParentId,
