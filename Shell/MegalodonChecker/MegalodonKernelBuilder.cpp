@@ -118,13 +118,22 @@ std::string renderFoolProgramNode(
 std::string goalReplayBlock(
   const MegalodonKernelSyntax::RenderedKernelGoalReplay& replay)
 {
-  if (replay.version != "ivy_goal_replay_v1"
+  if ((replay.version != "ivy_goal_replay_v1"
+       && replay.version != "ivy_goal_replay_v2")
       || replay.finalStep.value.empty()
       || replay.conjectureStep.value.empty()
       || replay.conjectureFormula.sexpr.empty()
       || replay.negatedConjectureStep.value.empty()
       || replay.negatedConjectureFormula.sexpr.empty()
       || replay.closure != "classical_xm") {
+    return "";
+  }
+  if ((replay.version == "ivy_goal_replay_v1"
+       && replay.hasConjectureTransport)
+      || (replay.version == "ivy_goal_replay_v2"
+          && (!replay.hasConjectureTransport
+              || replay.sourceConjectureFormula.sexpr.empty()
+              || replay.conjectureTransportProof.empty()))) {
     return "";
   }
   std::string sources = "(sources";
@@ -137,6 +146,12 @@ std::string goalReplayBlock(
       + " (role " + quote(source.role) + "))";
   }
   sources += ")";
+  const std::string transport = replay.hasConjectureTransport
+    ? " (source_conjecture (formula "
+        + replay.sourceConjectureFormula.sexpr + "))"
+      + " (conjecture_transport (program \"ivy_nd_v1\" (proof "
+        + replay.conjectureTransportProof + ")))"
+    : "";
   return
     "(goal_replay_block " + quote(replay.version)
     + " (final " + quote(replay.finalStep.value) + ")"
@@ -145,6 +160,7 @@ std::string goalReplayBlock(
     + " (negated_conjecture (step "
     + quote(replay.negatedConjectureStep.value) + ")"
     + " (formula " + replay.negatedConjectureFormula.sexpr + "))"
+    + transport
     + " " + sources
     + " (closure " + quote(replay.closure) + "))";
 }
@@ -334,17 +350,19 @@ std::string skolemRefutationUseBlock(
     " (final " + quote(finalStep) + ") " + entries + ")";
 }
 
-std::string skolemFiniteUnherbrandizationBlock(
+bool buildSkolemFiniteUnherbrandization(
   const std::string& finalStep,
   const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemUse>& uses,
   const MegalodonKernelSyntax::RenderedKernelGroundProof& proof,
+  MegalodonKernelSyntax::RenderedKernelFiniteSkolemProof& result,
   std::string& error)
 {
   using SkolemUse = MegalodonKernelSyntax::RenderedKernelSkolemUse;
   using ApplicationKey = std::tuple<std::string, std::string, std::string>;
+  result = {};
   if (finalStep.empty() || uses.empty() || proof.instances.empty()) {
     error = "finite plan has no final step, applications, or instance graph";
-    return "";
+    return false;
   }
 
   struct Application {
@@ -363,7 +381,7 @@ std::string skolemFiniteUnherbrandizationBlock(
     const ApplicationKey key = {use.skolemStep, use.symbol, use.term.sexpr};
     if (!owners[key].emplace(use.groundInstance, &use).second) {
       error = "finite instance graph repeats a Skolem-step owner application";
-      return "";
+      return false;
     }
     ownerFamilies[{use.skolemStep, use.symbol}].push_back(&use);
   }
@@ -376,12 +394,12 @@ std::string skolemFiniteUnherbrandizationBlock(
   for (const auto& instance : proof.instances) {
     if (instance.index >= rootDistance.size()) {
       error = "finite instance graph has a noncontiguous instance index";
-      return "";
+      return false;
     }
     for (std::size_t parent : instance.parentInstances) {
       if (parent >= rootDistance.size()) {
         error = "finite instance graph has an out-of-bounds parent";
-        return "";
+        return false;
       }
     }
   }
@@ -484,7 +502,7 @@ std::string skolemFiniteUnherbrandizationBlock(
       || use.occurrenceCount == 0
       || !use.hasGroundInstance) {
       error = "finite application is missing typed producer data";
-      return "";
+      return false;
     }
     const SkolemUse* owner = findOwner(use);
     if (owner == nullptr) {
@@ -492,7 +510,7 @@ std::string skolemFiniteUnherbrandizationBlock(
         + " at " + use.unit + "/instance "
         + std::to_string(use.groundInstance)
         + " has no ancestor occurrence at Skolem step " + use.skolemStep;
-      return "";
+      return false;
     }
     const ApplicationKey groupKey = {
       owner->skolemStep,
@@ -540,7 +558,7 @@ std::string skolemFiniteUnherbrandizationBlock(
         });
         if (found == applicationIndices.end()) {
           error = "finite application references a missing nested dependency";
-          return "";
+          return false;
         }
         for (std::size_t nestedIndex : found->second) {
           if (nestedIndex != outer) {
@@ -635,7 +653,7 @@ std::string skolemFiniteUnherbrandizationBlock(
     }
     if (predecessors.size() != 1) {
       error = "finite witness stage has no unique preceding stage";
-      return "";
+      return false;
     }
     const std::size_t predecessor = predecessors.front();
     addDependency(predecessor, outer);
@@ -663,10 +681,11 @@ std::string skolemFiniteUnherbrandizationBlock(
   }
   if (order.size() != applications.size()) {
     error = "finite application dependency graph is cyclic";
-    return "";
+    return false;
   }
 
-  std::string renderedApplications = "(applications";
+  result.version = "smolka_finite_v7";
+  result.finalStep = MegalodonKernelSyntax::unitRef(finalStep);
   for (std::size_t index = 0; index < applications.size(); ++index) {
     const auto& application = applications[index];
     const auto& canonical = *application.canonical;
@@ -674,34 +693,37 @@ std::string skolemFiniteUnherbrandizationBlock(
     if (owner == nullptr) {
       error = "finite application " + canonical.term.sexpr
         + " has no exact occurrence at Skolem step " + canonical.skolemStep;
-      return "";
+      return false;
     }
-    renderedApplications +=
-      " (application (index " + std::to_string(index) + ")"
-      + " (step " + quote(canonical.skolemStep) + ")"
-      + " (branch " + std::to_string(canonical.branchIndex) + ")"
-      + " (witness " + std::to_string(canonical.witnessIndex) + ")"
-      + " (owner_instance " + std::to_string(owner->groundInstance) + ")"
-      + " (symbol " + quote(canonical.symbol) + ")"
-      + " (witness_type " + canonical.witnessTypeSexpr + ")"
-      + " (term " + canonical.term.sexpr + ")"
-      + " (source (formula " + canonical.sourceFormulaSexpr + "))"
-      + " (source_instance (formula " + canonical.sourceInstanceSexpr + "))"
-      + " (stage_source_instance (formula "
-      + canonical.stageSourceInstanceSexpr + "))"
-      + " (stage_target_instance (formula "
-      + canonical.stageTargetInstanceSexpr + "))"
-      + " (dependencies";
+    MegalodonKernelSyntax::RenderedKernelFiniteSkolemApplication rendered;
+    rendered.index = index;
+    rendered.skolemStep = MegalodonKernelSyntax::unitRef(canonical.skolemStep);
+    rendered.branchIndex = canonical.branchIndex;
+    rendered.witnessIndex = canonical.witnessIndex;
+    rendered.ownerInstance = owner->groundInstance;
+    rendered.symbol = canonical.symbol;
+    rendered.witnessTypeSexpr = canonical.witnessTypeSexpr;
+    rendered.term = MegalodonKernelSyntax::term(canonical.term.sexpr);
+    rendered.sourceFormula = MegalodonKernelSyntax::formula(
+      canonical.sourceFormulaSexpr);
+    rendered.sourceInstance = MegalodonKernelSyntax::formula(
+      canonical.sourceInstanceSexpr);
+    rendered.stageSourceInstance = MegalodonKernelSyntax::formula(
+      canonical.stageSourceInstanceSexpr);
+    rendered.stageTargetInstance = MegalodonKernelSyntax::formula(
+      canonical.stageTargetInstanceSexpr);
+    rendered.producerChoiceDefinition = canonical.producerChoiceDefinition;
     for (std::size_t dependencyIndex = 0;
          dependencyIndex < canonical.dependencies.size();
          ++dependencyIndex) {
       const auto& dependency = canonical.dependencies[dependencyIndex];
-      renderedApplications +=
-        " (dependency (index " + std::to_string(dependencyIndex) + ")"
-        + " (variable " + quote(dependency.variable) + ")"
-        + " (type " + dependency.typeSexpr + ")"
-        + " (term " + dependency.termSexpr + ")"
-        + " (nested";
+      MegalodonKernelSyntax::RenderedKernelFiniteSkolemDependency
+        renderedDependency;
+      renderedDependency.index = dependencyIndex;
+      renderedDependency.variable = dependency.variable;
+      renderedDependency.typeSexpr = dependency.typeSexpr;
+      renderedDependency.term = MegalodonKernelSyntax::term(
+        dependency.termSexpr);
       std::set<std::size_t> renderedNested;
       for (const auto& nested : dependency.nestedApplications) {
         auto found = applicationIndices.find({
@@ -711,7 +733,7 @@ std::string skolemFiniteUnherbrandizationBlock(
         });
         if (found == applicationIndices.end()) {
           error = "finite dependency references an application omitted from the plan";
-          return "";
+          return false;
         }
         for (std::size_t nestedIndex : found->second) {
           if (nestedIndex != index) {
@@ -719,25 +741,23 @@ std::string skolemFiniteUnherbrandizationBlock(
           }
         }
       }
-      for (std::size_t nested : renderedNested) {
-        renderedApplications +=
-          " (application " + std::to_string(nested) + ")";
-      }
-      renderedApplications += "))";
+      renderedDependency.nestedApplications.assign(
+        renderedNested.begin(), renderedNested.end());
+      rendered.dependencies.push_back(std::move(renderedDependency));
     }
-    renderedApplications += ") (occurrences";
     std::size_t occurrenceIndex = 0;
     for (const auto* use : application.occurrences) {
       for (std::size_t ordinal = 0; ordinal < use->occurrenceCount; ++ordinal) {
-        renderedApplications +=
-          " (occurrence (index " + std::to_string(occurrenceIndex++) + ")"
-          + " (unit " + quote(use->unit) + ")"
-          + " (instance " + std::to_string(use->groundInstance) + ")"
-          + " (term " + use->term.sexpr + ")"
-          + " (specialization (subst";
+        MegalodonKernelSyntax::RenderedKernelFiniteSkolemOccurrence
+          renderedOccurrence;
+        renderedOccurrence.index = occurrenceIndex++;
+        renderedOccurrence.unit = MegalodonKernelSyntax::unitRef(use->unit);
+        renderedOccurrence.instance = use->groundInstance;
+        renderedOccurrence.term = MegalodonKernelSyntax::term(use->term.sexpr);
+        std::string specialization = "(subst";
         if (canonical.dependencies.size() != use->dependencies.size()) {
           error = "finite symbolic occurrence has a different dependency arity from its owner";
-          return "";
+          return false;
         }
         for (std::size_t dependencyIndex = 0;
              dependencyIndex < canonical.dependencies.size();
@@ -749,28 +769,153 @@ std::string skolemFiniteUnherbrandizationBlock(
           if (isCanonicalDependency(sourceDependency)
               && sourceDependency.termSexpr
                  != occurrenceDependency.termSexpr) {
-            renderedApplications +=
+            specialization +=
               " (" + quote(sourceDependency.variable) + " "
               + occurrenceDependency.termSexpr + ")";
           }
         }
-        renderedApplications += "))";
-        renderedApplications +=
-          " (ordinal " + std::to_string(ordinal) + "))";
+        specialization += ")";
+        renderedOccurrence.specialization =
+          MegalodonKernelSyntax::substitution(specialization);
+        renderedOccurrence.ordinal = ordinal;
+        rendered.occurrences.push_back(std::move(renderedOccurrence));
       }
+    }
+    result.applications.push_back(std::move(rendered));
+  }
+  result.dischargeOrder = std::move(order);
+  return true;
+}
+
+std::string skolemFiniteUnherbrandizationBlock(
+  const MegalodonKernelSyntax::RenderedKernelFiniteSkolemProof& proof)
+{
+  if (proof.version != "smolka_finite_v7"
+      || proof.finalStep.value.empty()
+      || proof.applications.empty()
+      || proof.dischargeOrder.size() != proof.applications.size()) {
+    return "";
+  }
+  std::string renderedApplications = "(applications";
+  for (std::size_t expected = 0; expected < proof.applications.size(); ++expected) {
+    const auto& application = proof.applications[expected];
+    if (application.index != expected
+        || application.skolemStep.value.empty()
+        || application.symbol.empty()
+        || application.witnessTypeSexpr.empty()
+        || application.term.sexpr.empty()
+        || application.sourceFormula.sexpr.empty()
+        || application.sourceInstance.sexpr.empty()
+        || application.stageSourceInstance.sexpr.empty()
+        || application.stageTargetInstance.sexpr.empty()
+        || !application.hasProducerProgram
+        || application.programStageSourceFormula.sexpr.empty()
+        || application.programStageSourceToApplicationProof.empty()
+        || application.applicationStageSourceToProgramProof.empty()
+        || application.programStageTargetFormula.sexpr.empty()
+        || application.programStageTargetToApplicationProof.empty()
+        || application.applicationStageTargetToProgramProof.empty()
+        || application.programSourceFormula.sexpr.empty()
+        || application.programSupportFormula.sexpr.empty()
+        || application.programSupportProof.empty()
+        || application.programScopeSourceFormula.sexpr.empty()
+        || application.programScopeTargetFormula.sexpr.empty()
+        || application.programScopeBridgeProof.empty()
+        || application.occurrences.empty()) {
+      return "";
+    }
+    renderedApplications +=
+      " (application (index " + std::to_string(application.index) + ")"
+      + " (step " + quote(application.skolemStep.value) + ")"
+      + " (branch " + std::to_string(application.branchIndex) + ")"
+      + " (witness " + std::to_string(application.witnessIndex) + ")"
+      + " (owner_instance " + std::to_string(application.ownerInstance) + ")"
+      + " (symbol " + quote(application.symbol) + ")"
+      + " (witness_type " + application.witnessTypeSexpr + ")"
+      + " (term " + application.term.sexpr + ")"
+      + " (source (formula " + application.sourceFormula.sexpr + "))"
+      + " (source_instance (formula " + application.sourceInstance.sexpr + "))"
+      + " (stage_source_instance (formula "
+      + application.stageSourceInstance.sexpr + "))"
+      + " (stage_target_instance (formula "
+      + application.stageTargetInstance.sexpr + "))"
+      + " (program \"ivy_finite_application_v1\""
+      + " (stage_source (formula "
+      + application.programStageSourceFormula.sexpr + "))"
+      + " (stage_source_to_application (program \"ivy_nd_v1\" (proof "
+      + application.programStageSourceToApplicationProof + ")))"
+      + " (application_stage_source_to_program (program \"ivy_nd_v1\" (proof "
+      + application.applicationStageSourceToProgramProof + ")))"
+      + " (stage_target (formula "
+      + application.programStageTargetFormula.sexpr + "))"
+      + " (stage_target_to_application (program \"ivy_nd_v1\" (proof "
+      + application.programStageTargetToApplicationProof + ")))"
+      + " (application_stage_target_to_program (program \"ivy_nd_v1\" (proof "
+      + application.applicationStageTargetToProgramProof + ")))"
+      + " (source (formula " + application.programSourceFormula.sexpr + "))"
+      + " (support (formula " + application.programSupportFormula.sexpr + "))"
+      + " (support_proof (program \"ivy_nd_v1\" (proof "
+      + application.programSupportProof + ")))"
+      + " (scope_source (formula "
+      + application.programScopeSourceFormula.sexpr + "))"
+      + " (scope_target (formula "
+      + application.programScopeTargetFormula.sexpr + "))"
+      + " (scope_bridge (program \"ivy_nd_v1\" (proof "
+      + application.programScopeBridgeProof + "))))"
+      + " (dependencies";
+    for (std::size_t expectedDependency = 0;
+         expectedDependency < application.dependencies.size();
+         ++expectedDependency) {
+      const auto& dependency = application.dependencies[expectedDependency];
+      if (dependency.index != expectedDependency
+          || dependency.variable.empty()
+          || dependency.typeSexpr.empty()
+          || dependency.term.sexpr.empty()) {
+        return "";
+      }
+      renderedApplications +=
+        " (dependency (index " + std::to_string(dependency.index) + ")"
+        + " (variable " + quote(dependency.variable) + ")"
+        + " (type " + dependency.typeSexpr + ")"
+        + " (term " + dependency.term.sexpr + ")"
+        + " (nested";
+      for (std::size_t nested : dependency.nestedApplications) {
+        renderedApplications +=
+          " (application " + std::to_string(nested) + ")";
+      }
+      renderedApplications += "))";
+    }
+    renderedApplications += ") (occurrences";
+    for (std::size_t expectedOccurrence = 0;
+         expectedOccurrence < application.occurrences.size();
+         ++expectedOccurrence) {
+      const auto& occurrence = application.occurrences[expectedOccurrence];
+      if (occurrence.index != expectedOccurrence
+          || occurrence.unit.value.empty()
+          || occurrence.term.sexpr.empty()
+          || occurrence.specialization.sexpr.empty()) {
+        return "";
+      }
+      renderedApplications +=
+        " (occurrence (index " + std::to_string(occurrence.index) + ")"
+        + " (unit " + quote(occurrence.unit.value) + ")"
+        + " (instance " + std::to_string(occurrence.instance) + ")"
+        + " (term " + occurrence.term.sexpr + ")"
+        + " (specialization " + occurrence.specialization.sexpr + ")"
+        + " (ordinal " + std::to_string(occurrence.ordinal) + "))";
     }
     renderedApplications += "))";
   }
   renderedApplications += ")";
-
   std::string dischargeOrder = "(discharge_order";
-  for (std::size_t index : order) {
+  for (std::size_t index : proof.dischargeOrder) {
+    if (index >= proof.applications.size()) return "";
     dischargeOrder += " " + std::to_string(index);
   }
   dischargeOrder += ")";
   return
-    "(skolem_unherbrandization_block \"smolka_finite_v5\""
-    " (final " + quote(finalStep) + ") "
+    "(skolem_unherbrandization_block \"" + proof.version + "\""
+    " (final " + quote(proof.finalStep.value) + ") "
     + renderedApplications + " " + dischargeOrder + ")";
 }
 

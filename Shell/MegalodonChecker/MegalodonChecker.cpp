@@ -1194,7 +1194,8 @@ bool MegalodonChecker::certificateAtomSexpr(
   std::string& result,
   const std::vector<std::string>& deBruijnBinders,
   const std::map<unsigned, Kernel::TermList>& variableSubstitutions,
-  bool preserveNegativeEqualityOrientation)
+  bool preserveNegativeEqualityOrientation,
+  bool flipEqualityOrientation)
 {
   Kernel::Literal* positive = literal->isPositive() ? literal : Kernel::Literal::complementaryLiteral(literal);
   Kernel::Literal* oriented =
@@ -1204,12 +1205,14 @@ bool MegalodonChecker::certificateAtomSexpr(
   if (oriented->isEquality()) {
     std::string lhs;
     std::string rhs;
+    const unsigned lhsIndex = flipEqualityOrientation ? 1 : 0;
+    const unsigned rhsIndex = flipEqualityOrientation ? 0 : 1;
     if (!certificateTermSexpr(
-          *oriented->nthArgument(0), lhs,
+          *oriented->nthArgument(lhsIndex), lhs,
           deBruijnBinders, variableSubstitutions,
           preserveNegativeEqualityOrientation)
       || !certificateTermSexpr(
-           *oriented->nthArgument(1), rhs,
+           *oriented->nthArgument(rhsIndex), rhs,
            deBruijnBinders, variableSubstitutions,
            preserveNegativeEqualityOrientation)) {
       return false;
@@ -1254,6 +1257,7 @@ bool MegalodonChecker::certificateSkolemUseDetails(
   use.witnessIndex = witness.witnessIndex;
   use.witnessTypeSexpr = witness.witnessTypeSexpr;
   use.sourceFormulaSexpr = witness.sourceFormulaSexpr;
+  use.producerChoiceDefinition = witness.choiceDefinition;
 
   if (witness.argumentToDependency.size() != arguments.size()) {
     return false;
@@ -4150,7 +4154,8 @@ bool MegalodonChecker::certificateFormulaTermSexpr(
   const std::vector<std::string>& deBruijnBinders,
   bool leftAssociateNary,
   const std::map<unsigned, Kernel::TermList>& variableSubstitutions,
-  bool preserveNegativeEqualityOrientation)
+  bool preserveNegativeEqualityOrientation,
+  bool preserveInputEqualityOrientation)
 {
   switch (formula->connective()) {
   case Kernel::LITERAL: {
@@ -4158,7 +4163,9 @@ bool MegalodonChecker::certificateFormulaTermSexpr(
     if (!certificateAtomSexpr(
           formula->literal(), atom,
           deBruijnBinders, variableSubstitutions,
-          preserveNegativeEqualityOrientation)) {
+          preserveNegativeEqualityOrientation,
+          preserveInputEqualityOrientation
+            && static_cast<Kernel::AtomicFormula*>(formula)->flipForPrinting)) {
       return false;
     }
     if (formula->literal()->isNegative()) {
@@ -4202,7 +4209,8 @@ bool MegalodonChecker::certificateFormulaTermSexpr(
     if (!certificateFormulaTermSexpr(
           formula->uarg(), body, deBruijnBinders,
           leftAssociateNary, variableSubstitutions,
-          preserveNegativeEqualityOrientation)) {
+          preserveNegativeEqualityOrientation,
+          preserveInputEqualityOrientation)) {
       return false;
     }
     result = "(IMP " + body + " (TMH \"vampire_false\"))";
@@ -4214,11 +4222,13 @@ bool MegalodonChecker::certificateFormulaTermSexpr(
     if (!certificateFormulaTermSexpr(
           formula->left(), left, deBruijnBinders,
           leftAssociateNary, variableSubstitutions,
-          preserveNegativeEqualityOrientation)
+          preserveNegativeEqualityOrientation,
+          preserveInputEqualityOrientation)
       || !certificateFormulaTermSexpr(
            formula->right(), right, deBruijnBinders,
            leftAssociateNary, variableSubstitutions,
-           preserveNegativeEqualityOrientation)) {
+           preserveNegativeEqualityOrientation,
+           preserveInputEqualityOrientation)) {
       return false;
     }
     result = "(IMP " + left + " " + right + ")";
@@ -4233,7 +4243,8 @@ bool MegalodonChecker::certificateFormulaTermSexpr(
       if (!certificateFormulaTermSexpr(
             iterator.next(), arg, deBruijnBinders,
             leftAssociateNary, variableSubstitutions,
-            preserveNegativeEqualityOrientation)) {
+            preserveNegativeEqualityOrientation,
+            preserveInputEqualityOrientation)) {
         return false;
       }
       args.push_back(arg);
@@ -4260,7 +4271,8 @@ bool MegalodonChecker::certificateFormulaTermSexpr(
     if (!certificateFormulaTermSexpr(
           formula->qarg(), body, deBruijnBinders,
           leftAssociateNary, variableSubstitutions,
-          preserveNegativeEqualityOrientation)) {
+          preserveNegativeEqualityOrientation,
+          preserveInputEqualityOrientation)) {
       return false;
     }
     std::vector<std::pair<unsigned, Kernel::TermList>> vars;
@@ -4283,7 +4295,8 @@ bool MegalodonChecker::certificateFormulaTermSexpr(
     if (!certificateFormulaTermSexpr(
           formula->qarg(), body, deBruijnBinders,
           leftAssociateNary, variableSubstitutions,
-          preserveNegativeEqualityOrientation)) {
+          preserveNegativeEqualityOrientation,
+          preserveInputEqualityOrientation)) {
       return false;
     }
     std::vector<std::pair<unsigned, Kernel::TermList>> vars;
@@ -4305,6 +4318,15 @@ bool MegalodonChecker::certificateFormulaTermSexpr(
   default:
     return false;
   }
+}
+
+bool MegalodonChecker::certificateFormulaTermInputSexpr(
+  Kernel::Formula* formula,
+  std::string& result)
+{
+  static const std::map<unsigned, Kernel::TermList> noSubstitutions;
+  return certificateFormulaTermSexpr(
+    formula, result, {}, false, noSubstitutions, false, true);
 }
 
 bool MegalodonChecker::certificateFormulaNativeLiteralSexpr(Kernel::Formula* formula, bool& positive, std::string& atom)
@@ -4581,7 +4603,9 @@ bool MegalodonChecker::certificateFormulaTransport(
   bool preserveSourceNegativeEqualityOrientation,
   const std::string* sourceProof,
   std::string* targetProof,
-  const std::string& proofNamePrefix)
+  const std::string& proofNamePrefix,
+  bool preserveSourceInputEqualityOrientation,
+  bool preserveTargetInputEqualityOrientation)
 {
   MegalodonProofExpander::FormulaTransportRequest request;
   request.source = source;
@@ -4589,6 +4613,10 @@ bool MegalodonChecker::certificateFormulaTransport(
   request.freeVariableMap = freeVariableMap;
   request.preserveSourceNegativeEqualityOrientation =
     preserveSourceNegativeEqualityOrientation;
+  request.preserveSourceInputEqualityOrientation =
+    preserveSourceInputEqualityOrientation;
+  request.preserveTargetInputEqualityOrientation =
+    preserveTargetInputEqualityOrientation;
   MegalodonProofExpander::FormulaTransportNode program;
   if (!MegalodonProofExpander::expandFormulaTransport(
         request,
@@ -4620,7 +4648,8 @@ bool MegalodonChecker::certificateFormulaTransport(
     std::string formula;
     if (!certificateFormulaTermSexpr(
           node.source, formula, {}, false, sourceSubstitutions,
-          node.preserveSourceNegativeEqualityOrientation)) {
+          node.preserveSourceNegativeEqualityOrientation,
+          node.preserveSourceInputEqualityOrientation)) {
       error = "cannot render a transport source formula";
       return false;
     }
@@ -4628,7 +4657,8 @@ bool MegalodonChecker::certificateFormulaTransport(
     rendered.sourceFormula = MegalodonKernelSyntax::formula(std::move(formula));
     if (!certificateFormulaTermSexpr(
           node.target, formula, {}, false, targetSubstitutions,
-          node.preserveTargetNegativeEqualityOrientation)) {
+          node.preserveTargetNegativeEqualityOrientation,
+          node.preserveTargetInputEqualityOrientation)) {
       error = "cannot render a transport target formula";
       return false;
     }
@@ -4772,16 +4802,28 @@ bool MegalodonChecker::certificateFormulaTransport(
         node.primitive == "transport_equality_symmetry_positive"
           ? node.preserveSourceNegativeEqualityOrientation
           : node.preserveTargetNegativeEqualityOrientation;
+      const bool flipInputOrientation =
+        node.primitive == "transport_equality_symmetry_positive"
+          ? node.preserveSourceInputEqualityOrientation
+          : node.preserveTargetInputEqualityOrientation;
+      Kernel::Formula* endpoint =
+        node.primitive == "transport_equality_symmetry_positive"
+          ? node.source : node.target;
+      const bool flipArguments =
+        flipInputOrientation
+        && static_cast<Kernel::AtomicFormula*>(endpoint)->flipForPrinting;
+      const unsigned leftIndex = flipArguments ? 1 : 0;
+      const unsigned rightIndex = flipArguments ? 0 : 1;
       std::string sort;
       std::string left;
       std::string right;
       if (!certificateTypeSexpr(
-            Kernel::SortHelper::getEqualityArgumentSort(literal), sort)
+          Kernel::SortHelper::getEqualityArgumentSort(literal), sort)
           || !certificateTermSexpr(
-            *literal->nthArgument(0), left, {}, substitutions,
+            *literal->nthArgument(leftIndex), left, {}, substitutions,
             preserveOrientation)
           || !certificateTermSexpr(
-            *literal->nthArgument(1), right, {}, substitutions,
+            *literal->nthArgument(rightIndex), right, {}, substitutions,
             preserveOrientation)) {
         error = "cannot render formula transport equality proof";
         return false;
@@ -6574,6 +6616,8 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
       }
       rendered.stageSource =
         MegalodonKernelSyntax::formula(std::move(stageSource));
+      rendered.scopeBody =
+        MegalodonKernelSyntax::formula(predicateBody);
       rendered.rawChoiceTarget =
         MegalodonKernelSyntax::formula(std::move(rawChoiceTarget));
       rendered.stageTarget =
@@ -6942,27 +6986,41 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
 
     std::function<bool(
       std::size_t,
+      std::size_t,
+      std::size_t,
       Kernel::Formula*,
       Kernel::Formula*,
       const std::string&,
       std::string&)> liftProof;
     liftProof = [&](std::size_t frameIndex,
+                    std::size_t firstWitness,
+                    std::size_t witnessCount,
                     Kernel::Formula* source,
                     Kernel::Formula* target,
                     const std::string& input,
                     std::string& output) {
       if (frameIndex == contextFrames.size()) {
+        if (witnessCount == 0
+            || firstWitness + witnessCount > branch.witnesses.size()) {
+          return false;
+        }
         std::string renderedSource;
         std::string renderedTarget;
         if (!certificateFormulaTermSexpr(source, renderedSource)
             || !certificateFormulaTermSexpr(target, renderedTarget)
-            || renderedSource != branch.source.sexpr
-            || renderedTarget != branch.target.sexpr) {
+            || renderedSource
+              != branch.witnesses[firstWitness].stageSource.sexpr
+            || renderedTarget
+              != branch.witnesses[firstWitness + witnessCount - 1]
+                   .stageTarget.sexpr) {
           return false;
         }
         output = input;
         std::string current = renderedSource;
-        for (const auto& witness : branch.witnesses) {
+        for (std::size_t witnessIndex = firstWitness;
+             witnessIndex < firstWitness + witnessCount;
+             ++witnessIndex) {
+          const auto& witness = branch.witnesses[witnessIndex];
           if (witness.producerTransform.empty()
               || current != witness.stageSource.sexpr) {
             return false;
@@ -6987,6 +7045,8 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
         std::string body;
         if (!liftProof(
               frameIndex + 1,
+              firstWitness,
+              witnessCount,
               source->qarg(),
               target->qarg(),
               ivyTermApply(
@@ -7032,6 +7092,8 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
       std::string rightProof = ivyHypothesis(rightName);
       if (!liftProof(
             frameIndex + 1,
+            firstWitness,
+            witnessCount,
             sourceChildren[frame.selectedLeft ? 0 : 1],
             targetChildren[frame.selectedLeft ? 0 : 1],
             ivyHypothesis(frame.selectedLeft ? leftName : rightName),
@@ -7048,9 +7110,111 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
       return true;
     };
 
+    for (std::size_t witnessIndex = 0;
+         witnessIndex < branch.witnesses.size();
+         ++witnessIndex) {
+      const auto& recordedWitness = recordedBranch.witnesses[witnessIndex];
+      auto& witness = branch.witnesses[witnessIndex];
+      Kernel::Formula* witnessContextSource = recordedWitness.stageSourceFormula;
+      Kernel::Formula* witnessContextTarget = recordedWitness.stageTargetFormula;
+      for (std::size_t offset = contextFrames.size(); offset-- > 0;) {
+        witnessContextSource = wrapContext(
+          contextFrames[offset], witnessContextSource);
+        witnessContextTarget = wrapContext(
+          contextFrames[offset], witnessContextTarget);
+      }
+      std::string contextSource;
+      std::string contextTargetSexpr;
+      if (!certificateFormulaTermSexpr(witnessContextSource, contextSource)
+          || !certificateFormulaTermSexpr(
+               witnessContextTarget, contextTargetSexpr)) {
+        return false;
+      }
+      const std::string contextInput = ivyFresh("witness_context_source_");
+      std::string contextProof;
+      if (!liftProof(
+            0,
+            witnessIndex,
+            1,
+            witnessContextSource,
+            witnessContextTarget,
+            ivyHypothesis(contextInput),
+            contextProof)) {
+        return false;
+      }
+
+      MegalodonProofExpander::PositiveExistsContextRequest request;
+      request.witnessVariable = witness.replacedVariable;
+      request.witnessType = witness.replacedSort.sexpr;
+      request.witnessBodyFormula = witness.scopeBody.sexpr;
+      request.leafSourceFormula = witness.stageSource.sexpr;
+      request.leafScopeSourceFormula = witness.rawChoiceTarget.sexpr;
+      request.leafScopeTargetFormula = witness.stageTarget.sexpr;
+      request.leafScopeBridgeProof = witness.producerScopeBridge;
+      if (!producerCanonicalInhabitant(
+            recordedWitness.replacedSort,
+            "ivy_sm_u" + std::to_string(unit->number())
+              + "_b" + std::to_string(branchIndex)
+              + "_w" + std::to_string(witnessIndex),
+            0,
+            request.canonicalWitness)) {
+        return false;
+      }
+      for (const SkolemContextFrame& contextFrame : contextFrames) {
+        MegalodonProofExpander::PositiveExistsContextFrame frame;
+        frame.primitive = contextFrame.primitive;
+        frame.selectedLeft = contextFrame.selectedLeft;
+        if (contextFrame.quantified) {
+          frame.variable = variableName(contextFrame.variable);
+          if (!certificateTypeSexpr(
+                contextFrame.variableSort, frame.variableType)) {
+            return false;
+          }
+        } else if (!certificateFormulaTermSexpr(
+                     contextFrame.sibling, frame.siblingFormula)) {
+          return false;
+        }
+        request.frames.push_back(std::move(frame));
+      }
+      MegalodonProofExpander::PositiveExistsContextExpansion expansion;
+      std::string expansionError;
+      if (!MegalodonProofExpander::expandPositiveExistsContext(
+            request, expansion, expansionError)) {
+        std::cerr << "megalodon positive Skolem context expansion failed for u"
+                  << unit->number() << " branch " << branchIndex
+                  << " witness " << witnessIndex << ": "
+                  << expansionError << std::endl;
+        return false;
+      }
+      if (expansion.sourceFormula != contextSource) {
+        std::cerr << "megalodon positive Skolem context source mismatch for u"
+                  << unit->number() << " branch " << branchIndex
+                  << " witness " << witnessIndex << std::endl;
+        return false;
+      }
+      witness.contextSource =
+        MegalodonKernelSyntax::formula(std::move(contextSource));
+      witness.contextTarget =
+        MegalodonKernelSyntax::formula(std::move(contextTargetSexpr));
+      witness.contextTransform = ivyProofLambda(
+        contextInput,
+        ivyFormula(witness.contextSource.sexpr),
+        contextProof);
+      witness.scopeParent = MegalodonKernelSyntax::formula(
+        std::move(expansion.theoremFormula));
+      witness.scopeParentTransform = std::move(expansion.proofTransform);
+      witness.contextScopeSource = MegalodonKernelSyntax::formula(
+        std::move(expansion.scopeSourceFormula));
+      witness.contextScopeTarget = MegalodonKernelSyntax::formula(
+        std::move(expansion.scopeTargetFormula));
+      witness.contextScopeBridge = std::move(expansion.scopeBridgeProof);
+    }
+
     std::string branchProof;
     if (!liftProof(
           0,
+          0,
+          branch.witnesses.size(),
           currentContextFormula,
           contextTarget,
           producerProof,
@@ -7180,9 +7344,36 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
         definition.scopeTargetFormulaSexpr =
           branches[branchIndex].witnesses[witnessIndex]
             .stageTarget.sexpr;
+        definition.stageTransformProof =
+          branches[branchIndex].witnesses[witnessIndex]
+            .producerTransform;
         definition.scopeBridgeProof =
           branches[branchIndex].witnesses[witnessIndex]
             .producerScopeBridge;
+        definition.contextSourceFormulaSexpr =
+          branches[branchIndex].witnesses[witnessIndex]
+            .contextSource.sexpr;
+        definition.contextTargetFormulaSexpr =
+          branches[branchIndex].witnesses[witnessIndex]
+            .contextTarget.sexpr;
+        definition.contextTransformProof =
+          branches[branchIndex].witnesses[witnessIndex]
+            .contextTransform;
+        definition.scopeParentFormulaSexpr =
+          branches[branchIndex].witnesses[witnessIndex]
+            .scopeParent.sexpr;
+        definition.scopeParentTransformProof =
+          branches[branchIndex].witnesses[witnessIndex]
+            .scopeParentTransform;
+        definition.contextScopeSourceFormulaSexpr =
+          branches[branchIndex].witnesses[witnessIndex]
+            .contextScopeSource.sexpr;
+        definition.contextScopeTargetFormulaSexpr =
+          branches[branchIndex].witnesses[witnessIndex]
+            .contextScopeTarget.sexpr;
+        definition.contextScopeBridgeProof =
+          branches[branchIndex].witnesses[witnessIndex]
+            .contextScopeBridge;
         const auto& renderedDependencies =
           branches[branchIndex].witnesses[witnessIndex].dependencies;
         for (std::size_t dependencyIndex : descriptor.argumentToDependency) {
@@ -7195,6 +7386,7 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
             dependency.type.sexpr,
           });
         }
+        descriptor.choiceDefinition = definition;
         built.producerSkolemChoiceDefinitions.push_back(
           std::move(definition));
         if (!_certificateSkolemWitnessDescriptors.emplace(
@@ -17088,9 +17280,8 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       metadata.rfind("(step_extra ", 0) == 0
       && metadata.find("\"kernel_v1\"") != std::string::npos
       && metadata.find("\"rule=avatar_definition\"") != std::string::npos;
-    if ((metadata.rfind("(step_extra ", 0) == 0
-          && !avatarDefinitionContract)
-        || metadata.rfind("(step_proposition ", 0) == 0) {
+    if (metadata.rfind("(step_extra ", 0) == 0
+        && !avatarDefinitionContract) {
       continue;
     }
     out << "  " << metadata << "\n";
@@ -17117,6 +17308,7 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
   std::vector<MegalodonProofExpander::GoalReplayStep> goalReplaySteps;
   std::set<std::string> goalReplayUnitIds;
   bool hasNegatedConjecture = false;
+  Kernel::Formula* goalConjectureFormulaObject = nullptr;
   const std::string finalStep =
     "u" + std::to_string((*proof.rbegin())->number());
   for (Kernel::Unit* unit : proof) {
@@ -17156,6 +17348,10 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       }
       hasNegatedConjecture = hasNegatedConjecture
         || step.sourceRole == "negated_conjecture";
+      if (step.sourceRole == "conjecture" && !unit->isClause()) {
+        goalConjectureFormulaObject =
+          static_cast<Kernel::FormulaUnit*>(unit)->formula();
+      }
       if (step.sourceRole == "negated_conjecture") {
         for (Kernel::Unit* parent : iterTraits(unit->getParents())) {
           if (parent->isClause()) {
@@ -17181,6 +17377,7 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
           }
           conjecture.source = true;
           conjecture.sourceRole = parentRole;
+          goalConjectureFormulaObject = parent->getFormula();
           auto sourceFormula =
             _certificateNativeSourceFormulaByUnit.find(parent->number());
           std::string renderedFormula;
@@ -17230,6 +17427,49 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
           goalReplayError)) {
       INVALID_OPERATION(
         "typed goal replay expansion failed: " + goalReplayError);
+    }
+    if (goalConjectureFormulaObject == nullptr) {
+      INVALID_OPERATION(
+        "typed goal replay omitted the producer conjecture formula object");
+    }
+    std::string sourceConjectureFormula;
+    if (!certificateFormulaTermInputSexpr(
+          goalConjectureFormulaObject, sourceConjectureFormula)) {
+      INVALID_OPERATION(
+        "typed goal replay cannot serialize the input conjecture orientation");
+    }
+    if (sourceConjectureFormula != goalReplay.conjectureFormula.sexpr) {
+      MegalodonKernelSyntax::RenderedKernelEnnfTrace transportProgram;
+      std::string transportError;
+      const std::string transportHypothesis =
+        "vampire_goal_internal_conjecture";
+      const std::string sourceProof =
+        "(hyp " + sexprQuote(transportHypothesis) + ")";
+      std::string targetProof;
+      if (!certificateFormulaTransport(
+            goalConjectureFormulaObject,
+            goalConjectureFormulaObject,
+            {},
+            transportProgram,
+            transportError,
+            false,
+            &sourceProof,
+            &targetProof,
+            "ivy_goal_transport_",
+            false,
+            true)) {
+        INVALID_OPERATION(
+          "typed goal replay input-orientation transport failed: "
+          + transportError);
+      }
+      goalReplay.version = "ivy_goal_replay_v2";
+      goalReplay.hasConjectureTransport = true;
+      goalReplay.sourceConjectureFormula =
+        MegalodonKernelSyntax::formula(sourceConjectureFormula);
+      goalReplay.conjectureTransportProof =
+        "(proof_lambda " + sexprQuote(transportHypothesis)
+        + " (formula " + goalReplay.conjectureFormula.sexpr + ") "
+        + targetProof + ")";
     }
     const std::string renderedGoalReplay =
       MegalodonKernelBuilder::goalReplayBlock(goalReplay);
@@ -17304,10 +17544,9 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       break;
     }
   }
-  // The direct Ivy choice DAG is the complete Skolem reconstruction object.
-  // Do not build the legacy occurrence/grounding/unherbrandization inventory
-  // for newly emitted certificates.
-  skolemUseDescriptors.clear();
+  // Keep the direct Ivy DAG for ordinary replay, but retain the producer's
+  // finite application inventory when Skolem terms must be discharged without
+  // exporting a global Hilbert-choice operator to the source development.
   std::map<unsigned, CertificateFunctionDefinition> producerFunctionDefinitions;
   for (Kernel::Unit* unit : proof) {
     CertificateFunctionDefinition definition;
@@ -18264,7 +18503,9 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       out << "  " << groundingBlock << "\n";
     }
   }
-  if (!skolemSteps.empty()) {
+  const bool hasFiniteSkolemPlan = !groundedSkolemUses.empty();
+  MegalodonKernelSyntax::RenderedKernelFiniteSkolemProof finiteSkolemProof;
+  if (!hasFiniteSkolemPlan && !skolemSteps.empty()) {
     const std::string skolemScope =
       MegalodonKernelBuilder::skolemRefutationScopeBlock(
         finalStep,
@@ -18274,7 +18515,47 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
     }
     out << "  " << skolemScope << "\n";
   }
-  if (!skolemSteps.empty() || !choiceTermDefinitions.empty()) {
+  if (hasFiniteSkolemPlan) {
+    const std::string skolemUseBlock =
+      MegalodonKernelBuilder::skolemRefutationUseBlock(
+        finalStep,
+        groundedSkolemSteps,
+        groundedSkolemInventoryUses);
+    if (skolemUseBlock.empty()) {
+      INVALID_OPERATION(
+        "typed finite Skolem application inventory serialization failed");
+    }
+    out << "  " << skolemUseBlock << "\n";
+    std::string unherbrandizationError;
+    if (!MegalodonKernelBuilder::buildSkolemFiniteUnherbrandization(
+        finalStep,
+        groundedSkolemUses,
+        renderedGrounding,
+        finiteSkolemProof,
+        unherbrandizationError)) {
+      INVALID_OPERATION(
+        "typed finite Skolem plan construction failed: "
+        + unherbrandizationError);
+    }
+    if (!MegalodonProofExpander::expandFiniteSkolemProof(
+          finiteSkolemProof, unherbrandizationError)) {
+      INVALID_OPERATION(
+        "typed finite Skolem prooftrans failed: "
+        + unherbrandizationError);
+    }
+    const std::string unherbrandizationBlock =
+      MegalodonKernelBuilder::skolemFiniteUnherbrandizationBlock(
+        finiteSkolemProof);
+    if (unherbrandizationBlock.empty()) {
+      INVALID_OPERATION(
+        "typed finite Skolem unherbrandization serialization failed: "
+        + unherbrandizationError);
+    }
+    out << "  " << unherbrandizationBlock << "\n";
+  }
+  const auto& choiceSkolemSteps =
+    hasFiniteSkolemPlan ? groundedSkolemSteps : skolemSteps;
+  if (!choiceSkolemSteps.empty() || !choiceTermDefinitions.empty()) {
     std::vector<MegalodonProofExpander::ChoiceProofStep> choiceSteps;
     std::set<std::string> choiceStepIds;
     auto appendChoiceStep =
@@ -18402,13 +18683,26 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
     std::string choiceProofError;
     if (!MegalodonProofExpander::expandChoiceNormalizedProof(
           choiceSteps,
-          skolemSteps,
+          choiceSkolemSteps,
           choiceTermDefinitions,
           finalStep,
           choiceProof,
           choiceProofError)) {
       INVALID_OPERATION(
         "choice-normalized Ivy DAG expansion failed: " + choiceProofError);
+    }
+    if (hasFiniteSkolemPlan) {
+      MegalodonKernelSyntax::RenderedKernelChoiceProof groundChoiceProof;
+      if (!MegalodonProofExpander::expandGroundChoiceProof(
+          choiceProof,
+          renderedGrounding,
+          finiteSkolemProof,
+          groundChoiceProof,
+            choiceProofError)) {
+        INVALID_OPERATION(
+          "ground choice Ivy prooftrans failed: " + choiceProofError);
+      }
+      choiceProof = std::move(groundChoiceProof);
     }
     const std::string choiceProofBlock =
       MegalodonKernelBuilder::skolemChoiceProofBlock(choiceProof);

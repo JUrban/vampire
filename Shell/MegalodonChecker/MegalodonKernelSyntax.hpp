@@ -53,7 +53,16 @@ struct ProducerSkolemChoiceDefinition {
   std::string sourceFormulaSexpr;
   std::string scopeSourceFormulaSexpr;
   std::string scopeTargetFormulaSexpr;
+  std::string stageTransformProof;
   std::string scopeBridgeProof;
+  std::string contextSourceFormulaSexpr;
+  std::string contextTargetFormulaSexpr;
+  std::string contextTransformProof;
+  std::string scopeParentFormulaSexpr;
+  std::string scopeParentTransformProof;
+  std::string contextScopeSourceFormulaSexpr;
+  std::string contextScopeTargetFormulaSexpr;
+  std::string contextScopeBridgeProof;
 };
 
 struct ProducerProofClaim {
@@ -150,6 +159,7 @@ struct RenderedKernelSkolemUse {
   bool groundInstanceParametric = false;
   std::size_t groundEnvironmentSize = 0;
   bool skolemStepOwner = false;
+  ProducerSkolemChoiceDefinition producerChoiceDefinition;
 };
 
 struct RenderedKernelGroundBinding {
@@ -177,6 +187,61 @@ struct RenderedKernelGroundProof {
   std::string version;
   RenderedKernelUnitRef finalStep;
   std::vector<RenderedKernelGroundInstance> instances;
+};
+
+struct RenderedKernelFiniteSkolemDependency {
+  std::size_t index = 0;
+  std::string variable;
+  std::string typeSexpr;
+  RenderedKernelTerm term;
+  std::vector<std::size_t> nestedApplications;
+};
+
+struct RenderedKernelFiniteSkolemOccurrence {
+  std::size_t index = 0;
+  RenderedKernelUnitRef unit;
+  std::size_t instance = 0;
+  RenderedKernelTerm term;
+  RenderedKernelSubstitution specialization;
+  std::size_t ordinal = 0;
+};
+
+struct RenderedKernelFiniteSkolemApplication {
+  std::size_t index = 0;
+  RenderedKernelUnitRef skolemStep;
+  std::size_t branchIndex = 0;
+  std::size_t witnessIndex = 0;
+  std::size_t ownerInstance = 0;
+  std::string symbol;
+  std::string witnessTypeSexpr;
+  RenderedKernelTerm term;
+  RenderedKernelFormula sourceFormula;
+  RenderedKernelFormula sourceInstance;
+  RenderedKernelFormula stageSourceInstance;
+  RenderedKernelFormula stageTargetInstance;
+  std::vector<RenderedKernelFiniteSkolemDependency> dependencies;
+  std::vector<RenderedKernelFiniteSkolemOccurrence> occurrences;
+  ProducerSkolemChoiceDefinition producerChoiceDefinition;
+  bool hasProducerProgram = false;
+  RenderedKernelFormula programStageSourceFormula;
+  std::string programStageSourceToApplicationProof;
+  std::string applicationStageSourceToProgramProof;
+  RenderedKernelFormula programStageTargetFormula;
+  std::string programStageTargetToApplicationProof;
+  std::string applicationStageTargetToProgramProof;
+  RenderedKernelFormula programSourceFormula;
+  RenderedKernelFormula programSupportFormula;
+  std::string programSupportProof;
+  RenderedKernelFormula programScopeSourceFormula;
+  RenderedKernelFormula programScopeTargetFormula;
+  std::string programScopeBridgeProof;
+};
+
+struct RenderedKernelFiniteSkolemProof {
+  std::string version;
+  RenderedKernelUnitRef finalStep;
+  std::vector<RenderedKernelFiniteSkolemApplication> applications;
+  std::vector<std::size_t> dischargeOrder;
 };
 
 enum class RenderedKernelIvyRule {
@@ -648,6 +713,7 @@ struct RenderedKernelScopedSkolemWitness {
   RenderedKernelTerm witnessTerm;
   std::vector<RenderedKernelTypedVariable> dependencies;
   RenderedKernelFormula stageSource;
+  RenderedKernelFormula scopeBody;
   RenderedKernelFormula rawChoiceTarget;
   std::vector<std::vector<std::size_t>> equalitySymmetryPaths;
   bool hasTransportProgram = false;
@@ -660,6 +726,14 @@ struct RenderedKernelScopedSkolemWitness {
   // to its target. Unlike producerTransform, this proof does not use choice;
   // prooftrans places it under an explicit existential scope in the Ivy DAG.
   std::string producerScopeBridge;
+  RenderedKernelFormula contextSource;
+  RenderedKernelFormula contextTarget;
+  std::string contextTransform;
+  RenderedKernelFormula scopeParent;
+  std::string scopeParentTransform;
+  RenderedKernelFormula contextScopeSource;
+  RenderedKernelFormula contextScopeTarget;
+  std::string contextScopeBridge;
 };
 
 struct RenderedKernelScopedSkolemContextStage {
@@ -826,6 +900,9 @@ struct RenderedKernelGoalReplay {
   RenderedKernelFormula conjectureFormula;
   RenderedKernelUnitRef negatedConjectureStep;
   RenderedKernelFormula negatedConjectureFormula;
+  bool hasConjectureTransport = false;
+  RenderedKernelFormula sourceConjectureFormula;
+  std::string conjectureTransportProof;
   std::vector<RenderedKernelGoalReplaySource> sources;
   std::string closure = "classical_xm";
 };

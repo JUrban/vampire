@@ -42,11 +42,15 @@ std::string skolemRefutationUseBlock(
   const std::vector<MegalodonKernelSyntax::PrimitiveStep>& skolemSteps,
   const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemUse>& uses);
 
-std::string skolemFiniteUnherbrandizationBlock(
+bool buildSkolemFiniteUnherbrandization(
   const std::string& finalStep,
   const std::vector<MegalodonKernelSyntax::RenderedKernelSkolemUse>& uses,
   const MegalodonKernelSyntax::RenderedKernelGroundProof& proof,
+  MegalodonKernelSyntax::RenderedKernelFiniteSkolemProof& result,
   std::string& error);
+
+std::string skolemFiniteUnherbrandizationBlock(
+  const MegalodonKernelSyntax::RenderedKernelFiniteSkolemProof& proof);
 
 std::string skolemGroundProofBlock(
   const MegalodonKernelSyntax::RenderedKernelGroundProof& proof);

@@ -78,6 +78,35 @@ struct ChoiceTermDefinition {
   std::string resultClause;
 };
 
+struct PositiveExistsContextFrame {
+  std::string primitive;
+  std::string variable;
+  std::string variableType;
+  std::string siblingFormula;
+  bool selectedLeft = false;
+};
+
+struct PositiveExistsContextRequest {
+  std::string witnessVariable;
+  std::string witnessType;
+  std::string witnessBodyFormula;
+  std::string leafSourceFormula;
+  std::string leafScopeSourceFormula;
+  std::string leafScopeTargetFormula;
+  std::string leafScopeBridgeProof;
+  std::string canonicalWitness;
+  std::vector<PositiveExistsContextFrame> frames;
+};
+
+struct PositiveExistsContextExpansion {
+  std::string sourceFormula;
+  std::string theoremFormula;
+  std::string proofTransform;
+  std::string scopeSourceFormula;
+  std::string scopeTargetFormula;
+  std::string scopeBridgeProof;
+};
+
 struct SubstituteClauseStep {
   std::string id;
   MegalodonKernelSyntax::RenderedKernelUnitRef parent;
@@ -166,6 +195,8 @@ struct FormulaTransportNode {
   Environment targetVariableMap;
   bool preserveSourceNegativeEqualityOrientation = false;
   bool preserveTargetNegativeEqualityOrientation = false;
+  bool preserveSourceInputEqualityOrientation = false;
+  bool preserveTargetInputEqualityOrientation = false;
   VariableSorts context;
   std::vector<FormulaTransportNode> children;
 };
@@ -175,6 +206,8 @@ struct FormulaTransportRequest {
   Kernel::Formula* target = nullptr;
   Environment freeVariableMap;
   bool preserveSourceNegativeEqualityOrientation = false;
+  bool preserveSourceInputEqualityOrientation = false;
+  bool preserveTargetInputEqualityOrientation = false;
 };
 
 struct GoalReplayStep {
@@ -228,7 +261,17 @@ bool expandChoiceNormalizedProof(
 bool expandGroundChoiceProof(
   const MegalodonKernelSyntax::RenderedKernelChoiceProof& source,
   const MegalodonKernelSyntax::RenderedKernelGroundProof& groundProof,
+  const MegalodonKernelSyntax::RenderedKernelFiniteSkolemProof& finiteProof,
   MegalodonKernelSyntax::RenderedKernelChoiceProof& result,
+  std::string& error);
+
+bool expandFiniteSkolemProof(
+  MegalodonKernelSyntax::RenderedKernelFiniteSkolemProof& proof,
+  std::string& error);
+
+bool expandPositiveExistsContext(
+  const PositiveExistsContextRequest& request,
+  PositiveExistsContextExpansion& result,
   std::string& error);
 
 bool expandClauseProof(

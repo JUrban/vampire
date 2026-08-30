@@ -1212,6 +1212,65 @@ bool swappedEqualityLiteral(
          *target->nthArgument(0), targetAliases);
 }
 
+bool inputEqualityOrientationDiffers(
+  Kernel::Formula* source,
+  bool preserveSourceInputEqualityOrientation,
+  Kernel::Formula* target,
+  bool preserveTargetInputEqualityOrientation)
+{
+  if (source->connective() != target->connective()) {
+    return false;
+  }
+  switch (source->connective()) {
+    case Kernel::LITERAL: {
+      if (!source->literal()->isEquality()
+          || !target->literal()->isEquality()) {
+        return false;
+      }
+      const bool sourceFlipped =
+        preserveSourceInputEqualityOrientation
+        && static_cast<Kernel::AtomicFormula*>(source)->flipForPrinting;
+      const bool targetFlipped =
+        preserveTargetInputEqualityOrientation
+        && static_cast<Kernel::AtomicFormula*>(target)->flipForPrinting;
+      return sourceFlipped != targetFlipped;
+    }
+    case Kernel::NOT:
+      return inputEqualityOrientationDiffers(
+        source->uarg(), preserveSourceInputEqualityOrientation,
+        target->uarg(), preserveTargetInputEqualityOrientation);
+    case Kernel::IMP:
+    case Kernel::IFF:
+    case Kernel::XOR:
+      return inputEqualityOrientationDiffers(
+               source->left(), preserveSourceInputEqualityOrientation,
+               target->left(), preserveTargetInputEqualityOrientation)
+        || inputEqualityOrientationDiffers(
+             source->right(), preserveSourceInputEqualityOrientation,
+             target->right(), preserveTargetInputEqualityOrientation);
+    case Kernel::FORALL:
+    case Kernel::EXISTS:
+      return inputEqualityOrientationDiffers(
+        source->qarg(), preserveSourceInputEqualityOrientation,
+        target->qarg(), preserveTargetInputEqualityOrientation);
+    case Kernel::AND:
+    case Kernel::OR: {
+      auto sourceArguments = source->args()->iter();
+      auto targetArguments = target->args()->iter();
+      while (sourceArguments.hasNext() && targetArguments.hasNext()) {
+        if (inputEqualityOrientationDiffers(
+              sourceArguments.next(), preserveSourceInputEqualityOrientation,
+              targetArguments.next(), preserveTargetInputEqualityOrientation)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    default:
+      return false;
+  }
+}
+
 bool binaryJunctionChildren(
   Kernel::Formula* formula,
   Kernel::Formula*& left,
@@ -1272,6 +1331,8 @@ bool expandFormulaTransport(
     const Environment&,
     bool,
     bool,
+    bool,
+    bool,
     const VariableSorts&,
     FormulaTransportNode&)> build;
   build = [&](Kernel::Formula* rawSource,
@@ -1280,6 +1341,8 @@ bool expandFormulaTransport(
               const Environment& targetAliases,
               bool preserveSourceNegativeEqualityOrientation,
               bool preserveTargetNegativeEqualityOrientation,
+              bool preserveSourceInputEqualityOrientation,
+              bool preserveTargetInputEqualityOrientation,
               const VariableSorts& context,
               FormulaTransportNode& node) {
     Kernel::Formula* source = normalizeTransportShape(rawSource);
@@ -1294,18 +1357,31 @@ bool expandFormulaTransport(
       preserveSourceNegativeEqualityOrientation;
     node.preserveTargetNegativeEqualityOrientation =
       preserveTargetNegativeEqualityOrientation;
+    node.preserveSourceInputEqualityOrientation =
+      preserveSourceInputEqualityOrientation;
+    node.preserveTargetInputEqualityOrientation =
+      preserveTargetInputEqualityOrientation;
     node.context = context;
 
     if (sameFormulaModuloAliases(
-          source, sourceAliases, target, targetAliases)) {
+          source, sourceAliases, target, targetAliases)
+        && !inputEqualityOrientationDiffers(
+             source, preserveSourceInputEqualityOrientation,
+             target, preserveTargetInputEqualityOrientation)) {
       node.primitive = "transport_identity";
       return true;
     }
     if (source->connective() == Kernel::LITERAL
         && target->connective() == Kernel::LITERAL
-        && swappedEqualityLiteral(
-             source->literal(), sourceAliases,
-             target->literal(), targetAliases)) {
+        && (swappedEqualityLiteral(
+              source->literal(), sourceAliases,
+              target->literal(), targetAliases)
+            || (sameLiteralModuloAliases(
+                  source->literal(), sourceAliases,
+                  target->literal(), targetAliases)
+                && inputEqualityOrientationDiffers(
+                     source, preserveSourceInputEqualityOrientation,
+                     target, preserveTargetInputEqualityOrientation)))) {
       node.primitive = source->literal()->isPositive()
         ? "transport_equality_symmetry_positive"
         : "transport_equality_symmetry_negative";
@@ -1349,6 +1425,8 @@ bool expandFormulaTransport(
             childTargetAliases,
             preserveSourceNegativeEqualityOrientation,
             preserveTargetNegativeEqualityOrientation,
+            preserveSourceInputEqualityOrientation,
+            preserveTargetInputEqualityOrientation,
             childContext,
             child)) {
         return false;
@@ -1368,12 +1446,16 @@ bool expandFormulaTransport(
             targetAliases, sourceAliases,
             preserveTargetNegativeEqualityOrientation,
             preserveSourceNegativeEqualityOrientation,
+            preserveTargetInputEqualityOrientation,
+            preserveSourceInputEqualityOrientation,
             context, left)
           || !build(
             source->right(), target->right(),
             sourceAliases, targetAliases,
             preserveSourceNegativeEqualityOrientation,
             preserveTargetNegativeEqualityOrientation,
+            preserveSourceInputEqualityOrientation,
+            preserveTargetInputEqualityOrientation,
             context, right)) {
         return false;
       }
@@ -1401,12 +1483,16 @@ bool expandFormulaTransport(
             sourceAliases, targetAliases,
             preserveSourceNegativeEqualityOrientation,
             preserveTargetNegativeEqualityOrientation,
+            preserveSourceInputEqualityOrientation,
+            preserveTargetInputEqualityOrientation,
             context, left)
           || !build(
             sourceRight, targetRight,
             sourceAliases, targetAliases,
             preserveSourceNegativeEqualityOrientation,
             preserveTargetNegativeEqualityOrientation,
+            preserveSourceInputEqualityOrientation,
+            preserveTargetInputEqualityOrientation,
             context, right)) {
         return false;
       }
@@ -1429,6 +1515,8 @@ bool expandFormulaTransport(
     {},
     request.preserveSourceNegativeEqualityOrientation,
     false,
+    request.preserveSourceInputEqualityOrientation,
+    request.preserveTargetInputEqualityOrientation,
     {},
     result);
 }
@@ -1844,6 +1932,28 @@ bool binaryNamedApplicationSexpr(
   return true;
 }
 
+bool preservedName(
+  const PreservedSexpr& value,
+  std::string& result);
+
+bool namedExistsSexpr(
+  const PreservedSexpr& value,
+  std::string& variable,
+  PreservedSexpr& type,
+  PreservedSexpr& body)
+{
+  if (!sexprHead(value, "AP") || value.items.size() != 3
+      || !namedTermSexpr(value.items[1], "vampire_exists_prop")
+      || !sexprHead(value.items[2], "VLAMV")
+      || value.items[2].items.size() != 4
+      || !preservedName(value.items[2].items[1], variable)) {
+    return false;
+  }
+  type = value.items[2].items[2];
+  body = value.items[2].items[3];
+  return true;
+}
+
 PreservedSexpr substituteNamedVariableSexpr(
   const PreservedSexpr& source,
   const std::string& variable,
@@ -2075,12 +2185,70 @@ bool buildFoolProgramNode(
              source.items[2], target.items[2], forward,
              context, nextIndex, node.children[1]);
   }
-  PreservedSexpr sourceType;
   PreservedSexpr sourceLeft;
   PreservedSexpr sourceRight;
-  PreservedSexpr targetType;
   PreservedSexpr targetLeft;
   PreservedSexpr targetRight;
+  for (const char* connective : {"vampire_and", "vampire_or"}) {
+    if (binaryNamedApplicationSexpr(
+          source, connective, sourceLeft, sourceRight)
+        && binaryNamedApplicationSexpr(
+          target, connective, targetLeft, targetRight)) {
+      node.rule = connective == std::string("vampire_and") ? "and" : "or";
+      node.children.resize(2);
+      return buildFoolProgramNode(
+               sourceLeft, targetLeft, forward,
+               context, nextIndex, node.children[0])
+        && buildFoolProgramNode(
+             sourceRight, targetRight, forward,
+             context, nextIndex, node.children[1]);
+    }
+  }
+  std::string sourceExistsName;
+  std::string targetExistsName;
+  PreservedSexpr sourceExistsType;
+  PreservedSexpr targetExistsType;
+  PreservedSexpr sourceExistsBody;
+  PreservedSexpr targetExistsBody;
+  if (namedExistsSexpr(
+        source, sourceExistsName, sourceExistsType, sourceExistsBody)
+      && namedExistsSexpr(
+        target, targetExistsName, targetExistsType, targetExistsBody)
+      && sourceExistsType == targetExistsType) {
+    std::string binderName =
+      "ivy_fool_exists_bound" + std::to_string(node.index);
+    const auto unavailable = [&](const std::string& name) {
+      return containsNamedTermSexpr(source, name)
+        || containsNamedTermSexpr(target, name)
+        || std::any_of(
+             context.begin(), context.end(),
+             [&](const auto& binding) { return binding.first == name; });
+    };
+    while (unavailable(binderName)) binderName += '_';
+    const auto binder = std::make_pair(
+      binderName,
+      MegalodonKernelSyntax::type(sourceExistsType.render()));
+    node.rule = "exists";
+    node.binders.push_back(binder);
+    node.children.resize(1);
+    auto bodyContext = context;
+    bodyContext.push_back(binder);
+    PreservedSexpr replacement;
+    PreservedSexprParser parser;
+    if (!parser.parse(
+          "(TMH " + quotePreservedName(binderName) + ")", replacement)) {
+      return false;
+    }
+    const PreservedSexpr sourceBody = substituteNamedVariableSexpr(
+      sourceExistsBody, sourceExistsName, replacement);
+    const PreservedSexpr targetBody = substituteNamedVariableSexpr(
+      targetExistsBody, targetExistsName, replacement);
+    return buildFoolProgramNode(
+      sourceBody, targetBody, forward,
+      bodyContext, nextIndex, node.children[0]);
+  }
+  PreservedSexpr sourceType;
+  PreservedSexpr targetType;
   if (typedEqualitySexpr(source, sourceType, sourceLeft, sourceRight)
       && typedEqualitySexpr(target, targetType, targetLeft, targetRight)
       && sourceType == targetType
@@ -2314,6 +2482,18 @@ public:
     const MegalodonKernelSyntax::RenderedKernelFoolProgram& program,
     std::string& result)
   {
+    return !parentId.empty()
+      && foolFormulaProof(
+           program,
+           instantiate(parent(parentId), parentArguments),
+           result);
+  }
+
+  bool foolFormulaProof(
+    const MegalodonKernelSyntax::RenderedKernelFoolProgram& program,
+    const std::string& inputProof,
+    std::string& result)
+  {
     static const std::string propExtHash =
       "23ea4ad0d25e31cb704cd6f5752b77c544628e235c5c99d36647ab24d0d261c9";
     PreservedSexprParser parser;
@@ -2351,6 +2531,62 @@ public:
             formula(right.render())),
           leftToRight),
         rightToLeft);
+    };
+    const auto andIntroduction = [&](const PreservedSexpr& left,
+                                     const PreservedSexpr& right,
+                                     const std::string& leftProof,
+                                     const std::string& rightProof) {
+      const std::string qName = fresh("fool_and_q");
+      const std::string handlerName = fresh("fool_and_handler");
+      const std::string q = "(TMH " + quote(qName) + ")";
+      return termLambda(
+        qName,
+        "(PROP)",
+        proofLambda(
+          handlerName,
+          formula(formulaImp(
+            left.render(), formulaImp(right.render(), q))),
+          proofApply(
+            proofApply(hypothesis(handlerName), leftProof),
+            rightProof)));
+    };
+    const auto andElimination = [&](const PreservedSexpr& left,
+                                    const PreservedSexpr& right,
+                                    const std::string& proof,
+                                    bool selectLeft) {
+      const std::string leftName = fresh("fool_and_left");
+      const std::string rightName = fresh("fool_and_right");
+      const PreservedSexpr& selected = selectLeft ? left : right;
+      return proofApply(
+        termApply(proof, formula(selected.render())),
+        proofLambda(
+          leftName,
+          formula(left.render()),
+          proofLambda(
+            rightName,
+            formula(right.render()),
+            hypothesis(selectLeft ? leftName : rightName))));
+    };
+    const auto orIntroduction = [&](const PreservedSexpr& left,
+                                    const PreservedSexpr& right,
+                                    const std::string& proof,
+                                    bool selectLeft) {
+      const std::string qName = fresh("fool_or_q");
+      const std::string leftName = fresh("fool_or_left");
+      const std::string rightName = fresh("fool_or_right");
+      const std::string q = "(TMH " + quote(qName) + ")";
+      return termLambda(
+        qName,
+        "(PROP)",
+        proofLambda(
+          leftName,
+          formula(formulaImp(left.render(), q)),
+          proofLambda(
+            rightName,
+            formula(formulaImp(right.render(), q)),
+            proofApply(
+              hypothesis(selectLeft ? leftName : rightName),
+              proof))));
     };
 
     std::function<std::string(
@@ -2467,6 +2703,155 @@ public:
                 premiseName, formula(premise.render()), targetConclusion);
         }
 
+        if (node.rule == "and" || node.rule == "or") {
+          if (!node.binders.empty() || node.children.size() != 2) {
+            return std::string();
+          }
+          const std::string connective = node.rule == "and"
+            ? "vampire_and" : "vampire_or";
+          PreservedSexpr sourceLeft;
+          PreservedSexpr sourceRight;
+          PreservedSexpr targetLeft;
+          PreservedSexpr targetRight;
+          if (!binaryNamedApplicationSexpr(
+                source, connective, sourceLeft, sourceRight)
+              || !binaryNamedApplicationSexpr(
+                target, connective, targetLeft, targetRight)) {
+            return std::string();
+          }
+          const auto& leftChild = node.children[0];
+          const auto& rightChild = node.children[1];
+          PreservedSexpr leftSource;
+          PreservedSexpr leftTarget;
+          PreservedSexpr rightSource;
+          PreservedSexpr rightTarget;
+          if (!parseFormula(leftChild.source, leftSource)
+              || !parseFormula(leftChild.target, leftTarget)
+              || !parseFormula(rightChild.source, rightSource)
+              || !parseFormula(rightChild.target, rightTarget)
+              || leftSource != sourceLeft || leftTarget != targetLeft
+              || rightSource != sourceRight || rightTarget != targetRight
+              || leftChild.direction != node.direction
+              || rightChild.direction != node.direction) {
+            return std::string();
+          }
+          const PreservedSexpr& fromLeft = directionIs(node, "forward")
+            ? sourceLeft : targetLeft;
+          const PreservedSexpr& fromRight = directionIs(node, "forward")
+            ? sourceRight : targetRight;
+          const PreservedSexpr& toLeft = directionIs(node, "forward")
+            ? targetLeft : sourceLeft;
+          const PreservedSexpr& toRight = directionIs(node, "forward")
+            ? targetRight : sourceRight;
+          if (node.rule == "and") {
+            const std::string leftProof = convert(
+              leftChild,
+              andElimination(fromLeft, fromRight, proof, true));
+            const std::string rightProof = convert(
+              rightChild,
+              andElimination(fromLeft, fromRight, proof, false));
+            return leftProof.empty() || rightProof.empty()
+              ? std::string()
+              : andIntroduction(toLeft, toRight, leftProof, rightProof);
+          }
+
+          const PreservedSexpr& toFormula = directionIs(node, "forward")
+            ? target : source;
+          const std::string leftName = fresh("fool_or_source_left");
+          const std::string rightName = fresh("fool_or_source_right");
+          const std::string leftProof = convert(
+            leftChild, hypothesis(leftName));
+          const std::string rightProof = convert(
+            rightChild, hypothesis(rightName));
+          if (leftProof.empty() || rightProof.empty()) {
+            return std::string();
+          }
+          return proofApply(
+            proofApply(
+              termApply(proof, formula(toFormula.render())),
+              proofLambda(
+                leftName,
+                formula(fromLeft.render()),
+                orIntroduction(toLeft, toRight, leftProof, true))),
+            proofLambda(
+              rightName,
+              formula(fromRight.render()),
+              orIntroduction(toLeft, toRight, rightProof, false)));
+        }
+
+        if (node.rule == "exists") {
+          if (node.binders.size() != 1 || node.children.size() != 1) {
+            return std::string();
+          }
+          std::string sourceName;
+          std::string targetName;
+          PreservedSexpr sourceType;
+          PreservedSexpr targetType;
+          PreservedSexpr sourceBody;
+          PreservedSexpr targetBody;
+          if (!namedExistsSexpr(
+                source, sourceName, sourceType, sourceBody)
+              || !namedExistsSexpr(
+                target, targetName, targetType, targetBody)
+              || sourceType != targetType
+              || node.binders[0].second.sexpr != sourceType.render()) {
+            return std::string();
+          }
+          const std::string& binderName = node.binders[0].first;
+          PreservedSexpr replacement;
+          if (!parser.parse(
+                "(TMH " + quote(binderName) + ")", replacement)) {
+            return std::string();
+          }
+          sourceBody = substituteNamedVariableSexpr(
+            sourceBody, sourceName, replacement);
+          targetBody = substituteNamedVariableSexpr(
+            targetBody, targetName, replacement);
+          const auto& child = node.children[0];
+          PreservedSexpr childSource;
+          PreservedSexpr childTarget;
+          if (!parseFormula(child.source, childSource)
+              || !parseFormula(child.target, childTarget)
+              || childSource != sourceBody || childTarget != targetBody
+              || child.direction != node.direction) {
+            return std::string();
+          }
+          const PreservedSexpr& fromBody = directionIs(node, "forward")
+            ? sourceBody : targetBody;
+          const PreservedSexpr& toBody = directionIs(node, "forward")
+            ? targetBody : sourceBody;
+          const std::string qName = fresh("fool_exists_q");
+          const std::string handlerName = fresh("fool_exists_handler");
+          const std::string bodyName = fresh("fool_exists_body");
+          const std::string q = "(TMH " + quote(qName) + ")";
+          const std::string converted = convert(
+            child, hypothesis(bodyName));
+          if (converted.empty()) return converted;
+          const std::string continuation = termLambda(
+            binderName,
+            sourceType.render(),
+            proofLambda(
+              bodyName,
+              formula(fromBody.render()),
+              proofApply(
+                termApply(
+                  hypothesis(handlerName),
+                  "(term (TMH " + quote(binderName) + "))"),
+                converted)));
+          return termLambda(
+            qName,
+            "(PROP)",
+            proofLambda(
+              handlerName,
+              formula(
+                "(ALLV " + quote(binderName) + " "
+                + sourceType.render() + " (IMP "
+                + toBody.render() + " " + q + "))"),
+              proofApply(
+                termApply(proof, formula(q)),
+                continuation)));
+        }
+
         if (node.rule == "equality_symmetry") {
           PreservedSexpr sourceType;
           PreservedSexpr sourceLeft;
@@ -2542,12 +2927,10 @@ public:
           truthProof());
       };
 
-    if (parentId.empty() || program.version != "ivy_fool_formula_v1") {
+    if (inputProof.empty() || program.version != "ivy_fool_formula_v1") {
       return false;
     }
-    result = convert(
-      program.root,
-      instantiate(parent(parentId), parentArguments));
+    result = convert(program.root, inputProof);
     return !result.empty();
   }
 
@@ -4075,6 +4458,430 @@ bool expandFoolFormulaProof(
   return true;
 }
 
+bool expandPositiveExistsContext(
+  const PositiveExistsContextRequest& request,
+  PositiveExistsContextExpansion& result,
+  std::string& error)
+{
+  PreservedSexprParser parser;
+  result = {};
+  if (request.witnessVariable.empty() || request.witnessType.empty()
+      || request.witnessBodyFormula.empty()
+      || request.leafSourceFormula.empty()
+      || request.leafScopeSourceFormula.empty()
+      || request.leafScopeTargetFormula.empty()
+      || request.leafScopeBridgeProof.empty()
+      || request.canonicalWitness.empty()) {
+    error = "positive-existential context request is incomplete";
+    return false;
+  }
+
+  std::size_t fresh = 0;
+  const auto name = [&](const char* stem) {
+    return std::string("ivy_sm_p_") + stem + std::to_string(fresh++);
+  };
+  const auto formula = [](const std::string& value) {
+    return "(formula " + value + ")";
+  };
+  const auto term = [](const std::string& value) {
+    return "(term " + value + ")";
+  };
+  const auto tmh = [](const std::string& value) {
+    return "(TMH " + quotePreservedName(value) + ")";
+  };
+  const auto hypothesis = [](const std::string& value) {
+    return "(hyp " + quotePreservedName(value) + ")";
+  };
+  const auto proofApply = [](const std::string& left,
+                             const std::string& right) {
+    return "(proof_apply " + left + " " + right + ")";
+  };
+  const auto termApply = [](const std::string& proof,
+                            const std::string& argument) {
+    return "(term_apply " + proof + " " + argument + ")";
+  };
+  const auto proofLambda = [&](const std::string& variable,
+                               const std::string& proposition,
+                               const std::string& body) {
+    return "(proof_lambda " + quotePreservedName(variable) + " "
+      + formula(proposition) + " " + body + ")";
+  };
+  const auto termLambda = [](const std::string& variable,
+                             const std::string& type,
+                             const std::string& body) {
+    return "(term_lambda " + quotePreservedName(variable) + " "
+      + type + " " + body + ")";
+  };
+  const auto implication = [](const std::string& left,
+                              const std::string& right) {
+    return "(IMP " + left + " " + right + ")";
+  };
+  const auto forall = [](const std::string& variable,
+                         const std::string& type,
+                         const std::string& body) {
+    return "(ALLV " + quotePreservedName(variable) + " " + type
+      + " " + body + ")";
+  };
+  const auto exists = [](const std::string& variable,
+                         const std::string& type,
+                         const std::string& body) {
+    return "(AP (TMH \"vampire_exists_prop\") (VLAMV "
+      + quotePreservedName(variable) + " " + type + " " + body + "))";
+  };
+  const auto junction = [](bool conjunction,
+                           const std::string& left,
+                           const std::string& right) {
+    return "(AP (AP (TMH \""
+      + std::string(conjunction ? "vampire_and" : "vampire_or")
+      + "\") " + left + ") " + right + ")";
+  };
+
+  const auto existsIntro = [&](const std::string& body,
+                               const std::string& witness,
+                               const std::string& bodyProof) {
+    const std::string target = name("exists_target_");
+    const std::string handler = name("exists_handler_");
+    const std::string targetTerm = tmh(target);
+    return termLambda(
+      target,
+      "(PROP)",
+      proofLambda(
+        handler,
+        forall(
+          request.witnessVariable,
+          request.witnessType,
+          implication(body, targetTerm)),
+        proofApply(
+          termApply(hypothesis(handler), term(witness)),
+          bodyProof)));
+  };
+  const auto junctionIntro = [&](bool conjunction,
+                                 const std::string& left,
+                                 const std::string& right,
+                                 const std::string& leftProof,
+                                 const std::string& rightProof,
+                                 bool selectLeft) {
+    const std::string target = name("junction_target_");
+    const std::string leftHandler = name("junction_left_");
+    const std::string rightHandler = name("junction_right_");
+    const std::string targetTerm = tmh(target);
+    if (conjunction) {
+      return termLambda(
+        target,
+        "(PROP)",
+        proofLambda(
+          leftHandler,
+          implication(left, implication(right, targetTerm)),
+          proofApply(
+            proofApply(hypothesis(leftHandler), leftProof),
+            rightProof)));
+    }
+    return termLambda(
+      target,
+      "(PROP)",
+      proofLambda(
+        leftHandler,
+        implication(left, targetTerm),
+        proofLambda(
+          rightHandler,
+          implication(right, targetTerm),
+          proofApply(
+            hypothesis(selectLeft ? leftHandler : rightHandler),
+            selectLeft ? leftProof : rightProof))));
+  };
+
+  struct State {
+    std::string source;
+    std::string body;
+    std::string theorem;
+    std::string transform;
+    std::vector<std::pair<std::string, std::string>> dependencies;
+  } state;
+  state.source = request.leafSourceFormula;
+  state.body = request.witnessBodyFormula;
+  state.theorem = exists(
+    request.witnessVariable, request.witnessType, state.body);
+  const std::string leafHypothesis = name("leaf_source_");
+  state.transform = proofLambda(
+    leafHypothesis, state.source, hypothesis(leafHypothesis));
+
+  struct ScopeState {
+    std::string source;
+    std::string target;
+    std::string bridge;
+  } scope;
+  scope.source = request.leafScopeSourceFormula;
+  scope.target = request.leafScopeTargetFormula;
+  scope.bridge = request.leafScopeBridgeProof;
+
+  PreservedSexpr expectedLeaf;
+  PreservedSexpr actualLeaf;
+  if (!parser.parse(state.source, actualLeaf)
+      || !parser.parse(state.theorem, expectedLeaf)
+      || actualLeaf.render() != expectedLeaf.render()) {
+    error = "positive-existential leaf is not its declared Church existential";
+    return false;
+  }
+
+  const auto wrapDependencies = [&](std::string proof) {
+    for (auto dependency = state.dependencies.rbegin();
+         dependency != state.dependencies.rend();
+         ++dependency) {
+      proof = termLambda(dependency->first, dependency->second, proof);
+    }
+    return proof;
+  };
+  const auto applyDependencies = [&](std::string proof) {
+    for (const auto& dependency : state.dependencies) {
+      proof = termApply(proof, term(tmh(dependency.first)));
+    }
+    return proof;
+  };
+
+  for (auto frame = request.frames.rbegin();
+       frame != request.frames.rend();
+       ++frame) {
+    if (frame->primitive == "skolem_forall_map") {
+      if (frame->variable.empty() || frame->variableType.empty()) {
+        error = "positive-existential forall frame is incomplete";
+        return false;
+      }
+      const std::string source = forall(
+        frame->variable, frame->variableType, state.source);
+      const std::string theorem = forall(
+        frame->variable, frame->variableType, state.theorem);
+      const std::string input = name("forall_source_");
+      state.transform = proofLambda(
+        input,
+        source,
+        termLambda(
+          frame->variable,
+          frame->variableType,
+          proofApply(
+            state.transform,
+            termApply(
+              hypothesis(input),
+              term(tmh(frame->variable))))));
+      state.dependencies.insert(
+        state.dependencies.begin(),
+        {frame->variable, frame->variableType});
+      state.source = source;
+      state.theorem = theorem;
+      continue;
+    }
+
+    const bool conjunction =
+      frame->primitive == "skolem_and_left_map"
+      || frame->primitive == "skolem_and_right_map";
+    const bool disjunction =
+      frame->primitive == "skolem_or_left_map"
+      || frame->primitive == "skolem_or_right_map";
+    if ((!conjunction && !disjunction) || frame->siblingFormula.empty()) {
+      error = "positive-existential context has an unsupported frame";
+      return false;
+    }
+
+    const std::string oldScopeSource = scope.source;
+    const std::string oldScopeTarget = scope.target;
+    const std::string oldScopeBridge = scope.bridge;
+    const std::string scopeSourceLeft = frame->selectedLeft
+      ? oldScopeSource : frame->siblingFormula;
+    const std::string scopeSourceRight = frame->selectedLeft
+      ? frame->siblingFormula : oldScopeSource;
+    const std::string scopeTargetLeft = frame->selectedLeft
+      ? oldScopeTarget : frame->siblingFormula;
+    const std::string scopeTargetRight = frame->selectedLeft
+      ? frame->siblingFormula : oldScopeTarget;
+    const std::string scopeInput = name("scope_junction_source_");
+    const std::string scopeLeft = name("scope_junction_left_");
+    const std::string scopeRight = name("scope_junction_right_");
+    const auto scopeIntroduction = [&](bool branchLeft) {
+      std::string leftProof = hypothesis(scopeLeft);
+      std::string rightProof = hypothesis(scopeRight);
+      if (frame->selectedLeft && branchLeft) {
+        leftProof = proofApply(oldScopeBridge, leftProof);
+      } else if (!frame->selectedLeft && !branchLeft) {
+        rightProof = proofApply(oldScopeBridge, rightProof);
+      }
+      return junctionIntro(
+        conjunction,
+        scopeTargetLeft,
+        scopeTargetRight,
+        leftProof,
+        rightProof,
+        branchLeft);
+    };
+    std::string scopeBody;
+    const std::string scopeTarget = junction(
+      conjunction, scopeTargetLeft, scopeTargetRight);
+    if (conjunction) {
+      scopeBody = proofApply(
+        termApply(hypothesis(scopeInput), formula(scopeTarget)),
+        proofLambda(
+          scopeLeft,
+          scopeSourceLeft,
+          proofLambda(
+            scopeRight,
+            scopeSourceRight,
+            scopeIntroduction(frame->selectedLeft))));
+    } else {
+      scopeBody = proofApply(
+        proofApply(
+          termApply(hypothesis(scopeInput), formula(scopeTarget)),
+          proofLambda(
+            scopeLeft,
+            scopeSourceLeft,
+            scopeIntroduction(true))),
+        proofLambda(
+          scopeRight,
+          scopeSourceRight,
+          scopeIntroduction(false)));
+    }
+    scope.source = junction(
+      conjunction, scopeSourceLeft, scopeSourceRight);
+    scope.target = scopeTarget;
+    scope.bridge = proofLambda(scopeInput, scope.source, scopeBody);
+
+    const std::string oldSource = state.source;
+    const std::string oldBody = state.body;
+    const std::string oldTransform = state.transform;
+    const std::string left = frame->selectedLeft
+      ? oldSource : frame->siblingFormula;
+    const std::string right = frame->selectedLeft
+      ? frame->siblingFormula : oldSource;
+    const std::string newBody = frame->selectedLeft
+      ? junction(conjunction, oldBody, frame->siblingFormula)
+      : junction(conjunction, frame->siblingFormula, oldBody);
+    std::string newTheorem = exists(
+      request.witnessVariable, request.witnessType, newBody);
+    for (auto dependency = state.dependencies.rbegin();
+         dependency != state.dependencies.rend();
+         ++dependency) {
+      newTheorem = forall(
+        dependency->first, dependency->second, newTheorem);
+    }
+
+    const auto selectedBranch = [&](const std::string& selectedProof,
+                                    const std::string& siblingProof) {
+      std::string oldExists = proofApply(oldTransform, selectedProof);
+      oldExists = applyDependencies(std::move(oldExists));
+      const std::string witnessBody = name("witness_body_");
+      const std::string witnessProof = hypothesis(witnessBody);
+      const std::string leftProof = frame->selectedLeft
+        ? witnessProof : siblingProof;
+      const std::string rightProof = frame->selectedLeft
+        ? siblingProof : witnessProof;
+      const std::string bodyProof = junctionIntro(
+        conjunction,
+        frame->selectedLeft ? oldBody : frame->siblingFormula,
+        frame->selectedLeft ? frame->siblingFormula : oldBody,
+        leftProof,
+        rightProof,
+        frame->selectedLeft);
+      const std::string targetExists = exists(
+        request.witnessVariable, request.witnessType, newBody);
+      std::string mapped = proofApply(
+        termApply(oldExists, formula(targetExists)),
+        termLambda(
+          request.witnessVariable,
+          request.witnessType,
+          proofLambda(
+            witnessBody,
+            oldBody,
+            existsIntro(
+              newBody,
+              tmh(request.witnessVariable),
+              bodyProof))));
+      return wrapDependencies(std::move(mapped));
+    };
+    const auto siblingBranch = [&](const std::string& siblingProof) {
+      const std::string leftProof = frame->selectedLeft
+        ? std::string() : siblingProof;
+      const std::string rightProof = frame->selectedLeft
+        ? siblingProof : std::string();
+      const std::string bodyProof = junctionIntro(
+        false,
+        frame->selectedLeft ? oldBody : frame->siblingFormula,
+        frame->selectedLeft ? frame->siblingFormula : oldBody,
+        leftProof,
+        rightProof,
+        !frame->selectedLeft);
+      std::string introduced = existsIntro(
+        newBody,
+        tmh(request.witnessVariable),
+        bodyProof);
+      introduced = termApply(
+        termLambda(
+          request.witnessVariable,
+          request.witnessType,
+          introduced),
+        term(request.canonicalWitness));
+      return wrapDependencies(std::move(introduced));
+    };
+
+    const std::string input = name("junction_source_");
+    const std::string leftName = name("junction_case_left_");
+    const std::string rightName = name("junction_case_right_");
+    std::string body;
+    if (conjunction) {
+      body = selectedBranch(
+        hypothesis(frame->selectedLeft ? leftName : rightName),
+        hypothesis(frame->selectedLeft ? rightName : leftName));
+      body = proofApply(
+        termApply(hypothesis(input), formula(newTheorem)),
+        proofLambda(
+          leftName,
+          left,
+          proofLambda(rightName, right, body)));
+    } else {
+      const std::string leftBranch = proofLambda(
+        leftName,
+        left,
+        frame->selectedLeft
+          ? selectedBranch(hypothesis(leftName), std::string())
+          : siblingBranch(hypothesis(leftName)));
+      const std::string rightBranch = proofLambda(
+        rightName,
+        right,
+        frame->selectedLeft
+          ? siblingBranch(hypothesis(rightName))
+          : selectedBranch(hypothesis(rightName), std::string()));
+      body = proofApply(
+        proofApply(
+          termApply(hypothesis(input), formula(newTheorem)),
+          leftBranch),
+        rightBranch);
+    }
+    state.source = junction(conjunction, left, right);
+    state.body = newBody;
+    state.theorem = newTheorem;
+    state.transform = proofLambda(input, state.source, body);
+  }
+
+  PreservedSexpr parsedSource;
+  PreservedSexpr parsedTheorem;
+  PreservedSexpr parsedProof;
+  PreservedSexpr parsedScopeSource;
+  PreservedSexpr parsedScopeTarget;
+  PreservedSexpr parsedScopeBridge;
+  if (!parser.parse(state.source, parsedSource)
+      || !parser.parse(state.theorem, parsedTheorem)
+      || !parser.parse(state.transform, parsedProof)
+      || !parser.parse(scope.source, parsedScopeSource)
+      || !parser.parse(scope.target, parsedScopeTarget)
+      || !parser.parse(scope.bridge, parsedScopeBridge)) {
+    error = "positive-existential context expansion is not valid Ivy syntax";
+    return false;
+  }
+  result.sourceFormula = parsedSource.render();
+  result.theoremFormula = parsedTheorem.render();
+  result.proofTransform = parsedProof.render();
+  result.scopeSourceFormula = parsedScopeSource.render();
+  result.scopeTargetFormula = parsedScopeTarget.render();
+  result.scopeBridgeProof = parsedScopeBridge.render();
+  return true;
+}
+
 bool expandChoiceNormalizedProof(
   const std::vector<ChoiceProofStep>& steps,
   const std::vector<MegalodonKernelSyntax::PrimitiveStep>& skolemSteps,
@@ -4424,7 +5231,11 @@ bool expandChoiceNormalizedProof(
   };
   std::set<std::string> affected;
   std::set<std::string> skolemIds;
-  for (const PrimitiveStep& step : skolemSteps) skolemIds.insert(step.id);
+  std::map<std::string, const PrimitiveStep*> skolemStepById;
+  for (const PrimitiveStep& step : skolemSteps) {
+    skolemIds.insert(step.id);
+    skolemStepById.emplace(step.id, &step);
+  }
   for (const ChoiceProofStep* wrapped : ordered) {
     const PrimitiveStep& step = wrapped->primitive;
     PreservedSexpr conclusion;
@@ -4900,6 +5711,202 @@ bool expandChoiceNormalizedProof(
       node.producerProof = proof.render();
     }
 
+    // Lower every Skolem witness to a support existential followed by one
+    // contextual target.  Both proof transformers are producer-generated Ivy
+    // terms; the consumer only opens the declared root existential scope.
+    auto skolem = skolemStepById.find(step.id);
+    if (skolem != skolemStepById.end()
+        && step.parentIds.size() == 1
+        && node.hasResultFormula) {
+      const auto& definitions =
+        skolem->second->producerSkolemChoiceDefinitions;
+      std::vector<MegalodonKernelSyntax::RenderedKernelChoiceProofNode> stages;
+      std::string stageParent = normalizedParent(step.parentIds.front());
+      std::string previousTarget;
+      bool exactStages = !definitions.empty();
+      std::string stageFailure = exactStages ? "" : "no witness definitions";
+      const auto applyTransform = [&](const PreservedSexpr& transform,
+                                      const std::string& parent,
+                                      PreservedSexpr& applied) {
+        std::string inputName;
+        if (!sexprHead(transform, "proof_lambda")
+            || transform.items.size() != 4
+            || !preservedName(transform.items[1], inputName)) {
+          return false;
+        }
+        PreservedSexpr parentProof;
+        if (!parser.parse(
+              "(parent " + quotePreservedName(parent) + ")",
+              parentProof)) {
+          return false;
+        }
+        for (const auto& parameter : wrapped->parameters) {
+          PreservedSexpr next;
+          if (!parser.parse(
+                "(term_apply " + parentProof.render()
+                  + " (term (TMH "
+                  + quotePreservedName(parameter.first) + ")))",
+                next)) {
+            return false;
+          }
+          parentProof = std::move(next);
+        }
+        const auto substituteInput = [&](const PreservedSexpr& source,
+                                         const auto& self) -> PreservedSexpr {
+          std::string hypothesisName;
+          if (sexprHead(source, "hyp") && source.items.size() == 2
+              && preservedName(source.items[1], hypothesisName)
+              && hypothesisName == inputName) {
+            return parentProof;
+          }
+          if (sexprHead(source, "proof_lambda")
+              && source.items.size() == 4
+              && preservedName(source.items[1], hypothesisName)
+              && hypothesisName == inputName) {
+            return source;
+          }
+          PreservedSexpr result = source;
+          if (result.atom) return result;
+          for (std::size_t child = 1;
+               child < result.items.size();
+               ++child) {
+            result.items[child] = self(result.items[child], self);
+          }
+          return result;
+        };
+        applied = substituteInput(transform.items[3], substituteInput);
+        return true;
+      };
+      for (std::size_t index = 0;
+           exactStages && index < definitions.size();
+           ++index) {
+        const auto& definition = definitions[index];
+        PreservedSexpr contextSource;
+        PreservedSexpr contextTarget;
+        PreservedSexpr contextTransform;
+        PreservedSexpr scopeParent;
+        PreservedSexpr scopeParentTransform;
+        PreservedSexpr witness;
+        PreservedSexpr scopeSource;
+        PreservedSexpr scopeTarget;
+        PreservedSexpr scopeBridge;
+        exactStages =
+          !definition.contextSourceFormulaSexpr.empty()
+          && !definition.contextTargetFormulaSexpr.empty()
+          && !definition.contextTransformProof.empty()
+          && !definition.scopeParentFormulaSexpr.empty()
+          && !definition.scopeParentTransformProof.empty()
+          && !definition.witnessTermSexpr.empty()
+          && !definition.contextScopeSourceFormulaSexpr.empty()
+          && !definition.contextScopeTargetFormulaSexpr.empty()
+          && !definition.contextScopeBridgeProof.empty()
+          && parser.parse(
+               definition.contextSourceFormulaSexpr, contextSource)
+          && parser.parse(
+               definition.contextTargetFormulaSexpr, contextTarget)
+          && parser.parse(definition.contextTransformProof, contextTransform)
+          && parser.parse(definition.scopeParentFormulaSexpr, scopeParent)
+          && parser.parse(
+               definition.scopeParentTransformProof, scopeParentTransform)
+          && parser.parse(definition.witnessTermSexpr, witness)
+          && parser.parse(
+               definition.contextScopeSourceFormulaSexpr, scopeSource)
+          && parser.parse(
+               definition.contextScopeTargetFormulaSexpr, scopeTarget)
+          && parser.parse(
+               definition.contextScopeBridgeProof, scopeBridge);
+        if (!exactStages) {
+          stageFailure = "incomplete or unreadable witness stage";
+          break;
+        }
+        contextSource = normalize(contextSource, supportClaims, normalize);
+        contextTarget = normalize(contextTarget, supportClaims, normalize);
+        contextTransform = normalize(
+          contextTransform, supportClaims, normalize);
+        scopeParent = normalize(scopeParent, supportClaims, normalize);
+        scopeParentTransform = normalize(
+          scopeParentTransform, supportClaims, normalize);
+        witness = normalize(witness, supportClaims, normalize);
+        scopeSource = normalize(scopeSource, supportClaims, normalize);
+        scopeTarget = normalize(scopeTarget, supportClaims, normalize);
+        scopeBridge = normalize(scopeBridge, supportClaims, normalize);
+        if (index != 0 && contextSource.render() != previousTarget) {
+          stageFailure = "adjacent witness stages do not compose";
+          exactStages = false;
+          break;
+        }
+        if (containsEliminated(contextSource, containsEliminated)
+            || containsEliminated(contextTarget, containsEliminated)
+            || containsEliminated(contextTransform, containsEliminated)
+            || containsEliminated(scopeParent, containsEliminated)
+            || containsEliminated(scopeParentTransform, containsEliminated)
+            || containsEliminated(witness, containsEliminated)
+            || containsEliminated(scopeSource, containsEliminated)
+            || containsEliminated(scopeTarget, containsEliminated)
+            || containsEliminated(scopeBridge, containsEliminated)) {
+          stageFailure = "normalized witness stage retains a local symbol";
+          exactStages = false;
+          break;
+        }
+        MegalodonKernelSyntax::RenderedKernelChoiceProofNode support;
+        support.index = result.nodes.size() + stages.size();
+        support.step = normalizedPrefix + step.id + "_skolem_support_"
+          + std::to_string(index);
+        support.parents = {stageParent};
+        support.parameters = wrapped->parameters;
+        support.hasResultFormula = true;
+        support.resultFormula = scopeParent.render();
+        PreservedSexpr supportProof;
+        if (!applyTransform(
+              scopeParentTransform, stageParent, supportProof)) {
+          stageFailure = "cannot assemble existential support application";
+          exactStages = false;
+          break;
+        }
+        support.producerProof = supportProof.render();
+        const std::string supportStep = support.step;
+        stages.push_back(std::move(support));
+
+        MegalodonKernelSyntax::RenderedKernelChoiceProofNode stage;
+        stage.index = result.nodes.size() + stages.size();
+        stage.step = index + 1 == definitions.size()
+          ? normalizedId(step.id)
+          : normalizedPrefix + step.id + "_skolem_stage_"
+              + std::to_string(index);
+        stage.parents = {stageParent};
+        stage.parameters = wrapped->parameters;
+        stage.hasResultFormula = true;
+        stage.resultFormula = contextTarget.render();
+        PreservedSexpr stageProof;
+        if (!applyTransform(contextTransform, stageParent, stageProof)) {
+          stageFailure = "cannot assemble stage application";
+          exactStages = false;
+          break;
+        }
+        stage.producerProof = stageProof.render();
+        stage.hasRootExistsScope = true;
+        stage.rootExistsScopeParent = supportStep;
+        stage.rootExistsScopeWitnessType = definition.witnessTypeSexpr;
+        stage.rootExistsScopeWitnessTerm = witness.render();
+        stage.rootExistsScopeSourceFormula = scopeSource.render();
+        stage.rootExistsScopeTargetFormula = scopeTarget.render();
+        stage.rootExistsScopeBridgeProof = scopeBridge.render();
+        previousTarget = contextTarget.render();
+        stageParent = stage.step;
+        stages.push_back(std::move(stage));
+      }
+      if (exactStages && previousTarget == conclusion.render()) {
+        for (auto& stage : stages) result.nodes.push_back(std::move(stage));
+        continue;
+      }
+      if (exactStages) stageFailure = "final witness stage is contextual";
+      if (std::getenv("MEGALODON_CERT_DEBUG")) {
+        std::cerr << "megalodon root stage lowering skipped " << step.id
+                  << " (" << definitions.size() << " witnesses): "
+                  << stageFailure << std::endl;
+      }
+    }
+
     result.nodes.push_back(std::move(node));
   }
   if (result.nodes.empty()
@@ -4907,7 +5914,11 @@ bool expandChoiceNormalizedProof(
     error = "choice-normalized proof DAG does not end at its declared root";
     return false;
   }
-  result.version = "ivy_choice_dag_v1";
+  const bool hasRootExistsScope = std::any_of(
+    result.nodes.begin(), result.nodes.end(),
+    [](const auto& node) { return node.hasRootExistsScope; });
+  result.version = hasRootExistsScope
+    ? "ivy_choice_dag_v2" : "ivy_choice_dag_v1";
   result.finalStep = normalizedId(finalStep);
   for (const auto& replacement : replacements) {
     result.producerGroundSubstitutions.push_back({
@@ -4919,9 +5930,190 @@ bool expandChoiceNormalizedProof(
   return true;
 }
 
+bool expandFiniteSkolemProof(
+  MegalodonKernelSyntax::RenderedKernelFiniteSkolemProof& proof,
+  std::string& error)
+{
+  PreservedSexprParser parser;
+  if (proof.version != "smolka_finite_v7"
+      || proof.applications.empty()
+      || proof.dischargeOrder.size() != proof.applications.size()) {
+    error = "finite Skolem prooftrans received an incomplete typed plan";
+    return false;
+  }
+  for (std::size_t expected = 0; expected < proof.applications.size(); ++expected) {
+    auto& application = proof.applications[expected];
+    const auto& definition = application.producerChoiceDefinition;
+    if (application.index != expected
+        || definition.branchIndex != application.branchIndex
+        || definition.witnessIndex != application.witnessIndex
+        || definition.symbol != application.symbol
+        || definition.witnessTypeSexpr != application.witnessTypeSexpr
+        || definition.parameters.size() != application.dependencies.size()) {
+      error = "finite Skolem application disagrees with its producer witness program";
+      return false;
+    }
+    std::map<std::string, PreservedSexpr> bindings;
+    for (const auto& dependency : application.dependencies) {
+      PreservedSexpr term;
+      if (dependency.variable.empty()
+          || !parser.parse(dependency.term.sexpr, term)
+          || !bindings.emplace(dependency.variable, std::move(term)).second) {
+        error = "finite Skolem application has an invalid dependency substitution";
+        return false;
+      }
+    }
+    for (const auto& parameter : definition.parameters) {
+      if (bindings.find(parameter.first) == bindings.end()) {
+        error = "finite Skolem witness program has an undeclared dependency parameter";
+        return false;
+      }
+    }
+    const auto specialize = [&](const std::string& source,
+                                PreservedSexpr& result) {
+      if (source.empty() || !parser.parse(source, result)) return false;
+      for (const auto& binding : bindings) {
+        result = substituteNamedVariableSexpr(
+          result, binding.first, binding.second);
+      }
+      return true;
+    };
+    PreservedSexpr witness;
+    PreservedSexpr stageSource;
+    PreservedSexpr stageTarget;
+    PreservedSexpr source;
+    PreservedSexpr support;
+    PreservedSexpr supportProof;
+    PreservedSexpr scopeSource;
+    PreservedSexpr scopeTarget;
+    PreservedSexpr scopeBridge;
+    const auto fieldError = [&](const std::string& field) {
+      error = "finite Skolem application " + std::to_string(application.index)
+        + " cannot specialize producer " + field;
+      return false;
+    };
+    if (!specialize(definition.witnessTermSexpr, witness)) {
+      return fieldError("witness term");
+    }
+    if (witness.render() != application.term.sexpr) {
+      error = "finite Skolem application " + std::to_string(application.index)
+        + " producer witness term differs from its canonical application";
+      if (std::getenv("MEGALODON_CERT_DEBUG")) {
+        std::cerr << error << "\n  witness: " << witness.render()
+                  << "\n  application: " << application.term.sexpr << std::endl;
+      }
+      return false;
+    }
+    if (!specialize(definition.sourceFormulaSexpr, stageSource)) {
+      return fieldError("stage source");
+    }
+    if (!specialize(definition.scopeTargetFormulaSexpr, stageTarget)) {
+      return fieldError("stage target");
+    }
+    PreservedSexpr applicationStageSource;
+    PreservedSexpr applicationStageTarget;
+    if (!parser.parse(
+          application.stageSourceInstance.sexpr, applicationStageSource)
+        || !parser.parse(
+          application.stageTargetInstance.sexpr, applicationStageTarget)) {
+      error = "finite Skolem application has malformed recorded stage formulas";
+      return false;
+    }
+    const auto orientationTransform = [&]
+      (const PreservedSexpr& from,
+       const PreservedSexpr& to,
+       const std::string& suffix,
+       std::string& transform) {
+      MegalodonKernelSyntax::RenderedKernelFoolProgram program;
+      std::size_t nextIndex = 0;
+      if (!buildFoolProgramNode(from, to, true, {}, nextIndex, program.root)) {
+        return false;
+      }
+      const std::string input =
+        "ivy_sm_finite_" + std::to_string(application.index) + "_" + suffix;
+      IvyClauseProofBuilder builder;
+      std::string body;
+      if (!builder.foolFormulaProof(
+            program,
+            "(hyp " + quotePreservedName(input) + ")",
+            body)) {
+        return false;
+      }
+      transform = "(proof_lambda " + quotePreservedName(input)
+        + " (formula " + from.render() + ") " + body + ")";
+      return true;
+    };
+    if (!orientationTransform(
+          stageSource, applicationStageSource,
+          "source_to_application", application.programStageSourceToApplicationProof)
+        || !orientationTransform(
+          applicationStageSource, stageSource,
+          "source_to_program", application.applicationStageSourceToProgramProof)
+        || !orientationTransform(
+          stageTarget, applicationStageTarget,
+          "target_to_application", application.programStageTargetToApplicationProof)
+        || !orientationTransform(
+          applicationStageTarget, stageTarget,
+          "target_to_program", application.applicationStageTargetToProgramProof)) {
+      error = "finite Skolem application " + std::to_string(application.index)
+        + " cannot lower its exact producer equality-orientation bridge";
+      if (std::getenv("MEGALODON_CERT_DEBUG")) {
+        std::cerr << error
+                  << "\n  program source: " << stageSource.render()
+                  << "\n  application source: " << applicationStageSource.render()
+                  << "\n  program target: " << stageTarget.render()
+                  << "\n  application target: " << applicationStageTarget.render()
+                  << std::endl;
+      }
+      return false;
+    }
+    if (!specialize(definition.contextSourceFormulaSexpr, source)) {
+      return fieldError("context source");
+    }
+    if (!specialize(definition.scopeParentFormulaSexpr, support)) {
+      return fieldError("support formula");
+    }
+    if (!specialize(definition.scopeParentTransformProof, supportProof)) {
+      return fieldError("support proof");
+    }
+    if (!specialize(definition.contextScopeSourceFormulaSexpr, scopeSource)) {
+      return fieldError("scope source");
+    }
+    if (!specialize(definition.contextScopeTargetFormulaSexpr, scopeTarget)) {
+      return fieldError("scope target");
+    }
+    if (!specialize(definition.contextScopeBridgeProof, scopeBridge)) {
+      return fieldError("scope bridge proof");
+    }
+    if (source.render().empty() || support.render().empty()
+        || supportProof.render().empty() || scopeSource.render().empty()
+        || scopeTarget.render().empty() || scopeBridge.render().empty()) {
+      error = "finite Skolem application has an empty specialized producer program";
+      return false;
+    }
+    application.hasProducerProgram = true;
+    application.programStageSourceFormula =
+      MegalodonKernelSyntax::formula(stageSource.render());
+    application.programStageTargetFormula =
+      MegalodonKernelSyntax::formula(stageTarget.render());
+    application.programSourceFormula =
+      MegalodonKernelSyntax::formula(source.render());
+    application.programSupportFormula =
+      MegalodonKernelSyntax::formula(support.render());
+    application.programSupportProof = supportProof.render();
+    application.programScopeSourceFormula =
+      MegalodonKernelSyntax::formula(scopeSource.render());
+    application.programScopeTargetFormula =
+      MegalodonKernelSyntax::formula(scopeTarget.render());
+    application.programScopeBridgeProof = scopeBridge.render();
+  }
+  return true;
+}
+
 bool expandGroundChoiceProof(
   const MegalodonKernelSyntax::RenderedKernelChoiceProof& source,
   const MegalodonKernelSyntax::RenderedKernelGroundProof& groundProof,
+  const MegalodonKernelSyntax::RenderedKernelFiniteSkolemProof& finiteProof,
   MegalodonKernelSyntax::RenderedKernelChoiceProof& result,
   std::string& error)
 {
@@ -4935,7 +6127,11 @@ bool expandGroundChoiceProof(
       || source.nodes.empty() || source.finalStep.empty()
       || groundProof.version != "ivy_instance_v3"
       || groundProof.instances.empty()
-      || groundProof.finalStep.value.empty()) {
+      || groundProof.finalStep.value.empty()
+      || finiteProof.version != "smolka_finite_v7"
+      || finiteProof.applications.empty()
+      || finiteProof.dischargeOrder.size() != finiteProof.applications.size()
+      || finiteProof.finalStep.value != groundProof.finalStep.value) {
     error = "ground choice prooftrans received an incomplete source DAG or instance graph";
     return false;
   }
@@ -4943,6 +6139,91 @@ bool expandGroundChoiceProof(
     if (groundProof.instances[index].index != index) {
       error = "ground choice prooftrans requires contiguous instance indices";
       return false;
+    }
+  }
+  std::vector<std::size_t> dischargeRank(
+    finiteProof.applications.size(), finiteProof.applications.size());
+  for (std::size_t rank = 0; rank < finiteProof.dischargeOrder.size(); ++rank) {
+    const std::size_t application = finiteProof.dischargeOrder[rank];
+    if (application >= finiteProof.applications.size()
+        || dischargeRank[application] != finiteProof.applications.size()) {
+      error = "ground choice prooftrans finite discharge order is not a permutation";
+      return false;
+    }
+    dischargeRank[application] = rank;
+  }
+  std::vector<std::vector<std::size_t>> finiteApplicationsByInstance(
+    groundProof.instances.size());
+  for (std::size_t expected = 0;
+       expected < finiteProof.applications.size();
+       ++expected) {
+    const auto& application = finiteProof.applications[expected];
+    const auto& definition = application.producerChoiceDefinition;
+    if (application.index != expected
+        || application.ownerInstance >= groundProof.instances.size()
+        || application.skolemStep.value.empty()
+        || application.symbol.empty()
+        || application.term.sexpr.empty()
+        || definition.branchIndex != application.branchIndex
+        || definition.witnessIndex != application.witnessIndex
+        || definition.symbol != application.symbol
+        || definition.witnessTypeSexpr != application.witnessTypeSexpr
+        || definition.scopeParentFormulaSexpr.empty()
+        || definition.scopeParentTransformProof.empty()
+        || definition.contextScopeSourceFormulaSexpr.empty()
+        || definition.contextScopeTargetFormulaSexpr.empty()
+        || definition.contextScopeBridgeProof.empty()) {
+      error = "ground choice prooftrans finite application lacks its exact producer witness program";
+      return false;
+    }
+    const GroundInstance& owner = groundProof.instances[application.ownerInstance];
+    if (owner.unit.value != application.skolemStep.value) {
+      error = "ground choice prooftrans finite application owner is not its Skolem step";
+      return false;
+    }
+    bool hasOwnerOccurrence = false;
+    for (std::size_t occurrenceIndex = 0;
+         occurrenceIndex < application.occurrences.size();
+         ++occurrenceIndex) {
+      const auto& occurrence = application.occurrences[occurrenceIndex];
+      if (occurrence.index != occurrenceIndex
+          || occurrence.instance >= groundProof.instances.size()
+          || occurrence.unit.value
+             != groundProof.instances[occurrence.instance].unit.value) {
+        error = "ground choice prooftrans finite occurrence has invalid instance ownership";
+        return false;
+      }
+      const auto& groundApplications =
+        groundProof.instances[occurrence.instance].applications;
+      const bool declared = std::any_of(
+        groundApplications.begin(), groundApplications.end(),
+        [&](const auto& groundApplication) {
+          return groundApplication.skolemStep == application.skolemStep.value
+            && groundApplication.symbol == application.symbol
+            && groundApplication.term.sexpr == occurrence.term.sexpr;
+        });
+      if (!declared) {
+        error = "ground choice prooftrans finite occurrence is absent from its producer instance";
+        return false;
+      }
+      if (occurrence.instance == application.ownerInstance
+          && occurrence.term.sexpr == application.term.sexpr) {
+        hasOwnerOccurrence = true;
+      }
+      finiteApplicationsByInstance[occurrence.instance].push_back(expected);
+    }
+    if (!hasOwnerOccurrence) {
+      error = "ground choice prooftrans finite application omits its owner occurrence";
+      return false;
+    }
+    for (const auto& dependency : application.dependencies) {
+      for (std::size_t nested : dependency.nestedApplications) {
+        if (nested >= finiteProof.applications.size()
+            || dischargeRank[nested] >= dischargeRank[expected]) {
+          error = "ground choice prooftrans finite dependency is not discharged first";
+          return false;
+        }
+      }
     }
   }
 
@@ -5190,11 +6471,14 @@ bool expandGroundChoiceProof(
               + node.step + " -> " + parent;
             return false;
           }
+          // Parent bindings select erased theorem parameters.  The explicit
+          // arguments themselves live in the child proof context, where a
+          // reused variable name can denote a different typed variable.
           for (std::size_t index = 0;
                index < parentNode.parameters.size();
                ++index) {
             PreservedSexpr argument = specialize(
-              arguments[index], target.key.instance);
+              arguments[index], key.instance);
             const std::string& parameter = parentNode.parameters[index].first;
             auto binding = environments[target.key.instance].find(parameter);
             if (binding == environments[target.key.instance].end()) {
@@ -5204,7 +6488,7 @@ bool expandGroundChoiceProof(
           for (std::size_t index = 0; index < formulaBinders.size(); ++index) {
             PreservedSexpr argument = specialize(
               arguments[parentNode.parameters.size() + index],
-              target.key.instance);
+              key.instance);
             if (!formulaBinders[index]) {
               retainedArguments.push_back(std::move(argument));
             }
@@ -5213,7 +6497,7 @@ bool expandGroundChoiceProof(
                index < arguments.size();
                ++index) {
             PreservedSexpr argument = specialize(
-              arguments[index], target.key.instance);
+              arguments[index], key.instance);
             retainedArguments.push_back(std::move(argument));
           }
         } else {
@@ -5266,11 +6550,16 @@ bool expandGroundChoiceProof(
     std::vector<PreservedSexpr> rewrittenParentApplications;
     ParentTarget compactParent;
     if (node.ivyJustification.rule == IvyRule::Copy) {
-      if (node.ivyJustification.parents.size() != 1
-          || !resolveParent(node.ivyJustification.parents.front(), compactParent)
-          || (compactParent.generated && !emit(compactParent.key))) {
+      if (node.ivyJustification.parents.size() != 1) {
         error = "ground choice prooftrans cannot specialize compact copy node "
           + node.step;
+        return false;
+      }
+      if (!resolveParent(
+            node.ivyJustification.parents.front(), compactParent)) {
+        return false;
+      }
+      if (compactParent.generated && !emit(compactParent.key)) {
         return false;
       }
     } else if (node.ivyJustification.rule == IvyRule::Instantiate) {
@@ -5593,36 +6882,10 @@ bool expandGroundChoiceProof(
       rendered.parents.assign(parents.begin(), parents.end());
     }
 
-    if (node.hasRootExistsScope) {
-      ParentTarget scopeParent;
-      PreservedSexpr witness;
-      PreservedSexpr scopeSource;
-      PreservedSexpr scopeTarget;
-      PreservedSexpr scopeBridge;
-      if (!resolveParent(node.rootExistsScopeParent, scopeParent)
-          || (scopeParent.generated && !emit(scopeParent.key))
-          || !parser.parse(node.rootExistsScopeWitnessTerm, witness)
-          || !parser.parse(node.rootExistsScopeSourceFormula, scopeSource)
-          || !parser.parse(node.rootExistsScopeTargetFormula, scopeTarget)
-          || !parser.parse(node.rootExistsScopeBridgeProof, scopeBridge)) {
-        error = "ground choice prooftrans cannot specialize a root scope at "
-          + node.step;
-        return false;
-      }
-      witness = specialize(std::move(witness), key.instance);
-      scopeSource = specialize(std::move(scopeSource), key.instance);
-      scopeTarget = specialize(std::move(scopeTarget), key.instance);
-      scopeBridge = specialize(std::move(scopeBridge), key.instance);
-      PreservedSexpr rewrittenBridge;
-      if (!rewrite(scopeBridge, rewrittenBridge)) return false;
-      rendered.hasRootExistsScope = true;
-      rendered.rootExistsScopeParent = scopeParent.rendered;
-      rendered.rootExistsScopeWitnessType = node.rootExistsScopeWitnessType;
-      rendered.rootExistsScopeWitnessTerm = witness.render();
-      rendered.rootExistsScopeSourceFormula = scopeSource.render();
-      rendered.rootExistsScopeTargetFormula = scopeTarget.render();
-      rendered.rootExistsScopeBridgeProof = rewrittenBridge.render();
-    }
+    // The grounded Ivy DAG is already choice-normalized.  Finite application
+    // programs are checked as producer audit objects; they are not converted
+    // back into formula-level scopes, which are invalid below retained forall
+    // binders.
     emittedIndex.emplace(key, rendered.index);
     result.nodes.push_back(std::move(rendered));
     state[key] = 2;
@@ -5631,9 +6894,114 @@ bool expandGroundChoiceProof(
 
   const Key root = {source.finalStep, 0};
   if (!emit(root)) return false;
-  result.version = source.version == "ivy_choice_dag_v2"
-    ? "ivy_ground_choice_dag_v2"
-    : "ivy_ground_choice_dag_v1";
+
+  // Ground support lemmas can be parent-free even though their proposition
+  // contains a local choice witness.  Place every such lemma inside the
+  // producer-declared existential scope.  This is a stable topological pass:
+  // ordinary proof dependencies remain edges, and a cycle means the proposed
+  // scope is not a valid lexical discharge boundary.
+  if (std::any_of(
+        result.nodes.begin(), result.nodes.end(),
+        [](const ChoiceNode& node) { return node.hasRootExistsScope; })) {
+    const std::size_t count = result.nodes.size();
+    std::map<std::string, std::size_t> indexByName;
+    for (std::size_t index = 0; index < count; ++index) {
+      if (!indexByName.emplace(result.nodes[index].step, index).second) {
+        error = "ground choice prooftrans cannot order duplicate node names";
+        return false;
+      }
+    }
+    std::vector<std::set<std::size_t>> successors(count);
+    std::vector<std::set<std::size_t>> predecessors(count);
+    std::vector<std::size_t> indegree(count, 0);
+    const auto addEdge = [&](std::size_t parent, std::size_t child) {
+      if (parent != child && successors[parent].insert(child).second) {
+        predecessors[child].insert(parent);
+        ++indegree[child];
+      }
+    };
+    for (std::size_t child = 0; child < count; ++child) {
+      for (const std::string& parentName : result.nodes[child].parents) {
+        auto parent = indexByName.find(parentName);
+        if (parent != indexByName.end()) addEdge(parent->second, child);
+      }
+    }
+    const auto containsWitness = [](const ChoiceNode& node,
+                                    const std::string& witness) {
+      const auto contains = [&](const std::string& text) {
+        return !text.empty() && text.find(witness) != std::string::npos;
+      };
+      if (contains(node.resultClause) || contains(node.resultFormula)
+          || contains(node.producerProof)
+          || contains(node.ivyJustification.position)
+          || contains(node.ivyJustification.from)
+          || contains(node.ivyJustification.to)) {
+        return true;
+      }
+      for (const std::string& term : node.ivyJustification.terms) {
+        if (contains(term)) return true;
+      }
+      for (const auto& arguments : node.ivyJustification.parentArguments) {
+        for (const std::string& term : arguments) {
+          if (contains(term)) return true;
+        }
+      }
+      return false;
+    };
+    for (std::size_t scope = 0; scope < count; ++scope) {
+      const ChoiceNode& boundary = result.nodes[scope];
+      if (!boundary.hasRootExistsScope
+          || boundary.rootExistsScopeWitnessTerm.empty()) {
+        continue;
+      }
+      for (std::size_t node = 0; node < count; ++node) {
+        if (node > scope
+            && containsWitness(
+                 result.nodes[node], boundary.rootExistsScopeWitnessTerm)) {
+          addEdge(scope, node);
+        }
+      }
+    }
+    std::set<std::size_t> ready;
+    for (std::size_t index = 0; index < count; ++index) {
+      if (indegree[index] == 0) ready.insert(index);
+    }
+    std::vector<ChoiceNode> orderedNodes;
+    orderedNodes.reserve(count);
+    while (!ready.empty()) {
+      const std::size_t next = *ready.begin();
+      ready.erase(ready.begin());
+      orderedNodes.push_back(std::move(result.nodes[next]));
+      for (std::size_t child : successors[next]) {
+        if (--indegree[child] == 0) ready.insert(child);
+      }
+    }
+    if (orderedNodes.size() != count) {
+      if (std::getenv("MEGALODON_CERT_DEBUG")) {
+        std::cerr << "megalodon ground scope cycle:" << std::endl;
+        for (std::size_t node = 0; node < count; ++node) {
+          if (indegree[node] == 0) continue;
+          std::cerr << "  " << result.nodes[node].step << " <-";
+          for (std::size_t parent : predecessors[node]) {
+            if (indegree[parent] != 0) {
+              std::cerr << " " << result.nodes[parent].step;
+            }
+          }
+          std::cerr << std::endl;
+        }
+      }
+      error = "ground choice prooftrans scope ordering is cyclic";
+      return false;
+    }
+    for (std::size_t index = 0; index < count; ++index) {
+      orderedNodes[index].index = index;
+    }
+    result.nodes = std::move(orderedNodes);
+  }
+  result.version = std::any_of(
+      result.nodes.begin(), result.nodes.end(),
+      [](const ChoiceNode& node) { return node.hasRootExistsScope; })
+    ? "ivy_ground_choice_dag_v2" : "ivy_ground_choice_dag_v1";
   result.finalStep = groundId(0, source.finalStep);
   result.eliminatedSymbols = source.eliminatedSymbols;
   return true;

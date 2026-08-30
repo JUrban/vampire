@@ -4,6 +4,7 @@
 #include "Kernel/InferenceStore.hpp"
 #include "Shell/InferenceRecorder.hpp"
 #include "Shell/InferenceReplay.hpp"
+#include "Shell/MegalodonChecker/MegalodonKernelSyntax.hpp"
 
 #include <cstddef>
 #include <ostream>
@@ -61,6 +62,7 @@ private:
     Kernel::Formula* stageTargetFormula = nullptr;
     std::vector<CertificateSkolemDependencyDescriptor> dependencies;
     std::vector<std::size_t> argumentToDependency;
+    MegalodonKernelSyntax::ProducerSkolemChoiceDefinition choiceDefinition;
   };
 
   struct CertificateProducerApplicationTerm {
@@ -184,7 +186,7 @@ private:
   bool certificateAtomSexpr(Kernel::Literal* literal, std::string& result);
   bool certificateAtomSexpr(Kernel::Literal* literal, std::string& result, const std::vector<std::string>& deBruijnBinders);
   bool certificateAtomSexpr(Kernel::Literal* literal, std::string& result, const std::vector<std::string>& deBruijnBinders, const std::map<unsigned, unsigned>& variableAliases);
-  bool certificateAtomSexpr(Kernel::Literal* literal, std::string& result, const std::vector<std::string>& deBruijnBinders, const std::map<unsigned, Kernel::TermList>& variableSubstitutions, bool preserveNegativeEqualityOrientation);
+  bool certificateAtomSexpr(Kernel::Literal* literal, std::string& result, const std::vector<std::string>& deBruijnBinders, const std::map<unsigned, Kernel::TermList>& variableSubstitutions, bool preserveNegativeEqualityOrientation, bool flipEqualityOrientation = false);
   bool certificateLiteralSexpr(Kernel::Literal* literal, std::string& result);
   bool certificateSplitLiteralSexpr(unsigned split, std::string& result);
   bool appendCertificateSplitLiteralsSexpr(Kernel::Clause* clause, std::vector<std::string>& literals);
@@ -239,7 +241,8 @@ private:
   bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result, const std::vector<std::string>& deBruijnBinders);
   bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result, const std::vector<std::string>& deBruijnBinders, bool leftAssociateNary);
   bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result, const std::vector<std::string>& deBruijnBinders, bool leftAssociateNary, const std::map<unsigned, unsigned>& variableAliases);
-  bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result, const std::vector<std::string>& deBruijnBinders, bool leftAssociateNary, const std::map<unsigned, Kernel::TermList>& variableSubstitutions, bool preserveNegativeEqualityOrientation);
+  bool certificateFormulaTermSexpr(Kernel::Formula* formula, std::string& result, const std::vector<std::string>& deBruijnBinders, bool leftAssociateNary, const std::map<unsigned, Kernel::TermList>& variableSubstitutions, bool preserveNegativeEqualityOrientation, bool preserveInputEqualityOrientation = false);
+  bool certificateFormulaTermInputSexpr(Kernel::Formula* formula, std::string& result);
   bool certificateAvatarFormulaTermSexpr(Kernel::Formula* formula, std::string& result);
   bool certificatePredicateDefinitionSymbol(Kernel::Formula* formula, std::string& result);
   bool certificateFormulaNativeLiteralSexpr(Kernel::Formula* formula, bool& positive, std::string& atom);
@@ -267,7 +270,9 @@ private:
     bool preserveSourceNegativeEqualityOrientation = false,
     const std::string* sourceProof = nullptr,
     std::string* targetProof = nullptr,
-    const std::string& proofNamePrefix = "ivy_transport_");
+    const std::string& proofNamePrefix = "ivy_transport_",
+    bool preserveSourceInputEqualityOrientation = false,
+    bool preserveTargetInputEqualityOrientation = false);
   bool certificateRectifyFormulaStepSexpr(
     Kernel::Unit* unit,
     std::string& result,
