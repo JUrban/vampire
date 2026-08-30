@@ -37,6 +37,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <cstdio>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -46,6 +48,8 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+
+#include <unistd.h>
 
 namespace Shell {
 
@@ -7337,6 +7341,13 @@ bool MegalodonChecker::certificateSkolemFormulaStepSexpr(
           branches[branchIndex].witnesses[witnessIndex].replacedSort.sexpr;
         definition.witnessTermSexpr =
           branches[branchIndex].witnesses[witnessIndex].witnessTerm.sexpr;
+        definition.scopePath = branches[branchIndex].path;
+        for (const auto& variable : branches[branchIndex].ambient) {
+          definition.scopeAmbient.push_back({
+            variable.variable,
+            variable.type.sexpr,
+          });
+        }
         definition.sourceFormulaSexpr = std::move(stageSourceFormula);
         definition.scopeSourceFormulaSexpr =
           branches[branchIndex].witnesses[witnessIndex]
@@ -7522,12 +7533,18 @@ bool MegalodonChecker::certificateCnfLiteralStepSexpr(
     return false;
   }
   std::string clause;
-  if (!certificateClauseSexpr(unit->asClause(), clause)) {
+  std::string sourceFormula;
+  if (!certificateClauseSexpr(unit->asClause(), clause)
+      || !certificateFormulaTermSexpr(
+        static_cast<Kernel::FormulaUnit*>(parent)->formula(),
+        sourceFormula)) {
     return false;
   }
   auto built = MegalodonKernelBuilder::cnfLiteralStep(
     "u" + std::to_string(unit->number()),
     MegalodonKernelSyntax::unitRef("u" + std::to_string(parent->number())),
+    MegalodonKernelSyntax::formula(sourceFormula),
+    MegalodonKernelSyntax::literal(sourceLiteral),
     MegalodonKernelSyntax::clause(clause));
   result = built.rendered;
   if (primitiveStep != nullptr) {
@@ -17272,6 +17289,77 @@ void MegalodonChecker::printMegalodonCertificateJson() const
 
 void MegalodonChecker::printMegalodonCertificateNativeSexpr()
 {
+  const char* detachedOutput =
+    std::getenv("VAMPIRE_MEGALODON_PROOFTRANS_OUTPUT");
+  if (detachedOutput != nullptr && detachedOutput[0] != '\0'
+      && std::getenv("VAMPIRE_MEGALODON_PROOFTRANS_CHILD") == nullptr) {
+    out.flush();
+    const pid_t child = ::fork();
+    if (child < 0) {
+      INVALID_OPERATION("cannot fork detached Megalodon prooftrans");
+    }
+    if (child > 0) {
+      out << "megalodon_prooftrans_detached(" << quote(detachedOutput)
+          << ',' << child << ").\n";
+      out.flush();
+      return;
+    }
+
+    ::setsid();
+    ::setenv("VAMPIRE_MEGALODON_PROOFTRANS_CHILD", "1", 1);
+    const std::string target(detachedOutput);
+    const std::string partial =
+      target + ".partial." + std::to_string(::getpid());
+    const std::string failure = target + ".error";
+    std::ofstream detached(partial, std::ios::out | std::ios::trunc);
+    if (!detached) {
+      std::ofstream errorOutput(failure, std::ios::out | std::ios::trunc);
+      errorOutput << "cannot open detached prooftrans output " << target << '\n';
+      errorOutput.close();
+      ::_exit(2);
+    }
+    std::streambuf* originalBuffer = out.rdbuf(detached.rdbuf());
+    out.clear();
+    try {
+      printMegalodonCertificateNativeSexpr();
+      out.flush();
+      out.rdbuf(originalBuffer);
+      detached.close();
+      if (std::rename(partial.c_str(), target.c_str()) != 0) {
+        std::ofstream errorOutput(failure, std::ios::out | std::ios::trunc);
+        errorOutput << "cannot publish detached prooftrans output "
+                    << target << '\n';
+        errorOutput.close();
+        ::_exit(3);
+      }
+      ::_exit(0);
+    } catch (const Lib::Exception& exception) {
+      out.rdbuf(originalBuffer);
+      detached.close();
+      std::remove(partial.c_str());
+      std::ofstream errorOutput(failure, std::ios::out | std::ios::trunc);
+      errorOutput << exception << '\n';
+      errorOutput.close();
+      ::_exit(4);
+    } catch (const std::exception& exception) {
+      out.rdbuf(originalBuffer);
+      detached.close();
+      std::remove(partial.c_str());
+      std::ofstream errorOutput(failure, std::ios::out | std::ios::trunc);
+      errorOutput << exception.what() << '\n';
+      errorOutput.close();
+      ::_exit(5);
+    } catch (...) {
+      out.rdbuf(originalBuffer);
+      detached.close();
+      std::remove(partial.c_str());
+      std::ofstream errorOutput(failure, std::ios::out | std::ios::trunc);
+      errorOutput << "detached prooftrans failed with a non-standard exception\n";
+      errorOutput.close();
+      ::_exit(6);
+    }
+  }
+
   out << "megalodon_certificate_native_sexpr_start.\n";
   out << "(certificate vampire-megalodon 1\n";
   out << "  (problem \"vampire-native-certificate\")\n";
@@ -18494,13 +18582,10 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
         MegalodonKernelBuilder::skolemRefutationScopeBlock(
           "u" + std::to_string((*proof.rbegin())->number()),
           groundedSkolemSteps);
-      const std::string groundingBlock =
-        MegalodonKernelBuilder::skolemGroundProofBlock(renderedGrounding);
-      if (skolemScope.empty() || groundingBlock.empty()) {
+      if (skolemScope.empty()) {
         INVALID_OPERATION("typed proof grounding serialization failed");
       }
       out << "  " << skolemScope << "\n";
-      out << "  " << groundingBlock << "\n";
     }
   }
   const bool hasFiniteSkolemPlan = !groundedSkolemUses.empty();
@@ -18516,16 +18601,6 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
     out << "  " << skolemScope << "\n";
   }
   if (hasFiniteSkolemPlan) {
-    const std::string skolemUseBlock =
-      MegalodonKernelBuilder::skolemRefutationUseBlock(
-        finalStep,
-        groundedSkolemSteps,
-        groundedSkolemInventoryUses);
-    if (skolemUseBlock.empty()) {
-      INVALID_OPERATION(
-        "typed finite Skolem application inventory serialization failed");
-    }
-    out << "  " << skolemUseBlock << "\n";
     std::string unherbrandizationError;
     if (!MegalodonKernelBuilder::buildSkolemFiniteUnherbrandization(
         finalStep,
@@ -18543,15 +18618,6 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
         "typed finite Skolem prooftrans failed: "
         + unherbrandizationError);
     }
-    const std::string unherbrandizationBlock =
-      MegalodonKernelBuilder::skolemFiniteUnherbrandizationBlock(
-        finiteSkolemProof);
-    if (unherbrandizationBlock.empty()) {
-      INVALID_OPERATION(
-        "typed finite Skolem unherbrandization serialization failed: "
-        + unherbrandizationError);
-    }
-    out << "  " << unherbrandizationBlock << "\n";
   }
   const auto& choiceSkolemSteps =
     hasFiniteSkolemPlan ? groundedSkolemSteps : skolemSteps;

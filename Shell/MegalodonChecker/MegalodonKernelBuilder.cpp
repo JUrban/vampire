@@ -1011,7 +1011,7 @@ std::string skolemChoiceProofBlock(
       ivyRule != MegalodonKernelSyntax::RenderedKernelIvyRule::None;
     if (node.index != expected
         || node.step.empty()
-        || (node.producerProof.empty() == !hasIvyJustification)
+        || (!hasIvyJustification && node.producerProof.empty())
         || node.hasResultClause == node.hasResultFormula) {
       return "";
     }
@@ -1197,19 +1197,38 @@ std::string skolemChoiceProofBlock(
     if (node.hasRootExistsScope) {
       if ((proof.version != "ivy_choice_dag_v2"
            && proof.version != "ivy_ground_choice_dag_v2")
-          || node.hasResultClause
+          || (node.hasResultClause
+              && (!node.rootExistsScopeComplete
+                  || node.resultClause != "(clause)"))
           || node.rootExistsScopeParent.empty()
           || node.rootExistsScopeWitnessType.empty()
           || node.rootExistsScopeWitnessTerm.empty()
           || node.rootExistsScopeSourceFormula.empty()
           || node.rootExistsScopeTargetFormula.empty()
-          || node.rootExistsScopeBridgeProof.empty()) {
+          || node.rootExistsScopeBridgeProof.empty()
+          || (node.rootExistsScopeAbstract
+              && node.rootExistsScopeWitnessBinder.empty())) {
         return "";
       }
-      result +=
-        " (scope \"root_exists_v1\""
+      result += " (scope \""
+        + std::string(node.rootExistsScopeComplete
+            ? "root_exists_v3"
+            : (node.rootExistsScopeAbstract
+                ? "root_exists_v2" : "root_exists_v1")) + "\""
         " (parent " + quote(node.rootExistsScopeParent) + ")"
-        " (witness_type " + node.rootExistsScopeWitnessType + ")"
+        " (witness_type " + node.rootExistsScopeWitnessType + ")";
+      if (node.rootExistsScopeAbstract) {
+        result += " (binder " + quote(node.rootExistsScopeWitnessBinder) + ")";
+      }
+      if (node.rootExistsScopeComplete) {
+        result += " (parents";
+        for (const std::string& parent : node.rootExistsScopeBridgeParents) {
+          if (parent.empty()) return "";
+          result += " " + quote(parent);
+        }
+        result += ")";
+      }
+      result +=
         " (witness " + node.rootExistsScopeWitnessTerm + ")"
         " (source (formula " + node.rootExistsScopeSourceFormula + "))"
         " (target (formula " + node.rootExistsScopeTargetFormula + "))"
@@ -1955,6 +1974,8 @@ MegalodonKernelSyntax::PrimitiveStep rectifyFormulaStep(
 MegalodonKernelSyntax::PrimitiveStep cnfLiteralStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelFormula& source,
+  const MegalodonKernelSyntax::RenderedKernelLiteral& literal,
   const MegalodonKernelSyntax::RenderedKernelClause& result)
 {
   MegalodonKernelSyntax::PrimitiveStep step = primitiveClauseStep(
@@ -1967,6 +1988,14 @@ MegalodonKernelSyntax::PrimitiveStep cnfLiteralStep(
       + " (parent " + quote(parent.value) + ")"
       + " (result " + result.sexpr + "))");
   step.producerProof = "(parent " + quote(parent.value) + ")";
+  auto projection = std::make_shared<
+    MegalodonKernelSyntax::RenderedKernelCnfProjection>();
+  projection->kind = "literal";
+  projection->hasSourceLiteral = true;
+  projection->sourceLiteral = literal;
+  projection->resultLiteralIndex = 0;
+  step.producerCnfProjection = std::move(projection);
+  step.producerCnfSourceFormula = source.sexpr;
   return step;
 }
 
@@ -2262,6 +2291,10 @@ MegalodonKernelSyntax::PrimitiveStep cnfFormulaClauseStep(
       + " (result " + result.sexpr + ")"
       + " (builder \"typed_v3\"))");
   step.producerProof = producerProof;
+  step.producerCnfProjection =
+    std::make_shared<MegalodonKernelSyntax::RenderedKernelCnfProjection>(
+      projection);
+  step.producerCnfSourceFormula = source.sexpr;
   return step;
 }
 

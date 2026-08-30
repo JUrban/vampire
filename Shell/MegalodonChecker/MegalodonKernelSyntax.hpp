@@ -2,12 +2,15 @@
 #define __MEGALODON_KERNEL_SYNTAX__
 
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace Shell {
 namespace MegalodonKernelSyntax {
+
+struct RenderedKernelCnfProjection;
 
 struct PrimitiveExpansion {
   std::string prefix;
@@ -50,6 +53,8 @@ struct ProducerSkolemChoiceDefinition {
   std::string witnessTypeSexpr;
   std::string witnessTermSexpr;
   std::vector<std::pair<std::string, std::string>> parameters;
+  std::vector<std::size_t> scopePath;
+  std::vector<std::pair<std::string, std::string>> scopeAmbient;
   std::string sourceFormulaSexpr;
   std::string scopeSourceFormulaSexpr;
   std::string scopeTargetFormulaSexpr;
@@ -100,6 +105,8 @@ struct PrimitiveStep {
   // Producer-only clause payload retained for delayed prooftrans lowering.
   std::vector<std::string> producerSourceLiterals;
   std::vector<std::string> producerResultLiterals;
+  std::shared_ptr<RenderedKernelCnfProjection> producerCnfProjection;
+  std::string producerCnfSourceFormula;
   std::vector<std::pair<std::string, std::string>> fields;
 };
 
@@ -230,6 +237,7 @@ struct RenderedKernelFiniteSkolemApplication {
   std::string programStageTargetToApplicationProof;
   std::string applicationStageTargetToProgramProof;
   RenderedKernelFormula programSourceFormula;
+  RenderedKernelFormula programTargetFormula;
   RenderedKernelFormula programSupportFormula;
   std::string programSupportProof;
   RenderedKernelFormula programScopeSourceFormula;
@@ -277,14 +285,32 @@ struct RenderedKernelChoiceProofNode {
   bool hasResultFormula = false;
   std::string resultFormula;
   std::string producerProof;
+  // Producer-only provenance for replaying this source proof under a modified
+  // ground environment.  These fields are deliberately not serialized.
+  bool hasProducerGroundOrigin = false;
+  std::string producerGroundSourceNode;
+  std::size_t producerGroundSourceInstance = 0;
+  std::shared_ptr<RenderedKernelCnfProjection> producerCnfProjection;
+  std::string producerCnfSourceFormula;
   RenderedKernelIvyJustification ivyJustification;
   bool hasRootExistsScope = false;
+  bool rootExistsScopeAbstract = false;
+  bool rootExistsScopeComplete = false;
   std::string rootExistsScopeParent;
+  std::vector<std::string> rootExistsScopeBridgeParents;
   std::string rootExistsScopeWitnessType;
+  std::string rootExistsScopeWitnessBinder;
   std::string rootExistsScopeWitnessTerm;
   std::string rootExistsScopeSourceFormula;
   std::string rootExistsScopeTargetFormula;
   std::string rootExistsScopeBridgeProof;
+  // Producer-only scoped-site data used while grounding this DAG.
+  std::size_t rootExistsScopeBranchIndex = 0;
+  std::size_t rootExistsScopeWitnessIndex = 0;
+  std::vector<std::size_t> rootExistsScopePath;
+  std::vector<std::pair<std::string, std::string>> rootExistsScopeAmbient;
+  std::string rootExistsScopeSourceStep;
+  bool rootExistsScopeBoundaryCopy = false;
 };
 
 struct RenderedKernelChoiceProof {
@@ -915,6 +941,7 @@ struct RenderedKernelFoolProgramNode {
   RenderedKernelFormula target;
   std::vector<std::pair<std::string, RenderedKernelType>> context;
   std::vector<std::pair<std::string, RenderedKernelType>> binders;
+  std::vector<RenderedKernelTerm> terms;
   std::vector<RenderedKernelFoolProgramNode> children;
 };
 

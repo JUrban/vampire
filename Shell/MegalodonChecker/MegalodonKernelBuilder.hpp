@@ -217,6 +217,8 @@ MegalodonKernelSyntax::PrimitiveStep skolemFormulaStep(
 MegalodonKernelSyntax::PrimitiveStep cnfLiteralStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  const MegalodonKernelSyntax::RenderedKernelFormula& source,
+  const MegalodonKernelSyntax::RenderedKernelLiteral& literal,
   const MegalodonKernelSyntax::RenderedKernelClause& result);
 
 MegalodonKernelSyntax::PrimitiveStep formulaCopyStep(
