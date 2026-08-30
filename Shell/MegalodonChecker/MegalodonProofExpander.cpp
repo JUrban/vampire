@@ -1989,6 +1989,30 @@ PreservedSexpr substituteNamedVariableSexpr(
   if (namedTermSexpr(source, variable)) return replacement;
   PreservedSexpr result = source;
   if (result.atom) return result;
+  // A local Ivy substitution binds its keys over the body, while outer
+  // specialization still applies to each replacement value.
+  if (sexprHead(result, "substitute") && result.items.size() == 3
+      && sexprHead(result.items[1], "subst")) {
+    bool locallyBound = false;
+    for (std::size_t index = 1;
+         index < result.items[1].items.size();
+         ++index) {
+      PreservedSexpr& binding = result.items[1].items[index];
+      std::string name;
+      if (binding.atom || binding.items.size() != 2
+          || !preservedName(binding.items[0], name)) {
+        continue;
+      }
+      locallyBound = locallyBound || name == variable;
+      binding.items[1] = substituteNamedVariableSexpr(
+        binding.items[1], variable, replacement);
+    }
+    if (!locallyBound) {
+      result.items[2] = substituteNamedVariableSexpr(
+        result.items[2], variable, replacement);
+    }
+    return result;
+  }
   if ((sexprHead(result, "ALLV")
        || sexprHead(result, "LAMV")
        || sexprHead(result, "VLAMV")
@@ -11993,6 +12017,16 @@ bool expandAvatarSplitProof(
     return "(term_lambda " + quote(name) + " " + type
       + " " + body + ")";
   };
+  // Later counterexample stages apply earlier epsilon witnesses.  Keep every
+  // stage beta-normal so adjacent Ivy proof applications use one proposition.
+  PreservedSexprParser parser;
+  auto betaNormalized = [&](const std::string& source,
+                            std::string& normalized) {
+    PreservedSexpr parsed;
+    if (!parser.parse(source, parsed)) return false;
+    normalized = betaNormalizeSexpr(parsed).render();
+    return true;
+  };
   auto substitutedTerm = [&](const std::vector<std::pair<std::string, std::string>>& bindings,
                              const std::string& body) {
     if (bindings.empty()) {
@@ -12336,7 +12370,11 @@ bool expandAvatarSplitProof(
           || stage->directWitness.sexpr.empty()) {
         return false;
       }
-      arguments.push_back(stage->directWitness.sexpr);
+      std::string witness;
+      if (!betaNormalized(stage->directWitness.sexpr, witness)) {
+        return false;
+      }
+      arguments.push_back(std::move(witness));
     }
     return true;
   };
@@ -12416,6 +12454,16 @@ bool expandAvatarSplitProof(
       if (notForall.empty() || choice.empty()) {
         return false;
       }
+      std::string openBody;
+      std::string positivePredicate;
+      std::string negativePredicate;
+      if (!betaNormalized(stage.openBody.sexpr, openBody)
+          || !betaNormalized(
+               stage.positivePredicate.sexpr, positivePredicate)
+          || !betaNormalized(
+               stage.negativePredicate.sexpr, negativePredicate)) {
+        return false;
+      }
       const std::string pointwiseHyp = freshName("pointwise");
       const std::string pointwise = termLambda(
         variable.variable,
@@ -12423,18 +12471,18 @@ bool expandAvatarSplitProof(
         proofLambda(
           pointwiseHyp,
           formula(formulaImp(
-            stage.openBody.sexpr, "(TMH \"vampire_false\")")),
+            openBody, "(TMH \"vampire_false\")")),
           hypothesis(pointwiseHyp)));
       const std::string existsNegative = proofApply(
         proofApply(
           termApply(
             termApply(
-              known(notForall), formula(stage.positivePredicate.sexpr)),
-            formula(stage.negativePredicate.sexpr)),
+              known(notForall), formula(positivePredicate)),
+            formula(negativePredicate)),
           pointwise),
         proof);
       proof = proofApply(
-        termApply(known(choice), formula(stage.negativePredicate.sexpr)),
+        termApply(known(choice), formula(negativePredicate)),
         existsNegative);
     }
     return true;
@@ -12467,8 +12515,13 @@ bool expandAvatarSplitProof(
         error = "AVATAR split direct proof source witness index is unavailable";
         return false;
       }
-      argument = counterexample->stages[binding->counterexampleStage]
-        .directWitness.sexpr;
+      if (!betaNormalized(
+            counterexample->stages[binding->counterexampleStage]
+              .directWitness.sexpr,
+            argument)) {
+        error = "AVATAR split direct proof source witness is malformed";
+        return false;
+      }
     }
     if (argument.empty()) {
       error = "AVATAR split direct proof source binding has no producer witness";
