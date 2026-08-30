@@ -33058,23 +33058,72 @@ void MegalodonChecker::recordStepSymbols(Kernel::Unit* u)
 
 void MegalodonChecker::printMegalodonSymbolDeclarations()
 {
+  std::set<unsigned> proofIntroducedFunctions;
+  std::set<unsigned> proofIntroducedPredicates;
+  for (Kernel::Unit* unit : proof) {
+    if (!_is->hasIntroducedSymbols(unit)) {
+      continue;
+    }
+    auto& symbols = _is->getIntroducedSymbols(unit);
+    for (auto symbol : iterTraits(
+           Kernel::InferenceStore::SymbolStack::ConstIterator(symbols))) {
+      if (symbol.first == SymbolType::FUNC) {
+        proofIntroducedFunctions.insert(symbol.second);
+      } else if (symbol.first == SymbolType::PRED) {
+        proofIntroducedPredicates.insert(symbol.second);
+      }
+    }
+  }
+  auto emitOrigin = [&](const std::string& name, const std::string& origin) {
+    out << "megalodon_symbol_origin(" << quote(name) << ',' << quote(origin)
+        << ").\n";
+    _certificateNativeMetadata.push_back(
+      "(symbol_origin " + sexprQuote(name) + " " + sexprQuote(origin) + ")");
+  };
   for (const std::string& name : _namedPropositions) {
     const std::string decl = "Variable " + name + ":prop.";
     out << "megalodon_symbol_declaration(" << quote(decl) << ").\n";
     _certificateNativeMetadata.push_back("(symbol_declaration " + sexprQuote(decl) + ")");
+    emitOrigin(name, "vampire_introduced");
   }
   for (const auto& entry : _functions) {
     std::string decl = functionDeclaration(entry.first, entry.second);
     if (!decl.empty()) {
+      auto* symbol = env.signature->getFunction(entry.first);
+      const bool logical =
+        env.signature->isFoolConstantSymbol(true, entry.first)
+        || env.signature->isFoolConstantSymbol(false, entry.first)
+        || symbol->interpreted();
+      const bool introduced =
+        symbol->introduced()
+        || symbol->skolem()
+        || proofIntroducedFunctions.find(entry.first)
+             != proofIntroducedFunctions.end();
       out << "megalodon_symbol_declaration(" << quote(decl) << ").\n";
       _certificateNativeMetadata.push_back("(symbol_declaration " + sexprQuote(decl) + ")");
+      emitOrigin(
+        entry.second,
+        logical ? "vampire_logical"
+        : introduced ? "vampire_introduced"
+        : "source_input_signature");
     }
   }
   for (const auto& entry : _predicates) {
     std::string decl = predicateDeclaration(entry.first, entry.second);
     if (!decl.empty()) {
+      auto* symbol = env.signature->getPredicate(entry.first);
+      const bool logical = symbol->interpreted() || symbol->equalityProxy();
+      const bool introduced =
+        symbol->introduced()
+        || proofIntroducedPredicates.find(entry.first)
+             != proofIntroducedPredicates.end();
       out << "megalodon_symbol_declaration(" << quote(decl) << ").\n";
       _certificateNativeMetadata.push_back("(symbol_declaration " + sexprQuote(decl) + ")");
+      emitOrigin(
+        entry.second,
+        logical ? "vampire_logical"
+        : introduced ? "vampire_introduced"
+        : "source_input_signature");
     }
   }
 }
