@@ -291,6 +291,9 @@ struct RenderedKernelChoiceProofNode {
   bool hasResultFormula = false;
   std::string resultFormula;
   std::string producerProof;
+  // Producer-only marker: the ground prooftrans pass may emit this
+  // local-symbol-free theorem once and instantiate it at every ground use.
+  bool producerShareAcrossGroundInstances = false;
   // Producer-only provenance for replaying this source proof under a modified
   // ground environment.  These fields are deliberately not serialized.
   bool hasProducerGroundOrigin = false;
@@ -319,10 +322,17 @@ struct RenderedKernelChoiceProofNode {
   bool rootExistsScopeBoundaryCopy = false;
 };
 
+struct RenderedKernelChoiceDefinition {
+  std::string symbol;
+  std::string type;
+  std::string body;
+};
+
 struct RenderedKernelChoiceProof {
   std::string version;
   std::string finalStep;
   std::vector<std::string> eliminatedSymbols;
+  std::vector<RenderedKernelChoiceDefinition> definitions;
   std::vector<RenderedKernelChoiceProofNode> nodes;
   // Producer-only normal forms used by the subsequent ground prooftrans pass.
   std::vector<std::pair<std::string, std::string>> producerGroundSubstitutions;

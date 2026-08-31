@@ -993,10 +993,13 @@ std::string skolemChoiceProofBlock(
   if ((proof.version != "ivy_choice_dag_v1"
        && proof.version != "ivy_choice_dag_v2"
        && proof.version != "ivy_ground_choice_dag_v1"
-       && proof.version != "ivy_ground_choice_dag_v2")
+       && proof.version != "ivy_ground_choice_dag_v2"
+       && proof.version != "ivy_ground_choice_dag_v3")
       || proof.finalStep.empty()
       || proof.eliminatedSymbols.empty()
-      || proof.nodes.empty()) {
+      || proof.nodes.empty()
+      || ((proof.version == "ivy_ground_choice_dag_v3")
+          != !proof.definitions.empty())) {
     return "";
   }
   std::string result =
@@ -1006,7 +1009,21 @@ std::string skolemChoiceProofBlock(
     if (symbol.empty()) return "";
     result += " " + quote(symbol);
   }
-  result += ") (nodes";
+  result += ")";
+  if (proof.version == "ivy_ground_choice_dag_v3") {
+    result += " (definitions";
+    for (const auto& definition : proof.definitions) {
+      if (definition.symbol.empty()
+          || definition.type.empty()
+          || definition.body.empty()) {
+        return "";
+      }
+      result += " (definition " + quote(definition.symbol)
+        + " " + definition.type + " " + definition.body + ")";
+    }
+    result += ")";
+  }
+  result += " (nodes";
   for (std::size_t expected = 0; expected < proof.nodes.size(); ++expected) {
     const auto& node = proof.nodes[expected];
     const auto ivyRule = node.ivyJustification.rule;
@@ -1199,7 +1216,8 @@ std::string skolemChoiceProofBlock(
     }
     if (node.hasRootExistsScope) {
       if ((proof.version != "ivy_choice_dag_v2"
-           && proof.version != "ivy_ground_choice_dag_v2")
+           && proof.version != "ivy_ground_choice_dag_v2"
+           && proof.version != "ivy_ground_choice_dag_v3")
           || (node.hasResultClause
               && (!node.rootExistsScopeComplete
                   || node.resultClause != "(clause)"))

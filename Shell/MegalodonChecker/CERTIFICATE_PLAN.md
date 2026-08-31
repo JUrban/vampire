@@ -28,6 +28,44 @@ Python and JSON are not part of the accepted proof path. They may be used for
 statistics only. The qualifying certificate is the versioned native Lisp
 S-expression emitted by `--proof megalodon`.
 
+## Implementation Checkpoint: 2026-08-31
+
+Finite Skolem elimination now ends in a producer-owned grounded proof object.
+Vampire's proof expansion code emits `ivy_ground_choice_dag_v3` when the DAG
+contains typed shared definitions. Its executable nodes still use the small
+Ivy vocabulary and direct `ivy_nd_v1` terms; v3 adds only deterministic
+hash-consed terms/propositions and retained AVATAR split definitions.
+
+Vampire performs all semantic work needed to construct this object:
+
+- a split definition that mentions an eliminated Skolem is unfolded before
+  finite abstraction and cannot be folded back into an opaque split name;
+- a proof node with no local symbol, local scope, or instance-dependent proof
+  is emitted once and referenced from all ground instances;
+- repeated typed proposition subterms are abstracted into at most 512
+  deterministic definitions when doing so saves certificate space;
+- nonseparable choice scopes, including scopes without one materialized finite
+  application program, retain Vampire's complete atomic choice proof rather
+  than asking the consumer to guess a witness application.
+
+Megalodon parses the definitions, checks freshness and exact body types,
+installs them as delta definitions, and checks each node against only its
+declared earlier parents plus source assumptions. It performs no occurrence
+search, split recovery, witness selection, clause matching, or proof variant
+enumeration. The final checked `False` node closes the already-checked DAG;
+the consumer does not rebuild a nested copy of the whole certificate.
+
+The tracked gate is `run_known_direct_ivy_v6_138.sh`. It exports one THF corpus,
+runs 138 saved direct strategies once with ten producer workers and a hard
+ten-second search limit, then checks the resulting cached certificates with
+twenty Megalodon workers. The current run exported 103 certificates and
+checked all 103, including every emitted Megalodon script:
+
+```text
+/project/tmp/megalodon6-direct138-v240-export
+/project/tmp/megalodon6-direct138-v243-check
+```
+
 ## Producer Ownership
 
 Vampire owns all data that would otherwise require guessing:
@@ -573,23 +611,20 @@ Megalodon.
 
 ## Immediate Producer Work
 
-1. Keep the Prover9-style expansion boundary closed: fresh clausal, AVATAR,
-   local Skolem, CNF, FOOL, rectification, and ENNF records all carry direct
-   producer proofs. Implement equality-resolution constraints only when a live
-   producer trace exercises them, rather than designing against an absent
-   corpus class.
-2. Run Skolem-use collection over the expanded proof nodes and emit a finite,
-   dependency-ordered unherbrandization plan linked to each typed Skolem
-   branch and source formula.
-3. Make the consumer verify the complete occurrence multiset and eliminate the
-   source existentials without introducing a global choice axiom. Reject every
-   final term containing a certificate-local symbol.
-4. Prove this path first on the known 12-case dependent-Skolem class, then run
-   the cached 100 gate. Do not broaden AVATAR beyond its now-direct Ivy replay
-   or do `UnionI` work meanwhile.
-5. Delete the corresponding old CPS/search route after the producer-expanded
-   path passes. Continue migrating other macro families only through the same
-   expansion pass.
+1. Keep the Prover9-style expansion boundary closed. New coverage must be an
+   additional Vampire/prooftrans lowering into the existing Ivy operations,
+   never a Megalodon inference recognizer.
+2. Reduce the 17 bounded producer postprocessing timeouts in the tracked
+   138-case gate by further Vampire-side DAG sharing and streaming; do not
+   trade space for consumer reconstruction.
+3. Classify the 18 direct-strategy runs that currently produce no certificate.
+   Fix a general producer lowering class only when the saved proof reaches a
+   reproducible unsupported producer boundary.
+4. Exercise the same object on larger developments and replace original
+   `vampire` commands in situ. Source lookup remains exact identity checking,
+   including generated `set` equalities proved by reflexivity.
+5. Delete archive compatibility paths only after equivalent fresh-object and
+   mutation coverage exists. No new fresh producer version may depend on them.
 
 The cross-repository execution design is
 `reports/VAMPIRE-MEGALODON-IVY-SMOLKA-EXECUTION-DESIGN-2026-08-27.md` in the
