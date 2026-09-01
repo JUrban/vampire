@@ -39,6 +39,10 @@ Clause* InnerRewriting::simplify(Clause* cl)
       for (unsigned j = 0; j < len; j++) {
         if (i != j) {
           Literal* lit = (*cl)[j];
+          if (EqHelper::replacementCapturesFreeDeBruijn(
+                lit, lhs, lhs, rhs)) {
+            continue;
+          }
           Literal* nLit = EqHelper::replace(lit,lhs,rhs);
           if (nLit != lit) {
             if(EqHelper::isEqTautology(nLit)) {
@@ -57,7 +61,10 @@ Clause* InnerRewriting::simplify(Clause* cl)
                 resLits->push(nLit);
               } else {
                 Literal* oLit = (*cl)[k];
-                Literal* rLit = EqHelper::replace(oLit,lhs,rhs);
+                Literal* rLit = EqHelper::replacementCapturesFreeDeBruijn(
+                    oLit, lhs, lhs, rhs)
+                  ? oLit
+                  : EqHelper::replace(oLit,lhs,rhs);
                 if(EqHelper::isEqTautology(rLit)) {
                   env.statistics->innerRewritesToEqTaut++;
                   return nullptr;

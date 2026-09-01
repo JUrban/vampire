@@ -201,35 +201,52 @@ struct ForwardSubsumptionDemodulationExtra : public InferenceExtra {
 struct UnitResultingResolutionExtra : public InferenceExtra {
   struct Step {
     Step(
+      unsigned selectedPosition,
       Kernel::Literal* selected,
       Kernel::Literal* selectedSubstituted,
+      Kernel::Substitution selectedSubstitution,
       Kernel::Clause* unitParent,
       Kernel::Literal* unitSubstituted,
+      Kernel::Substitution unitSubstitution,
       std::vector<Kernel::Literal*> remainingAfter)
-      : selected(selected),
+      : selectedPosition(selectedPosition),
+        selected(selected),
         selectedSubstituted(selectedSubstituted),
+        selectedSubstitution(std::move(selectedSubstitution)),
         unitParent(unitParent),
         unitSubstituted(unitSubstituted),
+        unitSubstitution(std::move(unitSubstitution)),
         remainingAfter(std::move(remainingAfter)) {}
 
+    unsigned selectedPosition;
     Kernel::Literal* selected;
     Kernel::Literal* selectedSubstituted;
+    Kernel::Substitution selectedSubstitution;
     Kernel::Clause* unitParent;
     Kernel::Literal* unitSubstituted;
+    Kernel::Substitution unitSubstitution;
     std::vector<Kernel::Literal*> remainingAfter;
   };
 
   UnitResultingResolutionExtra(
     Kernel::Clause* mainParent,
+    std::vector<Kernel::Literal*> mainParentLiterals,
     std::vector<Step> steps,
-    std::vector<Kernel::Literal*> remaining)
-    : mainParent(mainParent), steps(std::move(steps)), remaining(std::move(remaining)) {}
+    std::vector<Kernel::Literal*> remaining,
+    Kernel::Substitution resultRenaming)
+    : mainParent(mainParent),
+      mainParentLiterals(std::move(mainParentLiterals)),
+      steps(std::move(steps)),
+      remaining(std::move(remaining)),
+      resultRenaming(std::move(resultRenaming)) {}
 
   void output(std::ostream &out) const override;
 
   Kernel::Clause* mainParent;
+  std::vector<Kernel::Literal*> mainParentLiterals;
   std::vector<Step> steps;
   std::vector<Kernel::Literal*> remaining;
+  Kernel::Substitution resultRenaming;
 };
 } // namespace Inferences
 

@@ -136,6 +136,11 @@ struct BackwardDemodulation::ResultFn
 
     TermList rhsS=subs->applyToBoundQuery(rhs);
 
+    if (EqHelper::replacementCapturesFreeDeBruijn(
+          qr.data->literal, lhsS, lhs, rhs)) {
+      return BwSimplificationRecord(0);
+    }
+
     if (_helper.redundancyCheckNeededForPremise(qr.data->clause,qr.data->literal,lhsS) &&
       !_helper.isPremiseRedundant(qr.data->clause,qr.data->literal,lhsS,rhsS,lhs,&appl))
     {

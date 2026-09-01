@@ -50,6 +50,18 @@ public:
   }
   static Literal* replace(Literal* lit, TermList what, TermList by);
 
+  /**
+   * Return true when an equality side containing a free de Bruijn index is
+   * about to be used at an occurrence below a lambda.  The raw index denotes
+   * an open term in the equality clause but a bound variable at that target,
+   * so ordinary replacement would capture it.
+   */
+  static bool replacementCapturesFreeDeBruijn(
+    Literal* targetLiteral,
+    TermList target,
+    TermList sourceLeft,
+    TermList sourceRight);
+
   struct LHSIteratorFn
   {
     LHSIteratorFn(const Ordering& ord) : _ord(ord) {}

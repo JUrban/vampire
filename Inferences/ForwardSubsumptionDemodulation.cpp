@@ -541,6 +541,11 @@ afterOptimizations:
               }  // if (!_allowIncompleteness)
 isRedundant:
 
+              if (EqHelper::replacementCapturesFreeDeBruijn(
+                    dlit, lhsS, lhs, rhs)) {
+                continue;
+              }
+
 #if VDEBUG && FSD_VDEBUG_REDUNDANCY_ASSERTIONS
               if (_literalComparisonMode != Options::LiteralComparisonMode::REVERSE) {
                 // Check mclΘ < cl.

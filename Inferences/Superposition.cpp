@@ -344,6 +344,11 @@ Clause* Superposition::performSuperposition(
   Literal* rwLitS = subst->apply(rwLit, !eqIsResult);
   TermList rwTermS = subst->apply(rwTerm, !eqIsResult);
 
+  if (EqHelper::replacementCapturesFreeDeBruijn(
+        rwLitS, rwTermS, eqLHS, tgtTerm)) {
+    return 0;
+  }
+
   //cout << "Check ordering on " << tgtTermS.toString() << " and " << rwTermS.toString() << endl;
 
   //check that we're not rewriting smaller subterm with larger
@@ -403,6 +408,10 @@ Clause* Superposition::performSuperposition(
       Literal* currAfter = subst->apply(curr, !eqIsResult);
 
       if (doSimS) {
+        if (EqHelper::replacementCapturesFreeDeBruijn(
+              currAfter, rwTermS, eqLHS, tgtTerm)) {
+          return nullptr;
+        }
         currAfter = EqHelper::replace(currAfter,rwTermS,tgtTermS);
       }
 

@@ -70,6 +70,43 @@ struct ProducerSkolemChoiceDefinition {
   std::string contextScopeBridgeProof;
 };
 
+enum class RenderedKernelIvyRule {
+  None,
+  Copy,
+  Instantiate,
+  Resolve,
+  Factor,
+  EqualityResolution,
+  EqualitySymmetry,
+  TruthConflict,
+  Paramodulate,
+};
+
+struct RenderedKernelIvyJustification {
+  RenderedKernelIvyRule rule = RenderedKernelIvyRule::None;
+  std::vector<std::string> parents;
+  std::vector<std::size_t> indices;
+  std::vector<std::string> terms;
+  std::vector<std::vector<std::string>> parentArguments;
+  std::string position;
+  std::string from;
+  std::string to;
+};
+
+// An explicit lexical context produced by prooftrans.  A node carrying these
+// frames denotes the globally closed theorem
+//
+//   forall binder. source -> ... -> node-result.
+//
+// The checker only opens the declared binders and hypotheses while checking
+// the node.  It never discovers a scope by inspecting terms or proofs.
+struct RenderedKernelIvyContextFrame {
+  std::string binder;
+  std::string witnessType;
+  std::string hypothesis;
+  std::string sourceFormula;
+};
+
 struct ProducerProofClaim {
   std::string id;
   std::string replacesDefinition;
@@ -79,6 +116,7 @@ struct ProducerProofClaim {
   std::string resultFormula;
   std::string resultClause;
   std::string producerProof;
+  RenderedKernelIvyJustification ivyJustification;
 };
 
 // A producer-private term abbreviation consumed by detached prooftrans.  It
@@ -93,6 +131,19 @@ struct ProducerTermDefinition {
   bool emitDefinitionClaim = false;
   bool includeInEliminatedInventory = false;
   std::string resultClause;
+};
+
+// Producer-private repair for a higher-order rewrite whose equality-clause
+// remainder contains the de Bruijn slot moved under a lambda.  Detached
+// prooftrans replaces that escaping slot by this explicit epsilon witness and
+// carries the substitution only through the affected proof branch.
+struct ProducerScopedLambdaChoice {
+  std::string parameter;
+  std::string parameterType;
+  std::string witnessTerm;
+  std::string resultClause;
+  std::vector<std::string> resultLiterals;
+  std::string producerProof;
 };
 
 struct PrimitiveStep {
@@ -114,10 +165,17 @@ struct PrimitiveStep {
   // primitive fields; the refutation-level Skolem-use builder consumes them.
   std::vector<unsigned> certificateLocalFunctionSymbols;
   std::vector<std::size_t> certificateLocalSymbolDependencyCounts;
+  // Exact prooftrans edges consumed below a producer-introduced binder.  The
+  // ground-instance planner preserves these parents parametrically; this is
+  // producer-only metadata and is never serialized as a consumer rule.
+  std::vector<std::string> producerParametricParentIds;
+  std::vector<std::pair<std::string, unsigned>>
+    producerFreshParentVariables;
   std::vector<ProducerSkolemChoiceDefinition> producerSkolemChoiceDefinitions;
   std::vector<ProducerFunctionApplication> producerFunctionApplications;
   std::vector<ProducerProofClaim> producerProofClaims;
   std::vector<ProducerTermDefinition> producerTermDefinitions;
+  std::shared_ptr<ProducerScopedLambdaChoice> producerScopedLambdaChoice;
   std::string producerProof;
   // Producer-owned transparent definitions used while lowering preprocessing
   // macros to atomic Ivy proof terms.
@@ -187,7 +245,10 @@ struct RenderedKernelSkolemUse {
   bool groundInstanceParametric = false;
   std::size_t groundEnvironmentSize = 0;
   bool skolemStepOwner = false;
-  ProducerSkolemChoiceDefinition producerChoiceDefinition;
+  // The checker owns the canonical definition for the duration of prooftrans.
+  // Thousands of occurrence records may share it, so do not duplicate its
+  // potentially large formula and proof payload here.
+  const ProducerSkolemChoiceDefinition* producerChoiceDefinition = nullptr;
 };
 
 struct RenderedKernelGroundBinding {
@@ -273,29 +334,6 @@ struct RenderedKernelFiniteSkolemProof {
   std::vector<std::size_t> dischargeOrder;
 };
 
-enum class RenderedKernelIvyRule {
-  None,
-  Copy,
-  Instantiate,
-  Resolve,
-  Factor,
-  EqualityResolution,
-  EqualitySymmetry,
-  TruthConflict,
-  Paramodulate,
-};
-
-struct RenderedKernelIvyJustification {
-  RenderedKernelIvyRule rule = RenderedKernelIvyRule::None;
-  std::vector<std::string> parents;
-  std::vector<std::size_t> indices;
-  std::vector<std::string> terms;
-  std::vector<std::vector<std::string>> parentArguments;
-  std::string position;
-  std::string from;
-  std::string to;
-};
-
 struct RenderedKernelChoiceProofNode {
   std::size_t index = 0;
   std::string step;
@@ -306,6 +344,7 @@ struct RenderedKernelChoiceProofNode {
   bool hasResultFormula = false;
   std::string resultFormula;
   std::string producerProof;
+  std::vector<RenderedKernelIvyContextFrame> ivyContext;
   // Producer-only aliases needed when a compact node's omitted direct proof
   // is replayed later under a finite witness. These are not serialized.
   std::vector<std::pair<std::string, std::string>>

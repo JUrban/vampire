@@ -347,7 +347,10 @@ private:
     std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   bool certificateFoolExhaustivenessStepSexpr(Kernel::Unit* unit, std::string& result);
   bool certificateFoolDistinctnessStepSexpr(Kernel::Unit* unit, std::string& result);
-  bool certificateBoolSimplificationStepSexpr(Kernel::Unit* unit, std::string& result);
+  bool certificateBoolSimplificationStepSexpr(
+    Kernel::Unit* unit,
+    std::string& result,
+    std::vector<MegalodonKernelSyntax::PrimitiveStep>* primitiveSteps = nullptr);
   bool certificateUnitResultingResolutionStepsSexpr(
     Kernel::Unit* unit,
     std::string& result,

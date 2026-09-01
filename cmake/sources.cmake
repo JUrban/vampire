@@ -80,6 +80,7 @@ set(UNIT_TESTS
     UnitTests/tKBO.cpp
     UnitTests/tLPO.cpp
     UnitTests/tList.cpp
+    UnitTests/tMegalodonProofExpander.cpp
     UnitTests/tOption.cpp
     UnitTests/tOptionConstraints.cpp
     UnitTests/tQKbo.cpp

@@ -19,6 +19,9 @@
 #include "TermIterators.hpp"
 #include "Lib/Metaiterators.hpp"
 #include "Matcher.hpp"
+#include "HOL/TermShifter.hpp"
+
+#include <functional>
 
 #include "EqHelper.hpp"
 
@@ -81,6 +84,56 @@ bool EqHelper::hasGreaterEqualitySide(Literal* eq, const Ordering& ord, TermList
 Literal* EqHelper::replace(Literal* lit, TermList what, TermList by)
 {
   return static_cast<Literal*>(replace(static_cast<Term*>(lit), what, by));
+}
+
+bool EqHelper::replacementCapturesFreeDeBruijn(
+  Literal* targetLiteral,
+  TermList target,
+  TermList sourceLeft,
+  TermList sourceRight)
+{
+  const bool sourceHasFreeDb =
+    TermShifter::shift(sourceLeft, 0).second.isSome()
+    || TermShifter::shift(sourceRight, 0).second.isSome();
+  if (!sourceHasFreeDb) {
+    return false;
+  }
+
+  std::function<bool(TermList, unsigned)> occursBelowLambda =
+    [&](TermList current, unsigned binderDepth) {
+      if (current == target) {
+        return binderDepth != 0;
+      }
+      if (current.isVar()) {
+        return false;
+      }
+      if (current.isLambdaTerm()) {
+        return occursBelowLambda(current.lambdaBody(), binderDepth + 1);
+      }
+      if (current.isApplication()) {
+        return occursBelowLambda(current.lhs(), binderDepth)
+          || occursBelowLambda(current.rhs(), binderDepth);
+      }
+      if (!current.isTerm() || current.term()->isSpecial()) {
+        return false;
+      }
+      Term* compound = current.term();
+      for (unsigned index = 0;
+           index < compound->numTermArguments();
+           ++index) {
+        if (occursBelowLambda(compound->termArg(index), binderDepth)) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+  for (unsigned index = 0; index < targetLiteral->arity(); ++index) {
+    if (occursBelowLambda(*targetLiteral->nthArgument(index), 0)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

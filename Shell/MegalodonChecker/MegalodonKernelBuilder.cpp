@@ -10,7 +10,9 @@
 #include "SAT/SATInference.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <functional>
+#include <iostream>
 #include <limits>
 #include <map>
 #include <queue>
@@ -715,7 +717,12 @@ bool buildSkolemFiniteUnherbrandization(
       canonical.stageSourceInstanceSexpr);
     rendered.stageTargetInstance = MegalodonKernelSyntax::formula(
       canonical.stageTargetInstanceSexpr);
-    rendered.producerChoiceDefinition = canonical.producerChoiceDefinition;
+    if (canonical.producerChoiceDefinition == nullptr) {
+      error = "finite application " + canonical.term.sexpr
+        + " has no producer choice definition";
+      return false;
+    }
+    rendered.producerChoiceDefinition = *canonical.producerChoiceDefinition;
     for (std::size_t dependencyIndex = 0;
          dependencyIndex < canonical.dependencies.size();
          ++dependencyIndex) {
@@ -995,14 +1002,42 @@ std::string skolemChoiceProofBlock(
        && proof.version != "ivy_choice_dag_v3"
        && proof.version != "ivy_ground_choice_dag_v1"
        && proof.version != "ivy_ground_choice_dag_v2"
-       && proof.version != "ivy_ground_choice_dag_v3")
+       && proof.version != "ivy_ground_choice_dag_v3"
+       && proof.version != "ivy_ground_scoped_choice_dag_v1")
       || proof.finalStep.empty()
       || proof.eliminatedSymbols.empty()
       || proof.nodes.empty()
-      || (((proof.version == "ivy_choice_dag_v3"
-            || proof.version == "ivy_ground_choice_dag_v3"))
-          != !proof.definitions.empty())) {
+      || ((proof.version == "ivy_choice_dag_v3"
+           || proof.version == "ivy_ground_choice_dag_v3")
+          && proof.definitions.empty())
+      || (proof.version != "ivy_ground_scoped_choice_dag_v1"
+          && proof.version != "ivy_choice_dag_v3"
+          && proof.version != "ivy_ground_choice_dag_v3"
+          && !proof.definitions.empty())) {
     return "";
+  }
+  const auto contextKey = [](const auto& frames) {
+    std::string key;
+    for (const auto& frame : frames) {
+      const auto append = [&](const std::string& field) {
+        key += std::to_string(field.size()) + ":" + field;
+      };
+      append(frame.binder);
+      append(frame.witnessType);
+      append(frame.hypothesis);
+      append(frame.sourceFormula);
+    }
+    return key;
+  };
+  std::map<std::string, std::size_t> contextIndex;
+  std::vector<const std::vector<
+    MegalodonKernelSyntax::RenderedKernelIvyContextFrame>*> contexts;
+  for (const auto& node : proof.nodes) {
+    if (node.ivyContext.empty()) continue;
+    const std::string key = contextKey(node.ivyContext);
+    if (contextIndex.emplace(key, contexts.size()).second) {
+      contexts.push_back(&node.ivyContext);
+    }
   }
   std::string result =
     "(skolem_choice_proof_block " + quote(proof.version)
@@ -1012,8 +1047,7 @@ std::string skolemChoiceProofBlock(
     result += " " + quote(symbol);
   }
   result += ")";
-  if (proof.version == "ivy_choice_dag_v3"
-      || proof.version == "ivy_ground_choice_dag_v3") {
+  if (!proof.definitions.empty()) {
     result += " (definitions";
     for (const auto& definition : proof.definitions) {
       if (definition.symbol.empty()
@@ -1023,6 +1057,27 @@ std::string skolemChoiceProofBlock(
       }
       result += " (definition " + quote(definition.symbol)
         + " " + definition.type + " " + definition.body + ")";
+    }
+    result += ")";
+  }
+  if (!contexts.empty()) {
+    if (proof.version != "ivy_ground_scoped_choice_dag_v1") return "";
+    result += " (contexts";
+    for (std::size_t index = 0; index < contexts.size(); ++index) {
+      result += " (context " + quote(
+        "ivy_scope_context_" + std::to_string(index))
+        + " \"ivy_scope_context_v1\" (frames";
+      for (const auto& frame : *contexts[index]) {
+        if (frame.binder.empty() || frame.witnessType.empty()
+            || frame.hypothesis.empty() || frame.sourceFormula.empty()) {
+          return "";
+        }
+        result += " (frame (binder " + quote(frame.binder) + ")"
+          + " (witness_type " + frame.witnessType + ")"
+          + " (hypothesis " + quote(frame.hypothesis) + ")"
+          + " (source (formula " + frame.sourceFormula + ")))";
+      }
+      result += "))";
     }
     result += ")";
   }
@@ -1052,7 +1107,15 @@ std::string skolemChoiceProofBlock(
         " (variable " + quote(parameter.first) + " "
         + parameter.second + ")";
     }
-    result += ") (result ";
+    result += ")";
+    if (!node.ivyContext.empty()) {
+      if (proof.version != "ivy_ground_scoped_choice_dag_v1") return "";
+      const auto found = contextIndex.find(contextKey(node.ivyContext));
+      if (found == contextIndex.end()) return "";
+      result += " (context " + quote(
+        "ivy_scope_context_" + std::to_string(found->second)) + ")";
+    }
+    result += " (result ";
     if (node.hasResultClause) {
       result += "(clause " + node.resultClause + ")";
     } else {
@@ -1637,6 +1700,45 @@ MegalodonKernelSyntax::PrimitiveStep truthConflictStep(
     step.rendered.pop_back();
     step.rendered +=
       " (program \"ivy_truth_conflict_v2\""
+      " (producer_proof (program \"ivy_nd_v1\" (proof "
+      + producerProof + ")))))";
+    step.producerProof = producerProof;
+  }
+  return step;
+}
+
+MegalodonKernelSyntax::PrimitiveStep boolSimplifyStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  std::size_t literal,
+  const MegalodonKernelSyntax::RenderedKernelPosition& position,
+  const MegalodonKernelSyntax::RenderedKernelTerm& from,
+  const MegalodonKernelSyntax::RenderedKernelTerm& to,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::string& producerProof)
+{
+  const std::string literalText = std::to_string(literal);
+  MegalodonKernelSyntax::PrimitiveStep step = primitiveClauseStep(
+    "bool_simplify",
+    id,
+    {parent.value},
+    result.sexpr,
+    {
+      {"literal", literalText},
+      {"position", position.sexpr},
+      {"from", from.sexpr},
+      {"to", to.sexpr},
+    },
+    "(bool_simplify " + quote(id)
+      + " (parent " + quote(parent.value) + ")"
+      + " (literal " + literalText + ") " + position.sexpr
+      + " (from " + from.sexpr + ")"
+      + " (to " + to.sexpr + ")"
+      + " (result " + result.sexpr + "))");
+  if (!producerProof.empty()) {
+    step.rendered.pop_back();
+    step.rendered +=
+      " (program \"ivy_bool_simplify_v1\""
       " (producer_proof (program \"ivy_nd_v1\" (proof "
       + producerProof + ")))))";
     step.producerProof = producerProof;
@@ -2532,6 +2634,10 @@ MegalodonKernelSyntax::PrimitiveStep avatarSplitIvyStep(
         supportClaims,
         termDefinitions,
         expansionError)) {
+    if (std::getenv("MEGALODON_CERT_DEBUG") != nullptr) {
+      std::cerr << "megalodon direct AVATAR proof " << id
+                << " failed: " << expansionError << std::endl;
+    }
     return step;
   }
 
@@ -2969,7 +3075,9 @@ bool lowerAvatarSatProof(
   renderedProofs = "(producer_proofs";
   auto appendProof = [&](unsigned id,
                          const SatClause& clause,
-                         const std::string& proof) {
+                         const std::string& proof,
+                         const MegalodonKernelSyntax::RenderedKernelIvyJustification*
+                           ivyJustification) {
     renderedProofs +=
       " (node " + std::to_string(id)
       + " (program \"ivy_nd_v1\" (proof " + proof + ")))";
@@ -2978,6 +3086,9 @@ bool lowerAvatarSatProof(
     claim.replacesParent = satProofNodeId(id);
     claim.resultClause = renderSatKernelClause(clause);
     claim.producerProof = proof;
+    if (ivyJustification != nullptr) {
+      claim.ivyJustification = *ivyJustification;
+    }
     producerClaims.push_back(std::move(claim));
   };
   exactStepCount = 0;
@@ -3007,7 +3118,11 @@ bool lowerAvatarSatProof(
               error)) {
           return false;
         }
-        appendProof(step.id, step.literals, proof);
+        MegalodonKernelSyntax::RenderedKernelIvyJustification justification;
+        justification.rule =
+          MegalodonKernelSyntax::RenderedKernelIvyRule::Copy;
+        justification.parents = {step.originUnit.value};
+        appendProof(step.id, step.literals, proof, &justification);
         ++exactStepCount;
       } else {
         if (nextSyntheticId == std::numeric_limits<unsigned>::max()) {
@@ -3034,7 +3149,12 @@ bool lowerAvatarSatProof(
               originError)) {
           return false;
         }
-        appendProof(originInputId, step.originLiterals, originProof);
+        MegalodonKernelSyntax::RenderedKernelIvyJustification justification;
+        justification.rule =
+          MegalodonKernelSyntax::RenderedKernelIvyRule::Copy;
+        justification.parents = {step.originUnit.value};
+        appendProof(
+          originInputId, step.originLiterals, originProof, &justification);
         rendered +=
           " (sat_permute " + std::to_string(step.id)
           + " (parent " + std::to_string(originInputId) + ")"
@@ -3050,7 +3170,7 @@ bool lowerAvatarSatProof(
               permutationError)) {
           return false;
         }
-        appendProof(step.id, step.literals, permutationProof);
+        appendProof(step.id, step.literals, permutationProof, nullptr);
         checked.emplace(step.id, step.literals);
         exactStepCount += 2;
       }
@@ -3097,6 +3217,7 @@ bool lowerAvatarSatProof(
       }
       std::string directProof;
       std::string directProofError;
+      MegalodonKernelSyntax::RenderedKernelIvyJustification justification;
       switch (operation.kind) {
         case ExactSatOperationKind::Resolve:
           rendered +=
@@ -3121,6 +3242,16 @@ bool lowerAvatarSatProof(
                      directProofError)) {
               return false;
             }
+            justification.rule =
+              MegalodonKernelSyntax::RenderedKernelIvyRule::Resolve;
+            justification.parents = {
+              satProofNodeId(currentId),
+              satProofNodeId(operation.rightParent),
+            };
+            justification.indices = {
+              operation.leftIndex, operation.rightIndex,
+            };
+            justification.parentArguments.resize(2);
           }
           break;
         case ExactSatOperationKind::Factor:
@@ -3138,6 +3269,12 @@ bool lowerAvatarSatProof(
                 directProofError)) {
             return false;
           }
+          justification.rule =
+            MegalodonKernelSyntax::RenderedKernelIvyRule::Factor;
+          justification.parents = {satProofNodeId(currentId)};
+          justification.indices = {
+            operation.leftIndex, operation.rightIndex,
+          };
           break;
         case ExactSatOperationKind::Permute:
           {
@@ -3162,7 +3299,11 @@ bool lowerAvatarSatProof(
           break;
           }
       }
-      appendProof(operationId, operation.result, directProof);
+      appendProof(
+        operationId, operation.result, directProof,
+        justification.rule
+            == MegalodonKernelSyntax::RenderedKernelIvyRule::None
+          ? nullptr : &justification);
       checked.emplace(operationId, operation.result);
       currentId = operationId;
       ++exactStepCount;

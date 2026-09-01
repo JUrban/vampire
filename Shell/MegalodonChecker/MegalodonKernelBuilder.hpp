@@ -136,6 +136,16 @@ MegalodonKernelSyntax::PrimitiveStep truthConflictStep(
   const MegalodonKernelSyntax::RenderedKernelClause& result,
   const std::string& producerProof);
 
+MegalodonKernelSyntax::PrimitiveStep boolSimplifyStep(
+  const std::string& id,
+  const MegalodonKernelSyntax::RenderedKernelUnitRef& parent,
+  std::size_t literal,
+  const MegalodonKernelSyntax::RenderedKernelPosition& position,
+  const MegalodonKernelSyntax::RenderedKernelTerm& from,
+  const MegalodonKernelSyntax::RenderedKernelTerm& to,
+  const MegalodonKernelSyntax::RenderedKernelClause& result,
+  const std::string& producerProof);
+
 MegalodonKernelSyntax::PrimitiveStep paramodulateStep(
   const std::string& id,
   const MegalodonKernelSyntax::RenderedKernelUnitRef& equalityParent,

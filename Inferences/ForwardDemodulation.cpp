@@ -183,6 +183,11 @@ bool ForwardDemodulation::perform(Clause* cl, Clause*& replacement, ClauseIterat
 
         TermList rhsS = rhsApplied.apply();
 
+        if (EqHelper::replacementCapturesFreeDeBruijn(
+              lit, trm, lhs, qr.data->rhs)) {
+          continue;
+        }
+
         if (redundancyCheck && !_helper.isPremiseRedundant(cl, lit, trm, rhsS, lhs, appl)) {
           continue;
         }
@@ -268,6 +273,10 @@ ClauseIterator ForwardDemodulationReplay::generateClauses(Clause* premise)
 
       RStack<Literal*> resLits;
       auto rhsS = rhsApplied.apply();
+      if (EqHelper::replacementCapturesFreeDeBruijn(
+            lit, trm, lhs, qr.data->rhs)) {
+        return nullptr;
+      }
       resLits->push(EqHelper::replace(lit,trm,rhsS));
 
       for (const auto& curr : *premise) {

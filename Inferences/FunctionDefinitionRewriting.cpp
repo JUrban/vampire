@@ -64,6 +64,13 @@ Clause* performRewriting(
     return 0;
   }
 
+  for (Literal* literal : rwClause->iterLits()) {
+    if (EqHelper::replacementCapturesFreeDeBruijn(
+          literal, rwTerm, eqLHS, tgtTerm)) {
+      return 0;
+    }
+  }
+
   Literal *tgtLitS = EqHelper::replace(rwLit, rwTerm, tgtTermS);
   if (EqHelper::isEqTautology(tgtLitS)) {
     isEqTautology = true;

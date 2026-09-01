@@ -13,6 +13,7 @@
  */
 
 #include "Lib/DArray.hpp"
+#include "Lib/DHSet.hpp"
 #include "Lib/Metaiterators.hpp"
 #include "Lib/VirtualIterator.hpp"
 
@@ -66,11 +67,15 @@ struct URResolution<synthesis>::Item
     unsigned litslen = clen - (_ansLit ? 1 : 0);
     _premises.init(litslen, 0);
     _lits.reserve(litslen);
+    _literalOrder.reserve(litslen);
     unsigned nonGroundCnt = 0;
+    unsigned literalOrder = 0;
     for(unsigned i=0; i<clen; i++) {
       if(!(*cl)[i]->ground()) nonGroundCnt++;
       if ((*cl)[i] != _ansLit) {
         _lits.push((*cl)[i]);
+        _mainParentLiterals.push_back((*cl)[i]);
+        _literalOrder.push(literalOrder++);
       }
     }
     _atMostOneNonGround = nonGroundCnt<=1;
@@ -89,6 +94,48 @@ struct URResolution<synthesis>::Item
   void resolveLiteral(unsigned idx, QueryRes<ResultSubstitutionSP, LiteralClause>& unif, Clause* premise, bool useQuerySubstitution)
   {
     Literal* rlit = _lits[idx];
+    unsigned selectedPosition = 0;
+    const unsigned selectedOrder = _literalOrder[idx];
+    for (unsigned i = 0; i < _lits.size(); ++i) {
+      if (_lits[i] != nullptr && _literalOrder[i] < selectedOrder) {
+        ++selectedPosition;
+      }
+    }
+    auto captureSubstitution = [&](const std::vector<Literal*>& variablesFrom,
+                                   bool resultBank) {
+      DHSet<unsigned> variables;
+      for (Literal* literal : variablesFrom) {
+        VariableIterator variableIterator(literal);
+        while (variableIterator.hasNext()) {
+          variables.insert(variableIterator.next().var());
+        }
+      }
+      Substitution substitution;
+      DHSet<unsigned>::Iterator iterator(variables);
+      while (iterator.hasNext()) {
+        const unsigned variable = iterator.next();
+        const TermList image = unif.unifier->apply(
+          TermList::var(variable), resultBank);
+        if (!image.isVar() || image.var() != variable) {
+          substitution.bindUnbound(variable, image);
+        }
+      }
+      return substitution;
+    };
+    std::vector<Literal*> currentSources;
+    for (Literal* literal : _lits) {
+      if (literal != nullptr) {
+        currentSources.push_back(literal);
+      }
+    }
+    std::vector<Literal*> unitSources;
+    for (Literal* literal : premise->iterLits()) {
+      unitSources.push_back(literal);
+    }
+    Substitution selectedSubstitution =
+      captureSubstitution(currentSources, !useQuerySubstitution);
+    Substitution unitSubstitution =
+      captureSubstitution(unitSources, useQuerySubstitution);
     Literal* selectedSubstituted = unif.unifier->apply(rlit, !useQuerySubstitution);
     Literal* premiseLiteral = (*premise)[0];
     if (premiseLiteral->isAnswerLiteral() && premise->length() > 1) {
@@ -128,7 +175,15 @@ struct URResolution<synthesis>::Item
           remainingAfter.push_back(lit);
         }
       }
-      _steps.emplace_back(rlit, selectedSubstituted, premise, unitSubstituted, std::move(remainingAfter));
+      _steps.emplace_back(
+        selectedPosition,
+        rlit,
+        selectedSubstituted,
+        std::move(selectedSubstitution),
+        premise,
+        unitSubstituted,
+        std::move(unitSubstitution),
+        std::move(remainingAfter));
     };
 
     if(_atMostOneNonGround) {
@@ -173,11 +228,19 @@ struct URResolution<synthesis>::Item
 
     Inference inf(GeneratingInferenceMany(InferenceRule::UNIT_RESULTING_RESOLUTION, premLst));
     Clause* res;
+    Substitution resultRenaming;
 
     LiteralIterator it = _ansLit ? pvi(getSingletonIterator(_ansLit)) : LiteralIterator::getEmpty();
     if(single) {
       if (!_ansLit || _ansLit->ground()) {
-        single = Renaming::normalize(single);
+        Renaming renaming;
+        renaming.normalizeVariables(single);
+        single = renaming.apply(single);
+        for (auto [from, to] : iterTraits(renaming.items())) {
+          if (from != to) {
+            resultRenaming.bindUnbound(from, TermList::var(to));
+          }
+        }
       }
       res = Clause::fromIterator(concatIters(getSingletonIterator(single), std::move(it)), inf);
     }
@@ -191,7 +254,14 @@ struct URResolution<synthesis>::Item
           remaining.push_back(lit);
         }
       }
-      env.proofExtra.insert(res, new UnitResultingResolutionExtra(_orig, _steps, std::move(remaining)));
+      env.proofExtra.insert(
+        res,
+        new UnitResultingResolutionExtra(
+          _orig,
+          _mainParentLiterals,
+          _steps,
+          std::move(remaining),
+          std::move(resultRenaming)));
     }
     return res;
   }
@@ -230,6 +300,7 @@ struct URResolution<synthesis>::Item
     }
     if(idx!=bestIdx) {
       swap(_lits[idx], _lits[bestIdx]);
+      swap(_literalOrder[idx], _literalOrder[bestIdx]);
     }
   }
 
@@ -252,6 +323,12 @@ struct URResolution<synthesis>::Item
    * The unresolved literals have the substitutions from other resolutions
    * applied to themselves */
   Stack<Literal*> _lits;
+
+  /** Main-parent literal order at inference time; clauses can later reorder. */
+  std::vector<Literal*> _mainParentLiterals;
+
+  /** Original clause order for the search-reordered entries in @_lits. */
+  Stack<unsigned> _literalOrder;
 
   Literal* _ansLit;
 
@@ -375,6 +452,7 @@ void URResolution<synthesis>::doBackwardInferences(Clause* cl, ClauseList*& acc)
     }
     ASS(!_selectedOnly || pos<ucl->numSelected());
     swap(itm->_lits[0], itm->_lits[pos]);
+    swap(itm->_literalOrder[0], itm->_literalOrder[pos]);
     itm->resolveLiteral(0, unif, cl, /* useQuerySubstitution */ false);
 
     processAndGetClauses(itm, 1, acc);

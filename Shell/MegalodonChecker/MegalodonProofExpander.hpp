@@ -41,6 +41,7 @@ struct Step {
   std::string id;
   std::vector<std::string> parentIds;
   std::vector<std::string> parametricParentIds;
+  std::vector<std::pair<std::string, unsigned>> freshParentVariables;
   Environment parentSubstitution;
   VariableSorts freeVariableSorts;
   std::vector<Application> applications;
@@ -180,6 +181,11 @@ struct ParamodulateClauseStep {
   std::vector<std::string> resultLiterals;
   bool rewriteSymmetry = false;
   std::string producerProof;
+  bool producerUsesEqualityParentUnderBinder = false;
+  bool hasProducerEqualityParentBinderVariable = false;
+  unsigned producerEqualityParentBinderVariable = 0;
+  std::shared_ptr<MegalodonKernelSyntax::ProducerScopedLambdaChoice>
+    producerScopedLambdaChoice;
 };
 
 struct FactorClauseStep {
@@ -331,7 +337,8 @@ bool expandAvatarDefinitionProof(
 bool expandAvatarComponentProof(
   const AvatarComponentProofRequest& request,
   std::string& result,
-  std::string& error);
+  std::string& error,
+  MegalodonKernelSyntax::ProducerScopedLambdaChoice* scopedChoice = nullptr);
 
 bool expandAvatarSplitProof(
   const std::string& stepId,
@@ -404,6 +411,10 @@ bool buildFoolFormulaProgram(
   std::string& error,
   bool allowJunctionReassociation = false);
 
+bool alphaEquivalentTermSexpr(
+  const std::string& left,
+  const std::string& right);
+
 bool expandAvatarSatResolutionProof(
   const std::string& leftParentId,
   const std::vector<std::string>& leftLiterals,
@@ -455,6 +466,33 @@ bool expandClauseTruthConflictProof(
   std::string& result,
   std::string& error);
 
+struct ClauseBoolSimplificationPlan {
+  std::size_t selectedLiteral = 0;
+  std::vector<unsigned> position;
+  std::string from;
+  std::string to;
+  std::vector<std::string> rewrittenLiterals;
+  bool requiresEqualitySymmetry = false;
+};
+
+bool planClauseBoolSimplification(
+  const std::vector<std::string>& sourceLiterals,
+  const std::vector<std::string>& resultLiterals,
+  ClauseBoolSimplificationPlan& plan,
+  std::string& error);
+
+bool expandClauseBoolSimplificationProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const std::vector<std::string>& sourceLiterals,
+  std::size_t selectedLiteral,
+  const std::vector<unsigned>& position,
+  const std::string& from,
+  const std::string& to,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error);
+
 bool expandClauseInstantiationProof(
   const std::string& parentId,
   const std::vector<std::string>& parentArgumentTerms,
@@ -497,6 +535,28 @@ bool expandClauseParamodulationProof(
   const std::vector<std::string>& resultLiterals,
   bool rewriteSymmetry,
   std::string& result,
+  std::string& error,
+  const std::string& scopedLambdaBodyType = std::string(),
+  bool* usedScopedLambda = nullptr,
+  std::string* scopedParentParameter = nullptr);
+
+bool expandScopedLambdaChoiceParamodulationProof(
+  const std::string& equalityParentId,
+  const std::vector<std::string>& equalityParentArguments,
+  const std::vector<std::string>& equalityLiterals,
+  std::size_t equalityLiteral,
+  const std::string& targetParentId,
+  const std::vector<std::string>& targetParentArguments,
+  const std::vector<std::string>& targetLiterals,
+  std::size_t targetLiteral,
+  const std::vector<unsigned>& position,
+  const std::string& from,
+  const std::string& to,
+  const std::string& rewrittenLiteral,
+  const std::vector<std::string>& originalResultLiterals,
+  bool rewriteSymmetry,
+  const std::string& scopedLambdaBodyType,
+  MegalodonKernelSyntax::ProducerScopedLambdaChoice& result,
   std::string& error);
 
 }
