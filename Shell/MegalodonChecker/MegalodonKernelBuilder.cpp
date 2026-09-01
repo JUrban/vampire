@@ -992,13 +992,15 @@ std::string skolemChoiceProofBlock(
 {
   if ((proof.version != "ivy_choice_dag_v1"
        && proof.version != "ivy_choice_dag_v2"
+       && proof.version != "ivy_choice_dag_v3"
        && proof.version != "ivy_ground_choice_dag_v1"
        && proof.version != "ivy_ground_choice_dag_v2"
        && proof.version != "ivy_ground_choice_dag_v3")
       || proof.finalStep.empty()
       || proof.eliminatedSymbols.empty()
       || proof.nodes.empty()
-      || ((proof.version == "ivy_ground_choice_dag_v3")
+      || (((proof.version == "ivy_choice_dag_v3"
+            || proof.version == "ivy_ground_choice_dag_v3"))
           != !proof.definitions.empty())) {
     return "";
   }
@@ -1010,7 +1012,8 @@ std::string skolemChoiceProofBlock(
     result += " " + quote(symbol);
   }
   result += ")";
-  if (proof.version == "ivy_ground_choice_dag_v3") {
+  if (proof.version == "ivy_choice_dag_v3"
+      || proof.version == "ivy_ground_choice_dag_v3") {
     result += " (definitions";
     for (const auto& definition : proof.definitions) {
       if (definition.symbol.empty()
@@ -1216,6 +1219,7 @@ std::string skolemChoiceProofBlock(
     }
     if (node.hasRootExistsScope) {
       if ((proof.version != "ivy_choice_dag_v2"
+           && proof.version != "ivy_choice_dag_v3"
            && proof.version != "ivy_ground_choice_dag_v2"
            && proof.version != "ivy_ground_choice_dag_v3")
           || (node.hasResultClause
@@ -2518,9 +2522,16 @@ MegalodonKernelSyntax::PrimitiveStep avatarSplitIvyStep(
     return step;
   }
   std::string directProof;
+  std::vector<MegalodonKernelSyntax::ProducerProofClaim> supportClaims;
+  std::vector<MegalodonKernelSyntax::ProducerTermDefinition> termDefinitions;
   std::string expansionError;
   if (!MegalodonProofExpander::expandAvatarSplitProof(
-        split, directProof, expansionError)) {
+        id,
+        split,
+        directProof,
+        supportClaims,
+        termDefinitions,
+        expansionError)) {
     return step;
   }
 
@@ -2663,9 +2674,16 @@ MegalodonKernelSyntax::PrimitiveStep avatarSplitIvyStep(
   program += ") (producer_proof (program \"ivy_nd_v1\" (proof "
     + directProof + "))))";
 
-  step.rendered.pop_back();
-  step.rendered += " " + program + ")";
+  // Counterexample support claims are private inputs to the normalized Ivy
+  // DAG. The ordinary native record remains structural so it cannot expose
+  // pre-normalization support names to the consumer.
+  if (supportClaims.empty() && termDefinitions.empty()) {
+    step.rendered.pop_back();
+    step.rendered += " " + program + ")";
+  }
   step.producerProof = directProof;
+  step.producerProofClaims = std::move(supportClaims);
+  step.producerTermDefinitions = std::move(termDefinitions);
   return step;
 }
 

@@ -81,6 +81,20 @@ struct ProducerProofClaim {
   std::string producerProof;
 };
 
+// A producer-private term abbreviation consumed by detached prooftrans.  It
+// becomes one explicit shared Ivy definition and is never inferred by the
+// Megalodon checker.
+struct ProducerTermDefinition {
+  std::string stepId;
+  std::string symbol;
+  std::string resultType;
+  std::vector<std::pair<std::string, std::string>> parameters;
+  std::string body;
+  bool emitDefinitionClaim = false;
+  bool includeInEliminatedInventory = false;
+  std::string resultClause;
+};
+
 struct PrimitiveStep {
   std::string rule;
   std::string id;
@@ -103,6 +117,7 @@ struct PrimitiveStep {
   std::vector<ProducerSkolemChoiceDefinition> producerSkolemChoiceDefinitions;
   std::vector<ProducerFunctionApplication> producerFunctionApplications;
   std::vector<ProducerProofClaim> producerProofClaims;
+  std::vector<ProducerTermDefinition> producerTermDefinitions;
   std::string producerProof;
   // Producer-owned transparent definitions used while lowering preprocessing
   // macros to atomic Ivy proof terms.
@@ -291,6 +306,12 @@ struct RenderedKernelChoiceProofNode {
   bool hasResultFormula = false;
   std::string resultFormula;
   std::string producerProof;
+  // Producer-only aliases needed when a compact node's omitted direct proof
+  // is replayed later under a finite witness. These are not serialized.
+  std::vector<std::pair<std::string, std::string>>
+    producerProofParentAliases;
+  std::vector<std::pair<std::string, std::string>>
+    producerProofDefinitionAliases;
   // Producer-only marker: the ground prooftrans pass may emit this
   // local-symbol-free theorem once and instantiate it at every ground use.
   bool producerShareAcrossGroundInstances = false;
@@ -545,6 +566,7 @@ struct RenderedKernelAvatarCounterexampleStage {
   RenderedKernelFormula openBody;
   RenderedKernelTerm positivePredicate;
   RenderedKernelTerm negativePredicate;
+  std::string directWitnessSymbol;
   RenderedKernelTerm directWitness;
 };
 

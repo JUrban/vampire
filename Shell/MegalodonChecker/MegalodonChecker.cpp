@@ -2794,7 +2794,11 @@ bool MegalodonChecker::certificateAvatarSplitStepSexpr(Kernel::Unit* unit, std::
       const std::string witness =
         "(AP (TMH " + sexprQuote(choiceOperatorForType(binderTypes[binder]))
         + ") " + predicate + ")";
-      witnesses.push_back(witness);
+      const std::string witnessSymbol =
+        "u" + std::to_string(unit->number())
+        + "_avatar_witness_" + std::to_string(splitVar)
+        + "_" + std::to_string(binder);
+      witnesses.push_back("(TMH " + sexprQuote(witnessSymbol) + ")");
       const std::string target = instantiatePrefix(
         binder + 1, quantifyFrom(binder + 1, body), witnesses);
 
@@ -2817,6 +2821,7 @@ bool MegalodonChecker::certificateAvatarSplitStepSexpr(Kernel::Unit* unit, std::
         MegalodonKernelSyntax::term(positivePredicate);
       stage.negativePredicate =
         MegalodonKernelSyntax::term(negativePredicate);
+      stage.directWitnessSymbol = witnessSymbol;
       stage.directWitness = MegalodonKernelSyntax::term(
         "(AP (TMH "
         + sexprQuote(choiceOperatorForType(binderTypes[binder]))
@@ -8030,15 +8035,92 @@ bool MegalodonChecker::certificateInequalitySplittingNameIntroductionStepSexpr(K
     return false;
   }
   Kernel::Clause* clause = unit->asClause();
-  if (clause->length() != 1) {
+  if (clause->length() != 1 || !_is->hasIntroducedSymbols(unit)) {
     return false;
   }
+  auto& introduced = _is->getIntroducedSymbols(unit);
+  if (introduced.size() != 1
+      || introduced.top().first != SymbolType::FUNC) {
+    return false;
+  }
+  const unsigned symbol = introduced.top().second;
+  Kernel::Literal* literal = (*clause)[0];
+  if (!literal->isEquality() || !literal->isPositive()
+      || Kernel::SortHelper::getEqualityArgumentSort(literal)
+         != Kernel::AtomicSort::boolSort()) {
+    return false;
+  }
+  const auto isFoolConstant = [](Kernel::TermList term, bool value) {
+    return term.isTerm()
+      && !term.term()->isSpecial()
+      && env.signature->isFoolConstantSymbol(
+           value, term.term()->functor());
+  };
+  const Kernel::TermList left = *literal->nthArgument(0);
+  const Kernel::TermList right = *literal->nthArgument(1);
+  Kernel::TermList named;
+  if (isFoolConstant(left, false)) {
+    named = right;
+  } else if (isFoolConstant(right, false)) {
+    named = left;
+  } else {
+    return false;
+  }
+  Kernel::TermList head;
+  std::vector<Kernel::TermList> arguments;
+  decomposeApplicationSpine(named, head, arguments);
+  if (arguments.size() != 1 || !head.isTerm()
+      || head.term()->isSpecial() || head.term()->functor() != symbol
+      || !arguments.front().isTerm()) {
+    return false;
+  }
+  const Kernel::TermList splitTerm = arguments.front();
   std::string renderedClause;
-  if (!certificateClauseSexpr(clause, renderedClause)) {
+  std::string renderedLiteral;
+  std::string renderedNamed;
+  std::string renderedSplitTerm;
+  std::string renderedSplitType;
+  if (!certificateClauseSexpr(clause, renderedClause)
+      || !certificateLiteralSexpr(literal, renderedLiteral)
+      || !certificateTermSexpr(named, renderedNamed)
+      || !certificateTermSexpr(splitTerm, renderedSplitTerm)
+      || !producerTypeSexpr(
+           Kernel::SortHelper::getResultSort(splitTerm.term()),
+           renderedSplitType)) {
+    return false;
+  }
+  std::string producerProof;
+  std::string producerProofError;
+  if (!MegalodonProofExpander::expandInequalityNameIntroProof(
+        renderedLiteral,
+        renderedNamed,
+        renderedSplitTerm,
+        renderedSplitType,
+        producerProof,
+        producerProofError)
+      || !closeProducerProofOverEliminatedVariables(
+           _certificateProducerFreeVariableSorts,
+           {},
+           "u" + std::to_string(unit->number()),
+           producerProof,
+           producerProofError)) {
     return false;
   }
   result = "(inequality_name_intro " + sexprQuote("u" + std::to_string(unit->number()))
-    + " (result " + renderedClause + "))";
+    + " (result " + renderedClause + ")"
+    + " (producer_proof (program \"ivy_nd_v1\" (proof "
+    + producerProof + "))))";
+  MegalodonKernelSyntax::PrimitiveStep primitive;
+  primitive.rule = "inequality_name_intro";
+  primitive.id = "u" + std::to_string(unit->number());
+  primitive.rendered = result;
+  primitive.builderOwned = true;
+  primitive.hasResultClause = true;
+  primitive.resultClause = renderedClause;
+  primitive.producerProof = std::move(producerProof);
+  _certificateNativePrimitiveStepsByUnit[unit->number()] = {
+    std::move(primitive),
+  };
   return true;
 }
 
@@ -8116,6 +8198,7 @@ bool MegalodonChecker::certificateInequalitySplittingStepSexpr(Kernel::Unit* uni
   std::set<Kernel::Literal*> usedSourceLiterals;
   std::set<Kernel::Literal*> usedReplacementLiterals;
   std::vector<std::string> splitItems;
+  std::vector<MegalodonProofExpander::InequalitySplitProofItem> proofSplits;
   for (std::size_t parentIndex = 1; parentIndex < parents.size(); ++parentIndex) {
     Kernel::Literal* nameLiteral = (*parents[parentIndex]->asClause())[0];
     Kernel::TermList namedTerm;
@@ -8128,6 +8211,7 @@ bool MegalodonChecker::certificateInequalitySplittingStepSexpr(Kernel::Unit* uni
 
     Kernel::Literal* selected = nullptr;
     Kernel::Literal* replacement = nullptr;
+    Kernel::TermList otherSide;
     for (Kernel::Literal* sourceLiteral : sourceClause->iterLits()) {
       if (usedSourceLiterals.find(sourceLiteral) != usedSourceLiterals.end()
         || !sourceLiteral->isEquality()
@@ -8136,7 +8220,6 @@ bool MegalodonChecker::certificateInequalitySplittingStepSexpr(Kernel::Unit* uni
       }
       Kernel::TermList left = *sourceLiteral->nthArgument(0);
       Kernel::TermList right = *sourceLiteral->nthArgument(1);
-      Kernel::TermList otherSide;
       if (left == splitTerm) {
         otherSide = right;
       } else if (right == splitTerm) {
@@ -8162,11 +8245,27 @@ bool MegalodonChecker::certificateInequalitySplittingStepSexpr(Kernel::Unit* uni
     std::string selectedSexpr;
     std::string nameLiteralSexpr;
     std::string replacementSexpr;
+    std::string splitTermSexpr;
+    std::string otherSideSexpr;
+    std::string replacementProposition;
+    Kernel::TermList replacementNamed;
     if (!certificateLiteralSexpr(selected, selectedSexpr)
       || !certificateLiteralSexpr(nameLiteral, nameLiteralSexpr)
-      || !certificateLiteralSexpr(replacement, replacementSexpr)) {
+      || !certificateLiteralSexpr(replacement, replacementSexpr)
+      || !certificateTermSexpr(splitTerm, splitTermSexpr)
+      || !certificateTermSexpr(otherSide, otherSideSexpr)
+      || !boolNameLiteralTerm(replacement, true, replacementNamed)
+      || !certificateTermSexpr(
+           replacementNamed, replacementProposition)) {
       return false;
     }
+    proofSplits.push_back({
+      selectedSexpr,
+      replacementSexpr,
+      splitTermSexpr,
+      otherSideSexpr,
+      replacementProposition,
+    });
     splitItems.push_back(
       "(split (name_parent " + sexprQuote("u" + std::to_string(parents[parentIndex]->number())) + ")"
       + " (source " + selectedSexpr + ")"
@@ -8198,6 +8297,7 @@ bool MegalodonChecker::certificateInequalitySplittingStepSexpr(Kernel::Unit* uni
   if (!appendCertificateClauseLiteralsSexpr(unit->asClause(), actualLiterals)) {
     return false;
   }
+  const std::vector<std::string> resultLiterals = actualLiterals;
   std::sort(actualLiterals.begin(), actualLiterals.end());
   actualLiterals.erase(std::unique(actualLiterals.begin(), actualLiterals.end()), actualLiterals.end());
   if (expectedLiterals != actualLiterals) {
@@ -8206,6 +8306,40 @@ bool MegalodonChecker::certificateInequalitySplittingStepSexpr(Kernel::Unit* uni
 
   std::string conclusion;
   if (!certificateClauseSexpr(unit->asClause(), conclusion)) {
+    return false;
+  }
+  std::vector<std::string> sourceLiterals;
+  std::vector<std::string> parentArguments;
+  std::string producerProof;
+  std::string producerProofError;
+  const std::string sourceId =
+    "u" + std::to_string(parents[0]->number());
+  if (!appendCertificateClauseLiteralsSexpr(sourceClause, sourceLiterals)
+      || !producerParentArguments(
+           _certificateProducerFreeVariableSorts,
+           sourceId,
+           parentArguments,
+           producerProofError)
+      || !MegalodonProofExpander::expandClauseInequalitySplitProof(
+           sourceId,
+           parentArguments,
+           sourceLiterals,
+           proofSplits,
+           resultLiterals,
+           producerProof,
+           producerProofError)
+      || !closeProducerProofOverEliminatedVariables(
+           _certificateProducerFreeVariableSorts,
+           {sourceId},
+           "u" + std::to_string(unit->number()),
+           producerProof,
+           producerProofError)) {
+    if (std::getenv("MEGALODON_CERT_DEBUG")
+        && !producerProofError.empty()) {
+      std::cerr << "megalodon inequality splitting proof u"
+                << unit->number() << ": " << producerProofError
+                << std::endl;
+    }
     return false;
   }
   std::ostringstream splits;
@@ -8217,15 +8351,19 @@ bool MegalodonChecker::certificateInequalitySplittingStepSexpr(Kernel::Unit* uni
   result = "(inequality_split " + sexprQuote("u" + std::to_string(unit->number()))
     + " (source " + sexprQuote("u" + std::to_string(parents[0]->number())) + ") "
     + splits.str()
-    + " (result " + conclusion + "))";
+    + " (result " + conclusion + ")"
+    + " (producer_proof (program \"ivy_nd_v1\" (proof "
+    + producerProof + "))))";
   MegalodonKernelSyntax::PrimitiveStep primitive;
   primitive.rule = "inequality_split";
   primitive.id = "u" + std::to_string(unit->number());
   primitive.rendered = result;
+  primitive.builderOwned = true;
   primitive.parentIds.push_back(
-    "u" + std::to_string(parents[0]->number()));
+    sourceId);
   primitive.hasResultClause = true;
   primitive.resultClause = conclusion;
+  primitive.producerProof = std::move(producerProof);
   _certificateNativePrimitiveStepsByUnit[unit->number()] = {
     std::move(primitive),
   };
@@ -17753,6 +17891,104 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
     }
     choiceTermDefinitions.push_back(std::move(rendered));
   }
+  for (Kernel::Unit* unit : proof) {
+    if (!unit->isClause()
+        || unit->inference().rule()
+           != Kernel::InferenceRule::INEQUALITY_SPLITTING_NAME_INTRODUCTION
+        || !_is->hasIntroducedSymbols(unit)
+        || unit->asClause()->length() != 1) {
+      continue;
+    }
+    auto& introduced = _is->getIntroducedSymbols(unit);
+    if (introduced.size() != 1
+        || introduced.top().first != SymbolType::FUNC) {
+      INVALID_OPERATION(
+        "producer inequality split name is not one introduced function");
+    }
+    const unsigned symbol = introduced.top().second;
+    Kernel::Literal* literal = (*unit->asClause())[0];
+    const auto isFoolConstant = [](Kernel::TermList term, bool value) {
+      return term.isTerm()
+        && !term.term()->isSpecial()
+        && env.signature->isFoolConstantSymbol(
+             value, term.term()->functor());
+    };
+    Kernel::TermList named;
+    if (!literal->isEquality() || !literal->isPositive()
+        || Kernel::SortHelper::getEqualityArgumentSort(literal)
+           != Kernel::AtomicSort::boolSort()) {
+      INVALID_OPERATION(
+        "producer inequality split name is not a Boolean equality");
+    }
+    const Kernel::TermList left = *literal->nthArgument(0);
+    const Kernel::TermList right = *literal->nthArgument(1);
+    if (isFoolConstant(left, false)) {
+      named = right;
+    } else if (isFoolConstant(right, false)) {
+      named = left;
+    } else {
+      INVALID_OPERATION(
+        "producer inequality split name is not equated to false");
+    }
+
+    Kernel::TermList head;
+    std::vector<Kernel::TermList> arguments;
+    decomposeApplicationSpine(named, head, arguments);
+    Kernel::OperatorType* introducedType =
+      env.signature->getFunction(symbol)->fnType();
+    const Kernel::TermList functionType = introducedType->result();
+    if (introducedType->numTypeArguments() != 0
+        || arguments.size() != 1
+        || !head.isTerm() || head.term()->isSpecial()
+        || head.term()->functor() != symbol
+        || !functionType.isArrowSort()
+        || functionType.result() != Kernel::AtomicSort::boolSort()) {
+      INVALID_OPERATION(
+        "producer inequality split name has an unsupported higher-order type");
+    }
+    const Kernel::TermList splitTerm = arguments.front();
+    if (!splitTerm.isTerm()
+        || Kernel::SortHelper::getResultSort(splitTerm.term())
+           != functionType.domain()) {
+      INVALID_OPERATION(
+        "producer inequality split name argument has the wrong type");
+    }
+
+    std::string functionTypeSexpr;
+    std::string argumentTypeSexpr;
+    std::string splitTermSexpr;
+    if (!producerTypeSexpr(functionType, functionTypeSexpr)
+        || !producerTypeSexpr(functionType.domain(), argumentTypeSexpr)
+        || !certificateTermSexpr(splitTerm, splitTermSexpr)) {
+      INVALID_OPERATION(
+        "producer inequality split definition cannot be serialized");
+    }
+    const std::string step = "u" + std::to_string(unit->number());
+    const std::string argument = "ivy_inequality_argument_" + step;
+    const std::string relation = "ivy_inequality_relation_" + step;
+    const std::string argumentTerm =
+      "(TMH " + sexprQuote(argument) + ")";
+    const std::string relationTerm =
+      "(TMH " + sexprQuote(relation) + ")";
+    const std::string equality =
+      "(ALLV " + sexprQuote(relation)
+      + " (AR " + argumentTypeSexpr
+      + " (AR " + argumentTypeSexpr + " (PROP)))"
+      + " (IMP (AP (AP " + relationTerm + " " + argumentTerm
+      + ") " + splitTermSexpr + ")"
+      + " (AP (AP " + relationTerm + " " + splitTermSexpr
+      + ") " + argumentTerm + ")))";
+
+    MegalodonProofExpander::ChoiceTermDefinition rendered;
+    rendered.stepId = step;
+    rendered.symbol = functionName(symbol);
+    rendered.resultType = std::move(functionTypeSexpr);
+    rendered.body =
+      "(LAMV " + sexprQuote(argument) + " " + argumentTypeSexpr
+      + " (IMP " + equality + " (TMH \"vampire_false\")))";
+    rendered.emitDefinitionClaim = false;
+    choiceTermDefinitions.push_back(std::move(rendered));
+  }
   std::function<void(
     Kernel::TermList,
     std::set<unsigned>&,
@@ -18701,6 +18937,14 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
   }
   const bool hasFiniteSkolemPlan = !groundedSkolemUses.empty();
   MegalodonKernelSyntax::RenderedKernelFiniteSkolemProof finiteSkolemProof;
+  const bool certificateDebug = std::getenv("MEGALODON_CERT_DEBUG") != nullptr;
+  if (certificateDebug) {
+    std::cerr << "megalodon prooftrans phase: grounding complete; instances="
+              << renderedGrounding.instances.size()
+              << "; skolem_uses=" << groundedSkolemUses.size()
+              << "; choice_definitions=" << choiceTermDefinitions.size()
+              << std::endl;
+  }
   if (!hasFiniteSkolemPlan && !skolemSteps.empty()) {
     const std::string skolemScope =
       MegalodonKernelBuilder::skolemRefutationScopeBlock(
@@ -18713,6 +18957,10 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
   }
   if (hasFiniteSkolemPlan) {
     std::string unherbrandizationError;
+    if (certificateDebug) {
+      std::cerr << "megalodon prooftrans phase: build finite unherbrandization"
+                << std::endl;
+    }
     if (!MegalodonKernelBuilder::buildSkolemFiniteUnherbrandization(
         finalStep,
         groundedSkolemUses,
@@ -18723,23 +18971,75 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
         "typed finite Skolem plan construction failed: "
         + unherbrandizationError);
     }
+    if (certificateDebug) {
+      std::cerr << "megalodon prooftrans phase: expand finite proof; applications="
+                << finiteSkolemProof.applications.size() << std::endl;
+    }
     if (!MegalodonProofExpander::expandFiniteSkolemProof(
           finiteSkolemProof, unherbrandizationError)) {
       INVALID_OPERATION(
         "typed finite Skolem prooftrans failed: "
         + unherbrandizationError);
     }
+    if (certificateDebug) {
+      std::cerr << "megalodon prooftrans phase: finite proof complete"
+                << std::endl;
+    }
   }
   const auto& choiceSkolemSteps =
     hasFiniteSkolemPlan ? groundedSkolemSteps : skolemSteps;
-  if (!choiceSkolemSteps.empty() || !choiceTermDefinitions.empty()) {
+  const auto hasProducerTermDefinitions = [](const auto& table) {
+    for (const auto& entry : table) {
+      for (const auto& primitive : entry.second) {
+        if (!primitive.producerTermDefinitions.empty()) return true;
+      }
+    }
+    return false;
+  };
+  const bool hasLocalChoiceTermDefinitions =
+    hasProducerTermDefinitions(_certificateEmittedNativePrimitiveStepsByUnit)
+    || hasProducerTermDefinitions(_certificateNativePrimitiveStepsByUnit)
+    || std::any_of(
+         _certificateNativeAuxiliaryPrimitiveSteps.begin(),
+         _certificateNativeAuxiliaryPrimitiveSteps.end(),
+         [](const auto& primitive) {
+           return !primitive.producerTermDefinitions.empty();
+         });
+  if (!choiceSkolemSteps.empty() || !choiceTermDefinitions.empty()
+      || hasLocalChoiceTermDefinitions) {
     std::vector<MegalodonProofExpander::ChoiceProofStep> choiceSteps;
     std::set<std::string> choiceStepIds;
+    std::set<std::string> choiceTermDefinitionSymbols;
+    for (const auto& definition : choiceTermDefinitions) {
+      choiceTermDefinitionSymbols.insert(definition.symbol);
+    }
     auto appendChoiceStep =
-      [&](const MegalodonKernelSyntax::PrimitiveStep& primitive) {
+      [&](MegalodonKernelSyntax::PrimitiveStep primitive) {
         if (!choiceStepIds.insert(primitive.id).second) return;
+        for (auto& local : primitive.producerTermDefinitions) {
+          if (!choiceTermDefinitionSymbols.insert(local.symbol).second) {
+            INVALID_OPERATION(
+              "detached prooftrans repeats producer term definition "
+              + local.symbol);
+          }
+          MegalodonProofExpander::ChoiceTermDefinition definition;
+          definition.stepId = std::move(local.stepId);
+          definition.symbol = std::move(local.symbol);
+          definition.resultType = std::move(local.resultType);
+          definition.parameters = std::move(local.parameters);
+          definition.body = std::move(local.body);
+          definition.emitDefinitionClaim = local.emitDefinitionClaim;
+          definition.includeInEliminatedInventory =
+            local.includeInEliminatedInventory;
+          definition.resultClause = std::move(local.resultClause);
+          choiceTermDefinitions.push_back(std::move(definition));
+        }
+        primitive.producerTermDefinitions.clear();
         MegalodonProofExpander::ChoiceProofStep step;
-        step.primitive = primitive;
+        step.primitive = std::move(primitive);
+        // Detached prooftrans consumes semantic fields, not the already
+        // rendered native record (which can duplicate a very large ND term).
+        std::string().swap(step.primitive.rendered);
         if (step.primitive.rule == "factor"
             && step.primitive.parentIds.size() == 1
             && _certificateProducerFreeVariableSorts.find(step.primitive.id)
@@ -18782,16 +19082,16 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
           }
         }
         auto variables =
-          _certificateProducerFreeVariableSorts.find(primitive.id);
+          _certificateProducerFreeVariableSorts.find(step.primitive.id);
         if (variables == _certificateProducerFreeVariableSorts.end()
-          && primitive.rule == "factor"
-          && primitive.parentIds.size() == 1) {
+          && step.primitive.rule == "factor"
+          && step.primitive.parentIds.size() == 1) {
           variables = _certificateProducerFreeVariableSorts.find(
-            primitive.parentIds.front());
+            step.primitive.parentIds.front());
         }
-        if (primitive.hasChoiceParameterContract) {
+        if (step.primitive.hasChoiceParameterContract) {
           step.hasParameterContract = true;
-          step.parameters = primitive.choiceParameters;
+          step.parameters = step.primitive.choiceParameters;
         } else if (variables
             != _certificateProducerFreeVariableSorts.end()) {
           step.hasParameterContract = true;
@@ -18800,7 +19100,8 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
             if (!producerTypeSexpr(variable.second, type)) {
               INVALID_OPERATION(
                 "choice-normalized Ivy DAG cannot render the type of X"
-                + std::to_string(variable.first) + " at " + primitive.id);
+                + std::to_string(variable.first) + " at "
+                + step.primitive.id);
             }
             step.parameters.push_back({
               "X" + std::to_string(variable.first),
@@ -18828,8 +19129,8 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
           == _certificateEmittedNativePrimitiveStepsByUnit.end()) {
         continue;
       }
-      for (const auto& primitive : primitives->second) {
-        appendChoiceStep(primitive);
+      for (auto& primitive : primitives->second) {
+        appendChoiceStep(std::move(primitive));
       }
     }
     // Structural output can omit a predicate-fold macro even though a later
@@ -18850,10 +19151,10 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
         INVALID_OPERATION(
           "detached prooftrans cannot lower in-proof predicate fold " + id);
       }
-      appendChoiceStep(primitive);
+      appendChoiceStep(std::move(primitive));
     }
-    for (const auto& primitive : _certificateNativeAuxiliaryPrimitiveSteps) {
-      appendChoiceStep(primitive);
+    for (auto& primitive : _certificateNativeAuxiliaryPrimitiveSteps) {
+      appendChoiceStep(std::move(primitive));
     }
     // Some preprocessing parents are intentionally absent from the ordinary
     // emitted-step list until the detached prooftrans slice demands them.
@@ -18870,7 +19171,7 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
           }
         }
       }
-      for (const auto& entry : _certificateNativePrimitiveStepsByUnit) {
+      for (auto& entry : _certificateNativePrimitiveStepsByUnit) {
         const bool demanded = std::any_of(
           entry.second.begin(), entry.second.end(),
           [&](const auto& primitive) {
@@ -18878,14 +19179,15 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
           });
         if (!demanded) continue;
         const std::size_t previousSize = choiceSteps.size();
-        for (const auto& primitive : entry.second) {
-          appendChoiceStep(primitive);
+        for (auto& primitive : entry.second) {
+          appendChoiceStep(std::move(primitive));
         }
         addedPrimitiveParent = addedPrimitiveParent
           || choiceSteps.size() != previousSize;
       }
     }
     for (const auto& definition : choiceTermDefinitions) {
+      if (!definition.emitDefinitionClaim) continue;
       MegalodonKernelSyntax::PrimitiveStep primitive;
       primitive.rule = "definition_input";
       primitive.id = definition.stepId;
@@ -18904,10 +19206,14 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
         + " (formula (AP (AP (TMH " + sexprQuote(relation) + ") "
         + definition.body + ") " + definition.body + "))"
         + " (hyp " + sexprQuote(premise) + ")))";
-      appendChoiceStep(primitive);
+      appendChoiceStep(std::move(primitive));
     }
     MegalodonKernelSyntax::RenderedKernelChoiceProof choiceProof;
     std::string choiceProofError;
+    if (certificateDebug) {
+      std::cerr << "megalodon prooftrans phase: normalize choice DAG; steps="
+                << choiceSteps.size() << std::endl;
+    }
     if (!MegalodonProofExpander::expandChoiceNormalizedProof(
           choiceSteps,
           choiceSkolemSteps,
@@ -18918,8 +19224,26 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
       INVALID_OPERATION(
         "choice-normalized Ivy DAG expansion failed: " + choiceProofError);
     }
+    // The normalized DAG is now the sole prooftrans input. Release Vampire's
+    // duplicate primitive tables before grounding; native records have their
+    // own serialized strings in _certificateNativeSteps.
+    decltype(choiceSteps)().swap(choiceSteps);
+    decltype(_certificateEmittedNativePrimitiveStepsByUnit)().swap(
+      _certificateEmittedNativePrimitiveStepsByUnit);
+    decltype(_certificateNativePrimitiveStepsByUnit)().swap(
+      _certificateNativePrimitiveStepsByUnit);
+    decltype(_certificateNativeAuxiliaryPrimitiveSteps)().swap(
+      _certificateNativeAuxiliaryPrimitiveSteps);
+    if (certificateDebug) {
+      std::cerr << "megalodon prooftrans phase: choice DAG complete; nodes="
+                << choiceProof.nodes.size() << std::endl;
+    }
     if (hasFiniteSkolemPlan) {
       MegalodonKernelSyntax::RenderedKernelChoiceProof groundChoiceProof;
+      if (certificateDebug) {
+        std::cerr << "megalodon prooftrans phase: ground choice DAG"
+                  << std::endl;
+      }
       if (!MegalodonProofExpander::expandGroundChoiceProof(
           choiceProof,
           renderedGrounding,
@@ -18930,6 +19254,14 @@ void MegalodonChecker::printMegalodonCertificateNativeSexpr()
           "ground choice Ivy prooftrans failed: " + choiceProofError);
       }
       choiceProof = std::move(groundChoiceProof);
+      if (certificateDebug) {
+        std::cerr << "megalodon prooftrans phase: ground choice DAG complete; nodes="
+                  << choiceProof.nodes.size() << std::endl;
+      }
+    }
+    if (certificateDebug) {
+      std::cerr << "megalodon prooftrans phase: serialize choice DAG"
+                << std::endl;
     }
     const std::string choiceProofBlock =
       MegalodonKernelBuilder::skolemChoiceProofBlock(choiceProof);

@@ -76,6 +76,16 @@ struct ChoiceTermDefinition {
   std::vector<std::pair<std::string, std::string>> parameters;
   std::string body;
   std::string resultClause;
+  bool emitDefinitionClaim = true;
+  bool includeInEliminatedInventory = true;
+};
+
+struct InequalitySplitProofItem {
+  std::string sourceLiteral;
+  std::string replacementLiteral;
+  std::string splitTerm;
+  std::string targetTerm;
+  std::string replacementProposition;
 };
 
 struct PositiveExistsContextFrame {
@@ -267,7 +277,7 @@ bool expandGroundProof(
   std::string& error);
 
 bool expandChoiceNormalizedProof(
-  const std::vector<ChoiceProofStep>& steps,
+  std::vector<ChoiceProofStep>& steps,
   const std::vector<MegalodonKernelSyntax::PrimitiveStep>& skolemSteps,
   const std::vector<ChoiceTermDefinition>& termDefinitions,
   const std::string& finalStep,
@@ -324,8 +334,11 @@ bool expandAvatarComponentProof(
   std::string& error);
 
 bool expandAvatarSplitProof(
+  const std::string& stepId,
   const MegalodonKernelSyntax::RenderedKernelAvatarSplitStep& request,
   std::string& result,
+  std::vector<MegalodonKernelSyntax::ProducerProofClaim>& supportClaims,
+  std::vector<MegalodonKernelSyntax::ProducerTermDefinition>& termDefinitions,
   std::string& error);
 
 bool expandAvatarSatProjectionProof(
@@ -340,6 +353,23 @@ bool expandClauseProjectionProof(
   const std::vector<std::string>& parentArguments,
   const std::vector<std::string>& sourceLiterals,
   const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error);
+
+bool expandClauseInequalitySplitProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const std::vector<std::string>& sourceLiterals,
+  const std::vector<InequalitySplitProofItem>& splits,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error);
+
+bool expandInequalityNameIntroProof(
+  const std::string& resultLiteral,
+  const std::string& namedProposition,
+  const std::string& splitTerm,
+  const std::string& splitType,
   std::string& result,
   std::string& error);
 

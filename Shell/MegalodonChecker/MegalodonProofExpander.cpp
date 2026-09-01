@@ -1694,9 +1694,21 @@ struct PreservedSexpr {
     result += ')';
   }
 
+  std::size_t renderedSize() const
+  {
+    if (atom) return token.size();
+    std::size_t size = 2;
+    for (const auto& item : items) {
+      size += item.renderedSize();
+    }
+    if (!items.empty()) size += items.size() - 1;
+    return size;
+  }
+
   std::string render() const
   {
     std::string result;
+    result.reserve(renderedSize());
     appendTo(result);
     return result;
   }
@@ -2626,6 +2638,234 @@ public:
               proof);
       });
     return !result.empty();
+  }
+
+  bool inequalitySplit(
+    const std::string& parentId,
+    const std::vector<std::string>& parentArguments,
+    const std::vector<std::string>& source,
+    const std::vector<InequalitySplitProofItem>& splits,
+    const std::vector<std::string>& target,
+    std::string& result)
+  {
+    static const std::string propExtHash =
+      "23ea4ad0d25e31cb704cd6f5752b77c544628e235c5c99d36647ab24d0d261c9";
+    PreservedSexprParser parser;
+    std::map<std::string, const InequalitySplitProofItem*> splitByLiteral;
+    for (const auto& split : splits) {
+      if (split.sourceLiteral.empty() || split.replacementLiteral.empty()
+          || split.splitTerm.empty() || split.targetTerm.empty()
+          || split.replacementProposition.empty()
+          || !splitByLiteral.emplace(
+                split.sourceLiteral, &split).second) {
+        return false;
+      }
+    }
+    if (splitByLiteral.empty()) return false;
+
+    const auto truthProof = [&]() {
+      const std::string proposition = fresh("ineq_true_prop");
+      const std::string proof = fresh("ineq_true_proof");
+      return termLambda(
+        proposition,
+        "(PROP)",
+        proofLambda(
+          proof,
+          formula("(TMH " + quote(proposition) + ")"),
+          hypothesis(proof)));
+    };
+    const auto propExt = [&](const PreservedSexpr& left,
+                             const PreservedSexpr& right,
+                             const std::string& leftToRight,
+                             const std::string& rightToLeft) {
+      return proofApply(
+        proofApply(
+          termApply(
+            termApply(
+              "(known " + quote(propExtHash) + ")",
+              formula(left.render())),
+            formula(right.render())),
+          leftToRight),
+        rightToLeft);
+    };
+    const auto replacementProof = [&](const InequalitySplitProofItem& split,
+                                      const std::string& sourceProof) {
+      PreservedSexpr sourceLiteral;
+      PreservedSexpr replacementLiteral;
+      PreservedSexpr splitTerm;
+      PreservedSexpr targetTerm;
+      PreservedSexpr named;
+      PreservedSexpr equalityType;
+      PreservedSexpr sourceLeft;
+      PreservedSexpr sourceRight;
+      PreservedSexpr replacementType;
+      PreservedSexpr replacementLeft;
+      PreservedSexpr replacementRight;
+      if (!parser.parse(split.sourceLiteral, sourceLiteral)
+          || !sexprHead(sourceLiteral, "neg")
+          || sourceLiteral.items.size() != 2
+          || !typedEqualitySexpr(
+               sourceLiteral.items[1], equalityType,
+               sourceLeft, sourceRight)
+          || !parser.parse(split.replacementLiteral, replacementLiteral)
+          || !sexprHead(replacementLiteral, "pos")
+          || replacementLiteral.items.size() != 2
+          || !typedEqualitySexpr(
+               replacementLiteral.items[1], replacementType,
+               replacementLeft, replacementRight)
+          || !sexprHead(replacementType, "PROP")
+          || replacementType.items.size() != 1
+          || !parser.parse(split.splitTerm, splitTerm)
+          || !parser.parse(split.targetTerm, targetTerm)
+          || !parser.parse(split.replacementProposition, named)) {
+        return std::string();
+      }
+      const bool trueOnLeft =
+        namedTermSexpr(replacementLeft, "vampire_true")
+        || namedTermSexpr(replacementLeft, "f__true");
+      const bool trueOnRight =
+        namedTermSexpr(replacementRight, "vampire_true")
+        || namedTermSexpr(replacementRight, "f__true");
+      const PreservedSexpr& declaredNamed =
+        trueOnLeft ? replacementRight : replacementLeft;
+      if (trueOnLeft == trueOnRight || declaredNamed != named) {
+        return std::string();
+      }
+
+      std::string namedProof;
+      if (sourceLeft == targetTerm && sourceRight == splitTerm) {
+        namedProof = sourceProof;
+      } else if (sourceLeft == splitTerm && sourceRight == targetTerm) {
+        namedProof = equalitySymmetry(sourceLiteral, sourceProof);
+      } else {
+        return std::string();
+      }
+      if (namedProof.empty()) return namedProof;
+
+      PreservedSexpr trueTerm;
+      if (!parser.parse("(TMH \"vampire_true\")", trueTerm)) {
+        return std::string();
+      }
+      const std::string namedHypothesis = fresh("ineq_named");
+      const std::string trueHypothesis = fresh("ineq_true");
+      const std::string namedToTrue = proofLambda(
+        namedHypothesis, formula(named.render()), truthProof());
+      const std::string trueToNamed = proofLambda(
+        trueHypothesis, formula(trueTerm.render()), namedProof);
+      return trueOnLeft
+        ? propExt(trueTerm, named, trueToNamed, namedToTrue)
+        : propExt(named, trueTerm, namedToTrue, trueToNamed);
+    };
+
+    std::vector<std::string> transformed;
+    transformed.reserve(source.size());
+    for (const std::string& literal : source) {
+      auto split = splitByLiteral.find(literal);
+      transformed.push_back(split == splitByLiteral.end()
+        ? literal : split->second->replacementLiteral);
+    }
+    auto sortedTransformed = transformed;
+    auto sortedTarget = target;
+    std::sort(sortedTransformed.begin(), sortedTransformed.end());
+    std::sort(sortedTarget.begin(), sortedTarget.end());
+    if (sortedTransformed != sortedTarget) return false;
+
+    result = eliminate(
+      source,
+      0,
+      instantiate(parent(parentId), parentArguments),
+      clauseTerm(target),
+      [&](std::size_t index, const std::string& proof) {
+        auto split = splitByLiteral.find(source[index]);
+        if (split == splitByLiteral.end()) {
+          return injectLiteral(target, source[index], proof);
+        }
+        const std::string direct = replacementProof(*split->second, proof);
+        return direct.empty()
+          ? std::string()
+          : injectLiteral(
+              target, split->second->replacementLiteral, direct);
+      });
+    return !result.empty();
+  }
+
+  bool inequalityNameIntro(
+    const std::string& resultLiteralText,
+    const std::string& namedPropositionText,
+    const std::string& splitTermText,
+    const std::string& splitTypeText,
+    std::string& result)
+  {
+    static const std::string propExtHash =
+      "23ea4ad0d25e31cb704cd6f5752b77c544628e235c5c99d36647ab24d0d261c9";
+    PreservedSexprParser parser;
+    PreservedSexpr literal;
+    PreservedSexpr named;
+    PreservedSexpr splitTerm;
+    PreservedSexpr splitType;
+    PreservedSexpr equalityType;
+    PreservedSexpr left;
+    PreservedSexpr right;
+    if (!parser.parse(resultLiteralText, literal)
+        || !sexprHead(literal, "pos") || literal.items.size() != 2
+        || !typedEqualitySexpr(
+             literal.items[1], equalityType, left, right)
+        || !sexprHead(equalityType, "PROP")
+        || equalityType.items.size() != 1
+        || !parser.parse(namedPropositionText, named)
+        || !parser.parse(splitTermText, splitTerm)
+        || !parser.parse(splitTypeText, splitType)) {
+      return false;
+    }
+    const bool falseOnLeft = namedTermSexpr(left, "vampire_false")
+      || namedTermSexpr(left, "f__false");
+    const bool falseOnRight = namedTermSexpr(right, "vampire_false")
+      || namedTermSexpr(right, "f__false");
+    const PreservedSexpr& declaredNamed = falseOnLeft ? right : left;
+    if (falseOnLeft == falseOnRight || declaredNamed != named) return false;
+
+    const std::string relation = fresh("ineq_intro_relation");
+    const std::string premise = fresh("ineq_intro_refl");
+    const std::string relationTerm = "(TMH " + quote(relation) + ")";
+    const std::string reflexiveAtom =
+      "(AP (AP " + relationTerm + " " + splitTerm.render()
+      + ") " + splitTerm.render() + ")";
+    const std::string reflexivity = termLambda(
+      relation,
+      "(AR " + splitType.render()
+        + " (AR " + splitType.render() + " (PROP)))",
+      proofLambda(
+        premise, formula(reflexiveAtom), hypothesis(premise)));
+    const std::string namedHypothesis = fresh("ineq_intro_named");
+    const std::string namedToFalse = proofLambda(
+      namedHypothesis,
+      formula(named.render()),
+      proofApply(hypothesis(namedHypothesis), reflexivity));
+    const std::string falseHypothesis = fresh("ineq_intro_false");
+    const std::string falseToNamed = proofLambda(
+      falseHypothesis,
+      formula("(TMH \"vampire_false\")"),
+      termApply(hypothesis(falseHypothesis), formula(named.render())));
+    const auto propExt = [&](const PreservedSexpr& first,
+                             const PreservedSexpr& second,
+                             const std::string& firstToSecond,
+                             const std::string& secondToFirst) {
+      return proofApply(
+        proofApply(
+          termApply(
+            termApply(
+              "(known " + quote(propExtHash) + ")",
+              formula(first.render())),
+            formula(second.render())),
+          firstToSecond),
+        secondToFirst);
+    };
+    PreservedSexpr falseTerm;
+    if (!parser.parse("(TMH \"vampire_false\")", falseTerm)) return false;
+    result = falseOnLeft
+      ? propExt(falseTerm, named, falseToNamed, namedToFalse)
+      : propExt(named, falseTerm, namedToFalse, falseToNamed);
+    return true;
   }
 
   bool cnfFormulaClause(
@@ -5068,6 +5308,43 @@ bool expandClauseProjectionProof(
   return true;
 }
 
+bool expandClauseInequalitySplitProof(
+  const std::string& parentId,
+  const std::vector<std::string>& parentArguments,
+  const std::vector<std::string>& sourceLiterals,
+  const std::vector<InequalitySplitProofItem>& splits,
+  const std::vector<std::string>& resultLiterals,
+  std::string& result,
+  std::string& error)
+{
+  IvyClauseProofBuilder builder;
+  if (parentId.empty()
+      || !builder.inequalitySplit(
+           parentId, parentArguments, sourceLiterals,
+           splits, resultLiterals, result)) {
+    error = "inequality splitting does not lower to the producer local-name definition";
+    return false;
+  }
+  return true;
+}
+
+bool expandInequalityNameIntroProof(
+  const std::string& resultLiteral,
+  const std::string& namedProposition,
+  const std::string& splitTerm,
+  const std::string& splitType,
+  std::string& result,
+  std::string& error)
+{
+  IvyClauseProofBuilder builder;
+  if (!builder.inequalityNameIntro(
+        resultLiteral, namedProposition, splitTerm, splitType, result)) {
+    error = "inequality name introduction does not lower to its producer definition";
+    return false;
+  }
+  return true;
+}
+
 bool expandCnfFormulaClauseProof(
   const std::string& parentId,
   const std::vector<std::string>& parentArguments,
@@ -5531,7 +5808,7 @@ bool expandPositiveExistsContext(
 }
 
 bool expandChoiceNormalizedProof(
-  const std::vector<ChoiceProofStep>& steps,
+  std::vector<ChoiceProofStep>& steps,
   const std::vector<MegalodonKernelSyntax::PrimitiveStep>& skolemSteps,
   const std::vector<ChoiceTermDefinition>& termDefinitions,
   const std::string& finalStep,
@@ -5563,15 +5840,22 @@ bool expandChoiceNormalizedProof(
   };
   const auto replaceConstants = [&](const PreservedSexpr& source,
                                     const auto& self) -> PreservedSexpr {
-    for (const auto& replacement : replacements) {
-      if (namedTermSexpr(source, replacement.first)) {
-        return replacement.second;
+    if (sexprHead(source, "TMH") && source.items.size() == 2) {
+      std::string name;
+      if (preservedName(source.items[1], name)) {
+        auto replacement = replacements.find(name);
+        if (replacement != replacements.end()) return replacement->second;
       }
     }
-    PreservedSexpr replaced = source;
-    if (replaced.atom) return replaced;
-    for (std::size_t index = 1; index < replaced.items.size(); ++index) {
-      replaced.items[index] = self(replaced.items[index], self);
+    if (source.atom) return source;
+    PreservedSexpr replaced;
+    replaced.atom = false;
+    replaced.items.reserve(source.items.size());
+    if (!source.items.empty()) {
+      replaced.items.push_back(source.items.front());
+    }
+    for (std::size_t index = 1; index < source.items.size(); ++index) {
+      replaced.items.push_back(self(source.items[index], self));
     }
     return replaced;
   };
@@ -5666,7 +5950,7 @@ bool expandChoiceNormalizedProof(
   for (const ChoiceTermDefinition& definition : termDefinitions) {
     if (definition.stepId.empty() || definition.symbol.empty()
         || definition.resultType.empty() || definition.body.empty()
-        || definition.resultClause.empty()
+        || (definition.emitDefinitionClaim && definition.resultClause.empty())
         || replacements.find(definition.symbol) != replacements.end()
         || !termDefinitionBySymbol.emplace(
               definition.symbol, &definition).second) {
@@ -5745,14 +6029,24 @@ bool expandChoiceNormalizedProof(
     if (!expandTermDefinition(definition.symbol)) return false;
   }
   for (const ChoiceTermDefinition& definition : termDefinitions) {
-    eliminated.push_back(definition.symbol);
+    if (definition.includeInEliminatedInventory) {
+      eliminated.push_back(definition.symbol);
+    }
   }
 
-  std::map<std::string, const ChoiceProofStep*> byId;
-  for (const ChoiceProofStep& step : steps) {
-    if (!step.primitive.builderOwned || step.primitive.id.empty()
-        || !byId.emplace(step.primitive.id, &step).second) {
-      error = "choice-normalized proof DAG has a duplicate or unowned step";
+  std::map<std::string, ChoiceProofStep*> byId;
+  for (ChoiceProofStep& step : steps) {
+    if (step.primitive.id.empty()) {
+      error = "choice-normalized proof DAG has an unnamed step";
+      return false;
+    }
+    if (!step.primitive.builderOwned) {
+      error = "choice-normalized proof DAG step " + step.primitive.id
+        + " is not builder-owned";
+      return false;
+    }
+    if (!byId.emplace(step.primitive.id, &step).second) {
+      error = "choice-normalized proof DAG repeats step " + step.primitive.id;
       return false;
     }
   }
@@ -5808,14 +6102,14 @@ bool expandChoiceNormalizedProof(
     }
   }
 
-  std::vector<const ChoiceProofStep*> ordered;
+  std::vector<ChoiceProofStep*> ordered;
   std::set<std::string> visiting;
   std::set<std::string> visited;
   std::function<bool(const std::string&)> order;
   order = [&](const std::string& id) {
     if (visited.find(id) != visited.end()) return true;
     if (!visiting.insert(id).second) return false;
-    const ChoiceProofStep& step = *byId.at(id);
+    ChoiceProofStep& step = *byId.at(id);
     for (const std::string& parent : step.primitive.parentIds) {
       if (ancestors.find(parent) != ancestors.end()
           && byId.find(parent) != byId.end()
@@ -5840,11 +6134,11 @@ bool expandChoiceNormalizedProof(
   }
 
   // Parse AVATAR split names into explicit Ivy definition objects.  Definitions
-  // that mention eliminated Skolems are unfolded by the producer below; the
-  // others remain shared names in the certificate.
+  // remain shared names in the certificate.  Any Skolem constants in their
+  // bodies are redirected to the producer's preceding shared choice aliases.
   std::map<std::string, PreservedSexpr> splitDefinitions;
   std::set<std::string> choiceDependentSplitDefinitions;
-  for (const ChoiceProofStep* wrapped : ordered) {
+  for (ChoiceProofStep* wrapped : ordered) {
     const PrimitiveStep& step = wrapped->primitive;
     if (step.rule != "avatar_definition") continue;
     const auto definition = std::find_if(
@@ -5860,12 +6154,21 @@ bool expandChoiceNormalizedProof(
         + " has no exact relation formula";
       return false;
     }
-    const bool choiceDependent = std::any_of(
-      eliminated.begin(), eliminated.end(),
-      [&](const std::string& symbol) {
-        return containsNamedTermSexpr(relation, symbol);
-      });
+    const PreservedSexpr originalRelation = relation;
     relation = replaceConstants(relation, replaceConstants);
+    // A producer-private alias need not be part of the serialized eliminated
+    // inventory, but replacing it still changes the split's meaning.  Such a
+    // split must stay unfolded throughout the normalized proof DAG.
+    const bool choiceDependent = relation != originalRelation;
+    if (std::any_of(
+          eliminated.begin(), eliminated.end(),
+          [&](const std::string& symbol) {
+            return containsNamedTermSexpr(relation, symbol);
+          })) {
+      error = "choice-normalized AVATAR definition " + step.id
+        + " retains a certificate-local symbol after aliasing";
+      return false;
+    }
     if (!sexprHead(relation, "AP") || relation.items.size() != 3
         || !sexprHead(relation.items[1], "AP")
         || relation.items[1].items.size() != 3
@@ -5901,10 +6204,16 @@ bool expandChoiceNormalizedProof(
       {definition.first, "(PROP)", definition.second.render()});
   }
 
+  const std::set<std::string> eliminatedSet(
+    eliminated.begin(), eliminated.end());
   const auto containsEliminated = [&](const PreservedSexpr& source,
                                       const auto& self) -> bool {
-    for (const std::string& symbol : eliminated) {
-      if (namedTermSexpr(source, symbol)) return true;
+    if (sexprHead(source, "TMH") && source.items.size() == 2) {
+      std::string name;
+      if (preservedName(source.items[1], name)
+          && eliminatedSet.find(name) != eliminatedSet.end()) {
+        return true;
+      }
     }
     if (source.atom) return false;
     for (const auto& item : source.items) {
@@ -5935,7 +6244,7 @@ bool expandChoiceNormalizedProof(
     skolemStepById.emplace(step.id, &step);
   }
   std::set<std::string> reusableOriginalClaims;
-  for (const ChoiceProofStep* wrapped : ordered) {
+  for (ChoiceProofStep* wrapped : ordered) {
     const PrimitiveStep& step = wrapped->primitive;
     PreservedSexpr conclusion;
     const std::string& renderedConclusion = step.hasResultClause
@@ -5981,7 +6290,7 @@ bool expandChoiceNormalizedProof(
   // Definition users consume an explicit relation claim in the small proof
   // DAG. Retain every producer definition that supports an affected step even
   // when that definition itself contains no eliminated Skolem symbol.
-  for (const ChoiceProofStep* wrapped : ordered) {
+  for (ChoiceProofStep* wrapped : ordered) {
     if (affected.find(wrapped->primitive.id) == affected.end()) continue;
     for (const std::string& parent : wrapped->primitive.parentIds) {
       auto found = byId.find(parent);
@@ -5995,7 +6304,7 @@ bool expandChoiceNormalizedProof(
   // AVATAR component relevant.  Propagate once more in topological order so
   // those producer objects and their identity records replace the complete
   // native local-symbol slice.
-  for (const ChoiceProofStep* wrapped : ordered) {
+  for (ChoiceProofStep* wrapped : ordered) {
     if (affected.find(wrapped->primitive.id) != affected.end()) continue;
     const bool parentAffected = std::any_of(
       wrapped->primitive.parentIds.begin(),
@@ -6036,7 +6345,7 @@ bool expandChoiceNormalizedProof(
   };
   std::map<std::string, std::string> definitionClaims;
   std::set<std::string> generatedClaimIds;
-  for (const ChoiceProofStep* wrapped : ordered) {
+  for (ChoiceProofStep* wrapped : ordered) {
     const PrimitiveStep& step = wrapped->primitive;
     if (affected.find(step.id) == affected.end()) continue;
     for (const auto& claim : step.producerProofClaims) {
@@ -6058,23 +6367,21 @@ bool expandChoiceNormalizedProof(
       }
     }
   }
-  const auto normalize = [&](const PreservedSexpr& source,
+  const auto normalize = [&](PreservedSexpr source,
                              const std::map<std::string, std::string>& supportClaims,
                              bool compressDefinitions,
                              const auto& self) -> PreservedSexpr {
     if (sexprHead(source, "TMH") && source.items.size() == 2) {
-      std::string split;
-      if (preservedName(source.items[1], split)
-          && choiceDependentSplitDefinitions.find(split)
-               != choiceDependentSplitDefinitions.end()) {
-        return self(
-          splitDefinitions.at(split), supportClaims,
-          compressDefinitions, self);
-      }
-    }
-    for (const auto& replacement : replacements) {
-      if (namedTermSexpr(source, replacement.first)) {
-        return replacement.second;
+      std::string name;
+      if (preservedName(source.items[1], name)) {
+        if (choiceDependentSplitDefinitions.find(name)
+              != choiceDependentSplitDefinitions.end()) {
+          return self(
+            splitDefinitions.at(name), supportClaims,
+            compressDefinitions, self);
+        }
+        auto replacement = replacements.find(name);
+        if (replacement != replacements.end()) return replacement->second;
       }
     }
     if (sexprHead(source, "parent") && source.items.size() == 2) {
@@ -6110,22 +6417,24 @@ bool expandChoiceNormalizedProof(
         }
       }
     }
-    PreservedSexpr normalized = source;
-    if (normalized.atom) return normalized;
-    for (std::size_t index = 1; index < normalized.items.size(); ++index) {
-      normalized.items[index] =
-        self(normalized.items[index], supportClaims, compressDefinitions, self);
+    if (source.atom) return source;
+    for (std::size_t index = 1; index < source.items.size(); ++index) {
+      source.items[index] = self(
+        std::move(source.items[index]),
+        supportClaims,
+        compressDefinitions,
+        self);
     }
     if (compressDefinitions) {
       for (const auto& definition : splitDefinitions) {
         if (choiceDependentSplitDefinitions.find(definition.first)
               == choiceDependentSplitDefinitions.end()
-            && normalized == definition.second) {
+            && source == definition.second) {
           return quotedTmh(quotePreservedName(definition.first));
         }
       }
     }
-    return normalized;
+    return source;
   };
 
   const auto proofParents = [&](const PreservedSexpr& source,
@@ -6162,8 +6471,8 @@ bool expandChoiceNormalizedProof(
     return true;
   };
 
-  for (const ChoiceProofStep* wrapped : ordered) {
-    const PrimitiveStep& step = wrapped->primitive;
+  for (ChoiceProofStep* wrapped : ordered) {
+    PrimitiveStep& step = wrapped->primitive;
     if (affected.find(step.id) == affected.end()) continue;
     if (!wrapped->hasParameterContract) {
       error = "choice-normalized proof DAG step " + step.id
@@ -6193,9 +6502,9 @@ bool expandChoiceNormalizedProof(
       }
       const bool quotientDefinition = !claim.replacesDefinition.empty();
       claimProof = normalize(
-        claimProof, supportClaims, quotientDefinition, normalize);
+        std::move(claimProof), supportClaims, quotientDefinition, normalize);
       claimConclusion = normalize(
-        claimConclusion, supportClaims, false, normalize);
+        std::move(claimConclusion), supportClaims, false, normalize);
       if (containsEliminated(claimProof, containsEliminated)
           || containsEliminated(claimConclusion, containsEliminated)) {
         error = "choice-normalized proof DAG support claim " + claim.id
@@ -6221,29 +6530,33 @@ bool expandChoiceNormalizedProof(
         referencedParents.begin(), referencedParents.end());
       result.nodes.push_back(std::move(claimNode));
     }
-    std::string proofText = step.producerProof;
-    if (proofText.empty()
+    std::string synthesizedProofText;
+    const std::string* proofText = &step.producerProof;
+    if (proofText->empty()
         && (step.rule == "formula_copy"
             || step.rule == "formula_term_copy")
         && step.parentIds.size() == 1) {
-      proofText = "(parent " + quotePreservedName(step.parentIds.front()) + ")";
+      synthesizedProofText =
+        "(parent " + quotePreservedName(step.parentIds.front()) + ")";
       for (const auto& parameter : wrapped->parameters) {
-        proofText = "(term_apply " + proofText + " (term (TMH "
-          + quotePreservedName(parameter.first) + ")))";
+        synthesizedProofText = "(term_apply " + synthesizedProofText
+          + " (term (TMH " + quotePreservedName(parameter.first) + ")))";
       }
+      proofText = &synthesizedProofText;
     }
     PreservedSexpr proof;
     PreservedSexpr conclusion;
     const std::string& renderedConclusion = step.hasResultClause
       ? step.resultClause : step.resultFormula;
-    if (proofText.empty() || !parser.parse(proofText, proof)
+    if (proofText->empty() || !parser.parse(*proofText, proof)
         || !parser.parse(renderedConclusion, conclusion)) {
       error = "choice-normalized proof DAG step " + step.id
         + " has no direct producer proof";
       return false;
     }
-    proof = normalize(proof, supportClaims, false, normalize);
-    conclusion = normalize(conclusion, supportClaims, false, normalize);
+    proof = normalize(std::move(proof), supportClaims, false, normalize);
+    conclusion = normalize(
+      std::move(conclusion), supportClaims, false, normalize);
     if (containsEliminated(proof, containsEliminated)
         || containsEliminated(conclusion, containsEliminated)) {
       error = "choice-normalized proof DAG step " + step.id
@@ -6253,6 +6566,10 @@ bool expandChoiceNormalizedProof(
     MegalodonKernelSyntax::RenderedKernelChoiceProofNode node;
     node.index = result.nodes.size();
     node.step = normalizedId(step.id);
+    node.producerProofParentAliases.assign(
+      supportClaims.begin(), supportClaims.end());
+    node.producerProofDefinitionAliases.assign(
+      definitionClaims.begin(), definitionClaims.end());
     std::set<std::string> referencedParents;
     proofParents(proof, referencedParents, proofParents);
     node.parents.assign(referencedParents.begin(), referencedParents.end());
@@ -6265,11 +6582,9 @@ bool expandChoiceNormalizedProof(
       && !containsSplitDefinition(proof, containsSplitDefinition);
     if (step.hasResultClause) node.resultClause = conclusion.render();
     if (step.hasResultFormula) node.resultFormula = conclusion.render();
-    // Keep the producer-expanded term internally even when the serialized
-    // node uses a compact Ivy justification.  Later prooftrans passes need an
-    // exact term to inline into producer-owned scoped continuations; the
-    // certificate builder still emits only the compact justification.
-    node.producerProof = proof.render();
+    // Compact Ivy nodes carry only their small rule payload.  Direct proof
+    // terms are retained below solely for nodes without a compact rule (and
+    // for exact CNF scope boundaries, which require the direct transformer).
     if (step.producerCnfProjection != nullptr
         && !step.producerCnfSourceFormula.empty()) {
       PreservedSexpr cnfSource;
@@ -6277,7 +6592,8 @@ bool expandChoiceNormalizedProof(
         error = "choice-normalized CNF source is unreadable at " + step.id;
         return false;
       }
-      cnfSource = normalize(cnfSource, supportClaims, false, normalize);
+      cnfSource = normalize(
+        std::move(cnfSource), supportClaims, false, normalize);
       auto projection = std::make_shared<
         MegalodonKernelSyntax::RenderedKernelCnfProjection>(
           *step.producerCnfProjection);
@@ -6289,7 +6605,7 @@ bool expandChoiceNormalizedProof(
           PreservedSexpr value;
           if (!parser.parse(field.sexpr, value)) return false;
           value = normalize(
-            value, supportClaims, compressDefinitions, normalize);
+            std::move(value), supportClaims, compressDefinitions, normalize);
           if (containsEliminated(value, containsEliminated)) return false;
           field.sexpr = value.render();
           return true;
@@ -6350,7 +6666,8 @@ bool expandChoiceNormalizedProof(
       if (!textField(name, source) || !parser.parse(source, parsed)) {
         return false;
       }
-      parsed = normalize(parsed, supportClaims, false, normalize);
+      parsed = normalize(
+        std::move(parsed), supportClaims, false, normalize);
       if (containsEliminated(parsed, containsEliminated)) return false;
       value = parsed.render();
       return true;
@@ -6531,6 +6848,29 @@ bool expandChoiceNormalizedProof(
     } else {
       node.producerProof = proof.render();
     }
+    if (node.ivyJustification.rule != IvyRule::None
+        && node.producerCnfProjection != nullptr) {
+      node.producerProof = proof.render();
+    } else if (node.ivyJustification.rule != IvyRule::None) {
+      // The builder omits this field for compact Ivy nodes. Keep the original
+      // term solely as lazy producer-private input for finite-scope replay;
+      // the explicit alias tables above normalize its local references then.
+      if (proofText == &step.producerProof) {
+        node.producerProof = std::move(step.producerProof);
+      } else {
+        node.producerProof = *proofText;
+      }
+    }
+
+    // This pass owns the detached producer slice. Once a node has been
+    // lowered, retain only the transformed result and release the large
+    // source proof payload before processing the rest of the DAG.
+    std::string().swap(step.producerProof);
+    for (auto& claim : step.producerProofClaims) {
+      std::string().swap(claim.producerProof);
+      std::string().swap(claim.resultFormula);
+      std::string().swap(claim.resultClause);
+    }
 
     // Lower every Skolem witness to a support existential followed by one
     // contextual target.  Both proof transformers are producer-generated Ivy
@@ -6586,12 +6926,17 @@ bool expandChoiceNormalizedProof(
               && hypothesisName == inputName) {
             return source;
           }
-          PreservedSexpr result = source;
-          if (result.atom) return result;
+          if (source.atom) return source;
+          PreservedSexpr result;
+          result.atom = false;
+          result.items.reserve(source.items.size());
+          if (!source.items.empty()) {
+            result.items.push_back(source.items.front());
+          }
           for (std::size_t child = 1;
-               child < result.items.size();
+               child < source.items.size();
                ++child) {
-            result.items[child] = self(result.items[child], self);
+            result.items.push_back(self(source.items[child], self));
           }
           return result;
         };
@@ -6641,22 +6986,23 @@ bool expandChoiceNormalizedProof(
           break;
         }
         contextSource = normalize(
-          contextSource, supportClaims, false, normalize);
+          std::move(contextSource), supportClaims, false, normalize);
         contextTarget = normalize(
-          contextTarget, supportClaims, false, normalize);
+          std::move(contextTarget), supportClaims, false, normalize);
         contextTransform = normalize(
-          contextTransform, supportClaims, false, normalize);
+          std::move(contextTransform), supportClaims, false, normalize);
         scopeParent = normalize(
-          scopeParent, supportClaims, false, normalize);
+          std::move(scopeParent), supportClaims, false, normalize);
         scopeParentTransform = normalize(
-          scopeParentTransform, supportClaims, false, normalize);
-        witness = normalize(witness, supportClaims, false, normalize);
+          std::move(scopeParentTransform), supportClaims, false, normalize);
+        witness = normalize(
+          std::move(witness), supportClaims, false, normalize);
         scopeSource = normalize(
-          scopeSource, supportClaims, false, normalize);
+          std::move(scopeSource), supportClaims, false, normalize);
         scopeTarget = normalize(
-          scopeTarget, supportClaims, false, normalize);
+          std::move(scopeTarget), supportClaims, false, normalize);
         scopeBridge = normalize(
-          scopeBridge, supportClaims, false, normalize);
+          std::move(scopeBridge), supportClaims, false, normalize);
         if (index != 0 && contextSource.render() != previousTarget) {
           stageFailure = "adjacent witness stages do not compose";
           exactStages = false;
@@ -6748,13 +7094,20 @@ bool expandChoiceNormalizedProof(
   const bool hasRootExistsScope = std::any_of(
     result.nodes.begin(), result.nodes.end(),
     [](const auto& node) { return node.hasRootExistsScope; });
-  result.version = hasRootExistsScope
-    ? "ivy_choice_dag_v2" : "ivy_choice_dag_v1";
+  result.version = result.definitions.empty()
+    ? (hasRootExistsScope ? "ivy_choice_dag_v2" : "ivy_choice_dag_v1")
+    : "ivy_choice_dag_v3";
   result.finalStep = normalizedId(finalStep);
   for (const auto& replacement : replacements) {
     result.producerGroundSubstitutions.push_back({
       replacement.first,
       replacement.second.render(),
+    });
+  }
+  for (const std::string& split : choiceDependentSplitDefinitions) {
+    result.producerGroundSubstitutions.push_back({
+      split,
+      splitDefinitions.at(split).render(),
     });
   }
   result.eliminatedSymbols = std::move(eliminated);
@@ -7911,11 +8264,16 @@ bool expandGroundChoiceProof(
         ++replacements;
         return replacement;
       }
-      PreservedSexpr result = value;
-      if (result.atom) return result;
-      for (std::size_t index = 1; index < result.items.size(); ++index) {
-        result.items[index] = replaceAlphaEquivalentNormalized(
-          result.items[index], needle, replacement, replacements);
+      if (value.atom) return value;
+      PreservedSexpr result;
+      result.atom = false;
+      result.items.reserve(value.items.size());
+      if (!value.items.empty()) {
+        result.items.push_back(value.items.front());
+      }
+      for (std::size_t index = 1; index < value.items.size(); ++index) {
+        result.items.push_back(replaceAlphaEquivalentNormalized(
+          value.items[index], needle, replacement, replacements));
       }
       return result;
     };
@@ -7931,7 +8289,8 @@ bool expandGroundChoiceProof(
   const bool atomicChoicePlan =
     finiteProof.version == "ivy_atomic_choice_v1";
   if ((source.version != "ivy_choice_dag_v1"
-       && source.version != "ivy_choice_dag_v2")
+       && source.version != "ivy_choice_dag_v2"
+       && source.version != "ivy_choice_dag_v3")
       || source.nodes.empty() || source.finalStep.empty()
       || groundProof.version != "ivy_instance_v3"
       || groundProof.instances.empty()
@@ -8080,13 +8439,58 @@ bool expandGroundChoiceProof(
   }
   const auto normalizeProducerTerms = [&](const PreservedSexpr& value,
                                           const auto& self) -> PreservedSexpr {
-    for (const auto& binding : producerSubstitutions) {
-      if (namedTermSexpr(value, binding.first)) return binding.second;
+    if (sexprHead(value, "TMH") && value.items.size() == 2) {
+      std::string name;
+      if (preservedName(value.items[1], name)) {
+        auto binding = producerSubstitutions.find(name);
+        if (binding != producerSubstitutions.end()) return binding->second;
+      }
     }
-    PreservedSexpr result = value;
-    if (result.atom) return result;
-    for (std::size_t index = 1; index < result.items.size(); ++index) {
-      result.items[index] = self(result.items[index], self);
+    if (value.atom) return value;
+    PreservedSexpr result;
+    result.atom = false;
+    result.items.reserve(value.items.size());
+    if (!value.items.empty()) {
+      result.items.push_back(value.items.front());
+    }
+    for (std::size_t index = 1; index < value.items.size(); ++index) {
+      result.items.push_back(self(value.items[index], self));
+    }
+    return result;
+  };
+  const auto normalizePrivateProofReferences = [&]
+    (const ChoiceNode& node,
+     const PreservedSexpr& value,
+     const auto& self) -> PreservedSexpr {
+    const auto replaceReference = [&](const char* head,
+                                      const auto& aliases,
+                                      PreservedSexpr& replacement) {
+      if (!sexprHead(value, head) || value.items.size() != 2) return false;
+      std::string name;
+      if (!preservedName(value.items[1], name)) return false;
+      auto alias = std::find_if(
+        aliases.begin(), aliases.end(),
+        [&](const auto& item) { return item.first == name; });
+      return alias != aliases.end()
+        && parser.parse(
+             "(parent " + quotePreservedName(alias->second) + ")",
+             replacement);
+    };
+    PreservedSexpr replacement;
+    if (replaceReference(
+          "parent", node.producerProofParentAliases, replacement)
+        || replaceReference(
+             "definition", node.producerProofDefinitionAliases,
+             replacement)) {
+      return replacement;
+    }
+    if (value.atom) return value;
+    PreservedSexpr result;
+    result.atom = false;
+    result.items.reserve(value.items.size());
+    if (!value.items.empty()) result.items.push_back(value.items.front());
+    for (std::size_t index = 1; index < value.items.size(); ++index) {
+      result.items.push_back(self(node, value.items[index], self));
     }
     return result;
   };
@@ -8201,6 +8605,26 @@ bool expandGroundChoiceProof(
       const std::string& binderHead) {
     std::function<PreservedSexpr(PreservedSexpr)> descend;
     descend = [&](PreservedSexpr current) -> PreservedSexpr {
+      if (sexprHead(current, "term_apply")
+          && current.items.size() == 3
+          && sexprHead(current.items[1], binderHead.c_str())
+          && current.items[1].items.size() == 4
+          && sexprHead(current.items[2], "term")
+          && current.items[2].items.size() == 2) {
+        std::string variable;
+        PreservedSexpr canonical;
+        if (preservedName(current.items[1].items[1], variable)
+            && canonicalInhabitantSexpr(
+                 current.items[1].items[2],
+                 "ivy_inhabitant_" + variable, 0, canonical)
+            && current.items[2].items[1] == canonical) {
+          auto binding = bindings.find(variable);
+          if (binding != bindings.end()) {
+            return descend(substituteNamedVariableSexpr(
+              current.items[1].items[3], variable, binding->second));
+          }
+        }
+      }
       if (!sexprHead(current, binderHead.c_str())
           || current.items.size() != 4) {
         return specializeWithEnvironment(std::move(current), bindings);
@@ -8308,10 +8732,15 @@ bool expandGroundChoiceProof(
         return rewritten;
       }
     }
-    PreservedSexpr rewritten = source;
-    if (rewritten.atom) return rewritten;
-    for (std::size_t index = 1; index < rewritten.items.size(); ++index) {
-      rewritten.items[index] = self(rewritten.items[index], self);
+    if (source.atom) return source;
+    PreservedSexpr rewritten;
+    rewritten.atom = false;
+    rewritten.items.reserve(source.items.size());
+    if (!source.items.empty()) {
+      rewritten.items.push_back(source.items.front());
+    }
+    for (std::size_t index = 1; index < source.items.size(); ++index) {
+      rewritten.items.push_back(self(source.items[index], self));
     }
     return rewritten;
   };
@@ -8323,7 +8752,16 @@ bool expandGroundChoiceProof(
       return false;
     }
     PreservedSexpr proof;
-    if (!parser.parse(node.producerProof, proof)) {
+    const bool hasDirectProof =
+      node.ivyJustification.rule == IvyRule::None
+      && !node.producerProof.empty();
+    if (!hasDirectProof
+        && node.ivyJustification.rule == IvyRule::None) {
+      error = "ground choice prooftrans shared theorem has no Ivy justification "
+        + node.step;
+      return false;
+    }
+    if (hasDirectProof && !parser.parse(node.producerProof, proof)) {
       error = "ground choice prooftrans cannot parse shared theorem "
         + node.step;
       return false;
@@ -8331,8 +8769,12 @@ bool expandGroundChoiceProof(
     ChoiceNode shared = node;
     shared.index = result.nodes.size();
     shared.step = sharedGroundId(node.step);
-    shared.producerProof =
-      rewriteSharedParents(proof, rewriteSharedParents).render();
+    if (hasDirectProof) {
+      shared.producerProof =
+        rewriteSharedParents(proof, rewriteSharedParents).render();
+    } else {
+      shared.producerProof.clear();
+    }
     shared.parents.clear();
     for (const std::string& parent : node.parents) {
       const std::string rewritten = sharedParentId(parent);
@@ -8720,17 +9162,27 @@ bool expandGroundChoiceProof(
         rewriteFailure.clear();
         return true;
       }
-      output = input;
-      if (output.atom) return true;
-      for (std::size_t index = 1; index < output.items.size(); ++index) {
-        if (!rewrite(output.items[index], output.items[index])) {
+      if (input.atom) {
+        output = input;
+        return true;
+      }
+      output = {};
+      output.atom = false;
+      output.items.reserve(input.items.size());
+      if (!input.items.empty()) {
+        output.items.push_back(input.items.front());
+      }
+      for (std::size_t index = 1; index < input.items.size(); ++index) {
+        PreservedSexpr rewrittenChild;
+        if (!rewrite(input.items[index], rewrittenChild)) {
           if (rewriteFailure.empty()) {
             rewriteFailure = "cannot rewrite proof child "
-              + std::to_string(index) + " of " + output.items[0].token
-              + ": " + output.items[index].render().substr(0, 800);
+              + std::to_string(index) + " of " + input.items[0].token
+              + ": " + input.items[index].render().substr(0, 800);
           }
           return false;
         }
+        output.items.push_back(std::move(rewrittenChild));
       }
       return true;
     };
@@ -8741,22 +9193,64 @@ bool expandGroundChoiceProof(
       ? node.resultClause : node.resultFormula;
     const bool hasIvyJustification =
       node.ivyJustification.rule != IvyRule::None;
+    const bool needsDirectProof = !hasIvyJustification
+      || node.producerCnfProjection != nullptr;
     if (node.hasResultClause == node.hasResultFormula
         || !parser.parse(conclusionText, conclusion)
-        || !parser.parse(node.producerProof, proof)) {
+        || (needsDirectProof
+            && !parser.parse(node.producerProof, proof))
+        || (!needsDirectProof && node.producerProof.empty())) {
       error = "ground choice prooftrans cannot parse node " + node.step;
       return false;
+    }
+    if (needsDirectProof) {
+      proof = normalizePrivateProofReferences(
+        node, proof, normalizePrivateProofReferences);
+      proof = normalizeProducerTerms(
+        std::move(proof), normalizeProducerTerms);
     }
     conclusion = node.hasResultFormula
       ? specializeLeadingBinders(
           std::move(conclusion), key.instance, "ALLV")
       : specialize(std::move(conclusion), key.instance);
+    // A child may eliminate a variable still fixed by all selected ground
+    // parents.  Replay the direct proof at that exact parent instance.
+    std::map<std::string, PreservedSexpr> proofEnvironment =
+      environments[key.instance];
+    std::map<std::string, PreservedSexpr> inheritedParentBindings;
+    std::set<std::string> conflictingParentBindings;
+    for (const std::string& parent : node.parents) {
+      ParentTarget target;
+      if (!resolveParent(parent, target)) return false;
+      if (!target.generated) continue;
+      for (const auto& binding : environments[target.key.instance]) {
+        if (proofEnvironment.find(binding.first) != proofEnvironment.end()
+            || conflictingParentBindings.find(binding.first)
+                 != conflictingParentBindings.end()) {
+          continue;
+        }
+        auto inherited = inheritedParentBindings.find(binding.first);
+        if (inherited == inheritedParentBindings.end()) {
+          inheritedParentBindings.emplace(binding.first, binding.second);
+        } else if (!alphaEquivalentSexpr(
+                     inherited->second, binding.second)) {
+          inheritedParentBindings.erase(inherited);
+          conflictingParentBindings.insert(binding.first);
+        }
+      }
+    }
+    proofEnvironment.insert(
+      inheritedParentBindings.begin(), inheritedParentBindings.end());
+    const auto specializeProofLeadingBinders = [&]
+      (PreservedSexpr value) {
+      return specializeLeadingBindersWithEnvironment(
+        std::move(value), proofEnvironment, "term_lambda");
+    };
     PreservedSexpr rewrittenProof;
     PreservedSexpr rewrittenDirectProof;
     std::vector<PreservedSexpr> rewrittenParentApplications;
-    if (hasIvyJustification) {
-      PreservedSexpr directProof = specializeLeadingBinders(
-        proof, key.instance, "term_lambda");
+    if (hasIvyJustification && needsDirectProof) {
+      PreservedSexpr directProof = specializeProofLeadingBinders(proof);
       if (!rewrite(directProof, rewrittenDirectProof)) {
         if (std::getenv("MEGALODON_CERT_DEBUG")) {
           std::cerr << "megalodon ground direct-proof rewrite failed at "
@@ -8943,8 +9437,7 @@ bool expandGroundChoiceProof(
         rewrittenParentApplications.push_back(std::move(rewritten));
       }
     } else {
-      proof = specializeLeadingBinders(
-        std::move(proof), key.instance, "term_lambda");
+      proof = specializeProofLeadingBinders(std::move(proof));
       if (!rewrite(proof, rewrittenProof)) {
         if (std::getenv("MEGALODON_CERT_DEBUG")) {
           std::cerr << "megalodon ground rewrite failed at " << node.step
@@ -10308,10 +10801,27 @@ bool expandGroundChoiceProof(
       }
       return value;
     };
+    // Unfold only aliases whose bodies actually cross a finite witness scope;
+    // unrelated shared definitions remain compact certificate references.
+    std::map<std::string, PreservedSexpr> sharedDefinitionBodies;
+    for (const auto& definition : source.definitions) {
+      if (definition.symbol.compare(
+            0, 24, "vampire_ivy_shared_term_") != 0) {
+        continue;
+      }
+      PreservedSexpr body;
+      if (!parser.parse(definition.body, body)
+          || !sharedDefinitionBodies.emplace(
+                definition.symbol, std::move(body)).second) {
+        error = "ground choice prooftrans cannot read a shared term definition during finite-scope abstraction";
+        return false;
+      }
+    }
     struct WitnessRewrite {
       PreservedSexpr normalized;
       PreservedSexpr rewritten;
     };
+    std::set<std::string> expandingSharedAliases;
     std::function<WitnessRewrite(
       const PreservedSexpr&, std::size_t, std::size_t&)>
       rewriteWitnesses = [&]
@@ -10319,6 +10829,29 @@ bool expandGroundChoiceProof(
          std::size_t scopeCount,
          std::size_t& replacements) -> WitnessRewrite {
         const std::size_t replacementsAtEntry = replacements;
+        const std::size_t limit = std::min(
+          scopeCount, abstractScopes.size());
+        for (std::size_t scope = 0; scope < limit; ++scope) {
+          if (alphaEquivalentSexpr(
+                value, abstractScopes[scope].concreteWitness)) {
+            ++replacements;
+            return {value, abstractScopes[scope].witnessVariable};
+          }
+        }
+        std::string sharedAlias;
+        if (sexprHead(value, "TMH") && value.items.size() == 2
+            && preservedName(value.items[1], sharedAlias)) {
+          auto definition = sharedDefinitionBodies.find(sharedAlias);
+          if (definition != sharedDefinitionBodies.end()
+              && expandingSharedAliases.insert(sharedAlias).second) {
+            WitnessRewrite expanded = rewriteWitnesses(
+              definition->second, scopeCount, replacements);
+            expandingSharedAliases.erase(sharedAlias);
+            if (replacements != replacementsAtEntry) {
+              return expanded;
+            }
+          }
+        }
         WitnessRewrite result;
         result.normalized.atom = value.atom;
         result.rewritten.atom = value.atom;
@@ -10358,8 +10891,6 @@ bool expandGroundChoiceProof(
             }
           }
         }
-        const std::size_t limit = std::min(
-          scopeCount, abstractScopes.size());
         for (std::size_t scope = 0; scope < limit; ++scope) {
           if (alphaEquivalentSexpr(
                 result.normalized,
@@ -10386,20 +10917,8 @@ bool expandGroundChoiceProof(
     const auto abstractWitnessPrefix = [&]
       (PreservedSexpr value, std::size_t scopeCount,
        std::size_t* replacementCount = nullptr) {
-      if (abstractScopes.size() == 1) {
-        value = betaNormalizeSexpr(value);
-      }
-      std::size_t total = 0;
-      for (std::size_t index = 0;
-           index < scopeCount && index < abstractScopes.size(); ++index) {
-        std::size_t replacements = 0;
-        value = replaceAlphaEquivalentNormalized(
-          value, abstractScopes[index].concreteWitness,
-          abstractScopes[index].witnessVariable, replacements);
-        total += replacements;
-      }
-      if (replacementCount != nullptr) *replacementCount = total;
-      return value;
+      return abstractWitnessPrefixBeta(
+        std::move(value), scopeCount, replacementCount);
     };
     const auto abstractAllWitnesses = [&]
       (PreservedSexpr value, std::size_t* replacementCount = nullptr) {
@@ -10860,6 +11379,10 @@ bool expandGroundChoiceProof(
           || !parser.parse(sourceNode->second->producerProof, proof)) {
         return false;
       }
+      proof = normalizePrivateProofReferences(
+        *sourceNode->second, proof, normalizePrivateProofReferences);
+      proof = normalizeProducerTerms(
+        std::move(proof), normalizeProducerTerms);
       proof = specializeLeadingBindersWithEnvironment(
         std::move(proof), abstractEnvironments[key.instance], "term_lambda");
       proof = abstractNodeValue(std::move(proof), renderedNode);
@@ -12501,8 +13024,11 @@ bool expandAvatarDefinitionProof(
 }
 
 bool expandAvatarSplitProof(
+  const std::string& stepId,
   const MegalodonKernelSyntax::RenderedKernelAvatarSplitStep& request,
   std::string& result,
+  std::vector<MegalodonKernelSyntax::ProducerProofClaim>& supportClaims,
+  std::vector<MegalodonKernelSyntax::ProducerTermDefinition>& termDefinitions,
   std::string& error)
 {
   using MegalodonKernelSyntax::RenderedKernelAvatarComponentParent;
@@ -12646,7 +13172,10 @@ bool expandAvatarSplitProof(
     return true;
   };
 
-  if (!request.hasIvyProgram || request.sourceUnit.value.empty()
+  supportClaims.clear();
+  termDefinitions.clear();
+  if (stepId.empty() || !request.hasIvyProgram
+      || request.sourceUnit.value.empty()
       || request.sourceLiterals.empty() || !request.hasResultFormula
       || request.cases.empty()) {
     error = "AVATAR split direct proof lacks producer source/target data";
@@ -12873,6 +13402,34 @@ bool expandAvatarSplitProof(
       });
     return found == request.counterexamplePrograms.end() ? nullptr : &*found;
   };
+  std::map<std::pair<std::size_t, std::size_t>, std::string> witnessSymbols;
+  for (const auto& counterexample : request.counterexamplePrograms) {
+    for (const auto& stage : counterexample.stages) {
+      std::string directWitness;
+      if (stage.directWitnessSymbol.empty()
+          || stage.type.sexpr.empty() || stage.directWitness.sexpr.empty()
+          || !betaNormalized(stage.directWitness.sexpr, directWitness)
+          || !witnessSymbols.emplace(
+                std::make_pair(counterexample.index, stage.index),
+                stage.directWitnessSymbol).second) {
+        error = "AVATAR split has an incomplete producer witness definition";
+        return false;
+      }
+      MegalodonKernelSyntax::ProducerTermDefinition definition;
+      definition.stepId = stepId + "_avatar_witness_definition_"
+        + std::to_string(counterexample.splitVar) + "_"
+        + std::to_string(stage.index);
+      definition.symbol = stage.directWitnessSymbol;
+      definition.resultType = stage.type.sexpr;
+      definition.body = std::move(directWitness);
+      termDefinitions.push_back(std::move(definition));
+    }
+  }
+  auto witnessSymbol = [&](const RenderedKernelAvatarCounterexampleProgram& program,
+                           std::size_t stage) -> const std::string* {
+    const auto found = witnessSymbols.find({program.index, stage});
+    return found == witnessSymbols.end() ? nullptr : &found->second;
+  };
   auto sourceNode = [&](std::size_t index)
       -> const RenderedKernelAvatarSplitSourceNode* {
     const auto found = std::find_if(
@@ -12947,11 +13504,12 @@ bool expandAvatarSplitProof(
           || stage->directWitness.sexpr.empty()) {
         return false;
       }
-      std::string witness;
-      if (!betaNormalized(stage->directWitness.sexpr, witness)) {
+      const std::string* witness = witnessSymbol(
+        *counterexample, stage->index);
+      if (witness == nullptr) {
         return false;
       }
-      arguments.push_back(std::move(witness));
+      arguments.push_back("(TMH " + quote(*witness) + ")");
     }
     return true;
   };
@@ -13065,6 +13623,65 @@ bool expandAvatarSplitProof(
     return true;
   };
 
+  std::map<unsigned, std::string> negativeComponentSupports;
+  auto negativeComponentTheorem = [&]
+    (const RenderedKernelAvatarComponentParent& component,
+     const Relation& componentRelation,
+     std::string& theorem) {
+    auto existing = negativeComponentSupports.find(component.split.variable);
+    if (existing != negativeComponentSupports.end()) {
+      theorem = parent(existing->second);
+      return true;
+    }
+    const std::string splitFormula =
+      "(TMH " + quote("split_" + std::to_string(component.split.variable))
+      + ")";
+    const std::string notSplitFormula =
+      formulaImp(splitFormula, "(TMH \"vampire_false\")");
+    const std::string notSplitHypothesis = freshName("not_split_support");
+    std::string notComponentProof;
+    if (!negativeComponent(
+          component,
+          componentRelation,
+          hypothesis(notSplitHypothesis),
+          notComponentProof)) {
+      return false;
+    }
+    const std::string directTheorem = proofLambda(
+      notSplitHypothesis,
+      formula(notSplitFormula),
+      notComponentProof);
+    // Closed components have no repeated counterexample-witness expansion.
+    // Keep their small theorem inline; sharing is reserved for quantified
+    // components where it prevents exponential witness duplication.
+    if (component.variables.empty()) {
+      theorem = directTheorem;
+      return true;
+    }
+    MegalodonKernelSyntax::ProducerProofClaim claim;
+    claim.id = stepId + "_avatar_counterexample_"
+      + std::to_string(component.split.variable);
+    claim.replacesParent = claim.id + "_use";
+    const RenderedKernelAvatarCounterexampleProgram* counterexample =
+      counterexampleBySplit(component.split.variable);
+    std::string finalBody;
+    if (counterexample == nullptr || counterexample->finalBody.sexpr.empty()
+        || !betaNormalized(counterexample->finalBody.sexpr, finalBody)) {
+      return false;
+    }
+    claim.resultFormula = formulaImp(
+      notSplitFormula,
+      formulaImp(
+        finalBody,
+        "(TMH \"vampire_false\")"));
+    claim.producerProof = directTheorem;
+    theorem = parent(claim.replacesParent);
+    negativeComponentSupports.emplace(
+      component.split.variable, claim.replacesParent);
+    supportClaims.push_back(std::move(claim));
+    return true;
+  };
+
   std::vector<std::pair<std::string, std::string>> sourceBindings;
   std::vector<std::string> sourceArguments;
   for (const RenderedKernelTypedVariable& variable : request.sourceVariables) {
@@ -13092,13 +13709,13 @@ bool expandAvatarSplitProof(
         error = "AVATAR split direct proof source witness index is unavailable";
         return false;
       }
-      if (!betaNormalized(
-            counterexample->stages[binding->counterexampleStage]
-              .directWitness.sexpr,
-            argument)) {
+      const std::string* witness = witnessSymbol(
+        *counterexample, binding->counterexampleStage);
+      if (witness == nullptr) {
         error = "AVATAR split direct proof source witness is malformed";
         return false;
       }
+      argument = "(TMH " + quote(*witness) + ")";
     }
     if (argument.empty()) {
       error = "AVATAR split direct proof source binding has no producer witness";
@@ -13202,12 +13819,14 @@ bool expandAvatarSplitProof(
       if (literalClass->positive && !assigned->positive) {
         std::string clauseProof = injectClause(
           component->literals, node->componentLiteral, bindings, literalProof);
-        std::string notComponent;
+        std::string notComponentTheorem;
         if (clauseProof.empty()
-            || !negativeComponent(
-                 *component, componentRelation, assigned->proof, notComponent)) {
+            || !negativeComponentTheorem(
+                 *component, componentRelation, notComponentTheorem)) {
           return false;
         }
+        const std::string notComponent = proofApply(
+          notComponentTheorem, assigned->proof);
         literalResult.contradiction = true;
         literalResult.proof = proofApply(notComponent, clauseProof);
         return true;
